@@ -1,4 +1,6 @@
 $ErrorActionPreference = "Stop"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptDir "run.lib.ps1")
 
 function Ensure-Command($name) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -92,7 +94,7 @@ function Find-FreePort($candidates, $excludedRanges) {
 $npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if (-not $npmCmd) { $npmCmd = (Get-Command npm -ErrorAction Stop).Source }
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = $scriptDir
 
 Write-Host "[LogicKG] Root: $root"
 Write-Host "[LogicKG] Python: $pythonExe"
@@ -129,7 +131,7 @@ if ($needPipInstall) {
 
 # 2) Frontend deps + env.local
 $frontendDir = Join-Path $root "frontend"
-if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
+if (-not (Test-FrontendDependenciesReady $frontendDir)) {
   Write-Host "[LogicKG] Installing frontend npm dependencies..."
   Push-Location $frontendDir
   & $npmCmd install | Out-Host
@@ -223,7 +225,7 @@ try {
   )
 
   $nodeExe = (Get-Command node -ErrorAction Stop).Source
-  $viteBin = Join-Path $frontendDir "node_modules\\vite\\bin\\vite.js"
+  $viteBin = Get-FrontendViteBin $frontendDir
   if (-not (Test-Path $viteBin)) {
     throw "Vite not found: $viteBin (did frontend dependencies install correctly?)"
   }

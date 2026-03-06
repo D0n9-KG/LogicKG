@@ -84,12 +84,14 @@ DEEPSEEK_API_KEY=your_deepseek_key
 
 EMBEDDING_PROVIDER=siliconflow
 EMBEDDING_MODEL=BAAI/bge-m3
-SILICONFLOW_API_KEY=your_siliconflow_key
+EMBEDDING_API_KEY=your_embedding_key
 ```
 
 说明：
 
 - 后端会优先读取 `backend/.env`，其次读取根目录 `.env`
+- Neo4j 用户名支持 `NEO4J_USER` 和 `NEO4J_USERNAME` 两种写法
+- LLM / Embedding 支持通用 key（`LLM_API_KEY` / `EMBEDDING_API_KEY`）或 provider-specific key
 - 抽取策略阈值（`phase1_*` / `phase2_*`）主要通过前端 Schema 页面管理
 
 ### 4.3 启动 Neo4j
