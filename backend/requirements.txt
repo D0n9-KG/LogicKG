@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.30.6
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+python-multipart==0.0.9
+neo4j==5.28.1
+requests==2.32.3
+tenacity==8.5.0
+langchain==0.3.12
+langchain-community==0.3.12
+langchain-openai==0.2.11
+faiss-cpu==1.8.0.post1
+numpy==1.26.4
+json-repair==0.25.0

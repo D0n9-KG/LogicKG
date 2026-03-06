@@ -1,0 +1,1612 @@
+/* frontend/src/components/layout.css */
+
+/* ── Shell root ── */
+.kgShell {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 44px 1fr var(--statusbar-h);
+  grid-template-columns: 1fr;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── TopBar ── */
+.kgTopBar {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 12px 0 16px;
+  background: var(--bg-panel-2);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 212, 255, 0.10);
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.kgBrand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  flex-shrink: 0;
+  margin-right: 16px;
+}
+.kgBrandMark {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 700;
+  color: #040d1c;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.35);
+}
+.kgBrandName {
+  font-size: 14px; font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+.kgBrandSub {
+  font-size: 10px;
+  color: var(--faint);
+  display: block;
+  margin-top: -2px;
+  font-family: var(--font-body);
+  letter-spacing: 0;
+}
+
+/* Module Nav */
+.kgModuleNav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.kgModuleNav::-webkit-scrollbar { display: none; }
+
+.kgModuleBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+.kgModuleBtn:hover {
+  background: rgba(0, 212, 255, 0.06);
+  color: var(--text);
+}
+.kgModuleBtn.is-active {
+  background: rgba(0, 212, 255, 0.10);
+  color: var(--accent);
+}
+.kgModuleBtn span { font-size: 12px; font-weight: 600; }
+.kgModuleBtn small { font-size: 9.5px; color: inherit; opacity: 0.7; }
+.kgModuleBtn.is-active small { opacity: 0.9; }
+
+/* TopBar right slot */
+.kgTopBarRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+.kgApiDot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+  transition: background 0.3s;
+}
+.kgApiDot.is-error { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+.kgApiDot.is-checking { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+
+/* Workspace quick actions */
+.kgWorkBar {
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(7, 16, 35, 0.92), rgba(5, 12, 28, 0.9)),
+    radial-gradient(120% 220% at 6% -40%, rgba(45, 212, 191, 0.16), transparent 50%);
+  box-shadow:
+    inset 0 -1px 0 rgba(125, 211, 252, 0.05),
+    0 8px 16px rgba(1, 6, 14, 0.22);
+  z-index: 24;
+}
+
+.kgWorkBarPrimary,
+.kgWorkBarSecondary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kgWorkBarSecondary {
+  justify-content: flex-end;
+  flex: 1;
+}
+
+.kgPresetWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  background: rgba(6, 16, 35, 0.62);
+}
+
+.kgPresetWrap .kgBtn {
+  min-height: 28px;
+  border-radius: 999px;
+}
+
+.kgWorkHint {
+  max-width: min(44vw, 380px);
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(3, 10, 24, 0.62);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Main frame ── */
+.kgFrame {
+  --left-frame-w: var(--left-panel-w, var(--panel-w));
+  --right-frame-w: var(--right-panel-w, var(--panel-w));
+  --resize-w: 8px;
+  grid-row: 3;
+  display: grid;
+  grid-template-columns: var(--left-frame-w) var(--resize-w) minmax(0, 1fr) var(--resize-w) var(--right-frame-w);
+  overflow: hidden;
+  transition: grid-template-columns 0.22s var(--ease-out);
+}
+.kgFrame.is-ask-mode {
+  background:
+    radial-gradient(150% 100% at 50% 0%, rgba(45, 212, 191, 0.05), transparent 58%),
+    linear-gradient(180deg, rgba(3, 10, 23, 0.45), rgba(3, 8, 20, 0.52));
+}
+.kgFrame.left-collapsed {
+  grid-template-columns: var(--panel-w-icon) 0 minmax(0, 1fr) var(--resize-w) var(--right-frame-w);
+}
+.kgFrame.right-collapsed {
+  grid-template-columns: var(--left-frame-w) var(--resize-w) minmax(0, 1fr) 0 var(--panel-w-icon);
+}
+.kgFrame.left-collapsed.right-collapsed {
+  grid-template-columns: var(--panel-w-icon) 0 minmax(0, 1fr) 0 var(--panel-w-icon);
+}
+
+.kgFrame.is-resizing {
+  cursor: col-resize;
+}
+
+.kgFrame.is-resizing * {
+  cursor: col-resize !important;
+}
+
+.kgResize {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+
+.kgResize::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: min(72%, 420px);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: rgba(125, 211, 252, 0.24);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.06);
+}
+
+.kgResize:hover,
+.kgFrame.is-resizing .kgResize {
+  background: rgba(125, 211, 252, 0.08);
+}
+
+.kgResize:hover::before,
+.kgFrame.is-resizing .kgResize::before {
+  background: rgba(125, 211, 252, 0.62);
+}
+
+.kgResize.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Panels (shared) ── */
+.kgPanel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-color: var(--border);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  height: 100%;
+  transition: width 0.25s var(--ease-out);
+}
+.kgPanel--left { border-right: 1px solid var(--border); }
+.kgPanel--right { border-left: 1px solid var(--border); }
+
+.kgPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 40px;
+}
+.kgPanelTitle {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.kgPanelCollapseBtn {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  color: var(--faint);
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.kgPanelCollapseBtn:hover { background: rgba(0,212,255,0.08); color: var(--accent); }
+
+.kgPanelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+/* Collapsed icon rail */
+.kgPanelIcon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  height: 100%;
+  overflow: hidden;
+  cursor: pointer;
+}
+.kgPanelIconBtn {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  color: var(--faint);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  transition: background 0.12s, color 0.12s;
+}
+.kgPanelIconBtn:hover { background: rgba(0,212,255,0.08); color: var(--accent); }
+
+/* Panel content transition */
+.kgPanelContent {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.kgPanelContent.is-transitioning {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+/* ── Canvas ── */
+.kgCanvasSlot {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 140% at 10% 0%, rgba(120, 255, 214, 0.12), transparent 52%),
+    radial-gradient(120% 120% at 85% 14%, rgba(56, 189, 248, 0.15), transparent 58%),
+    linear-gradient(180deg, rgba(2, 8, 20, 0.98), rgba(1, 5, 14, 0.98));
+}
+
+.kgCanvasSlot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(125, 211, 252, 0.07) 1px, transparent 1px) 0 0 / 34px 34px,
+    linear-gradient(0deg, rgba(125, 211, 252, 0.05) 1px, transparent 1px) 0 0 / 34px 34px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.kgCanvasSlot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(70% 70% at 50% 45%, rgba(186, 230, 253, 0.08), transparent 68%),
+    radial-gradient(80% 90% at 30% 80%, rgba(20, 184, 166, 0.06), transparent 72%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.kgGraphContainer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* Canvas HUD overlay */
+.kgCanvasHud {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  z-index: 10;
+}
+.kgCanvasViewSwitch {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 6px;
+}
+.kgMiniMapWrap {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  z-index: 14;
+  width: 176px;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(5, 15, 33, 0.88), rgba(3, 10, 24, 0.84));
+  box-shadow:
+    inset 0 0 0 1px rgba(186, 230, 253, 0.06),
+    0 10px 22px rgba(2, 8, 24, 0.34);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.kgMiniMapHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.16);
+  font-family: var(--font-mono);
+}
+.kgMiniMapHead span {
+  font-size: 10.5px;
+  color: rgba(240, 248, 255, 0.95);
+}
+.kgMiniMapHead small {
+  font-size: 9px;
+  color: var(--faint);
+}
+.kgMiniMap {
+  position: relative;
+  width: 100%;
+  height: 118px;
+  cursor: crosshair;
+  background:
+    radial-gradient(110% 130% at 16% 12%, rgba(45, 212, 191, 0.16), transparent 62%),
+    radial-gradient(120% 100% at 90% 22%, rgba(56, 189, 248, 0.12), transparent 68%),
+    rgba(2, 9, 20, 0.9);
+}
+.kgMiniMapNode {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px solid rgba(186, 230, 253, 0.28);
+  opacity: 0.85;
+  pointer-events: none;
+}
+.kgMiniMapViewport {
+  position: absolute;
+  border-radius: 6px;
+  border: 1px solid rgba(134, 239, 172, 0.8);
+  background: rgba(134, 239, 172, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.18);
+  pointer-events: none;
+}
+
+.kgTimelineAxisWrap {
+  position: absolute;
+  left: 12px;
+  right: 190px;
+  bottom: 12px;
+  z-index: 13;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 12px;
+  padding: 7px 10px 8px;
+  background: linear-gradient(180deg, rgba(5, 14, 31, 0.84), rgba(3, 10, 24, 0.82));
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(186, 230, 253, 0.05),
+    0 8px 20px rgba(2, 8, 24, 0.3);
+}
+
+.kgTimelineAxisHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-family: var(--font-mono);
+}
+
+.kgTimelineAxisHead span {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: rgba(238, 247, 255, 0.92);
+}
+
+.kgTimelineAxisHead small {
+  font-size: 9.5px;
+  color: rgba(188, 207, 229, 0.86);
+}
+
+.kgTimelineAxisTrack {
+  position: relative;
+  height: 38px;
+}
+
+.kgTimelineAxisTrack::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 14px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(125, 211, 252, 0.6), rgba(134, 239, 172, 0.72));
+}
+
+.kgTimelineAxisWindow {
+  position: absolute;
+  top: 8px;
+  height: 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(134, 239, 172, 0.76);
+  background: linear-gradient(120deg, rgba(134, 239, 172, 0.22), rgba(56, 189, 248, 0.18));
+  box-shadow: inset 0 0 0 1px rgba(186, 230, 253, 0.12);
+}
+
+.kgTimelineAxisTick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.kgTimelineAxisTickDot {
+  margin-top: 11px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(186, 230, 253, 0.8);
+  background: rgba(56, 189, 248, 0.85);
+}
+
+.kgTimelineAxisTickLabel {
+  font-size: 9px;
+  color: rgba(209, 228, 249, 0.9);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.kgGraphLegend {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 12;
+  width: min(360px, calc(100% - 20px));
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 12px;
+  padding: 8px 9px;
+  background: linear-gradient(180deg, rgba(5, 14, 31, 0.84), rgba(3, 10, 24, 0.82));
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(186, 230, 253, 0.06),
+    0 8px 20px rgba(2, 8, 24, 0.36);
+}
+.kgGraphLegendHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.kgGraphLegendHead b {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
+  color: rgba(236, 246, 255, 0.94);
+}
+.kgGraphLegendHead small {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.kgGraphLegendHeadMeta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kgGraphFocusTag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(134, 239, 172, 0.4);
+  background: rgba(16, 185, 129, 0.16);
+  color: rgba(235, 255, 244, 0.92);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.kgGraphMetaToggle {
+  min-height: 24px;
+  min-width: 52px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  background: rgba(8, 18, 38, 0.72);
+  color: rgba(216, 232, 248, 0.84);
+  padding: 2px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+.kgGraphMetaToggle:hover {
+  border-color: rgba(125, 211, 252, 0.58);
+}
+.kgGraphMetaToggle.is-active {
+  border-color: rgba(134, 239, 172, 0.56);
+  background: linear-gradient(140deg, rgba(16, 185, 129, 0.22), rgba(56, 189, 248, 0.2));
+  color: rgba(246, 255, 250, 0.98);
+}
+.kgGraphFilterList {
+  margin-top: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.kgGraphControlRow {
+  margin-top: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.kgGraphControlLabel {
+  min-width: 42px;
+  padding-top: 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+.kgGraphControlGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.kgGraphControlChip {
+  min-height: 25px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  background: rgba(8, 18, 38, 0.72);
+  color: rgba(216, 232, 248, 0.85);
+  padding: 3px 9px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
+}
+.kgGraphControlChip:hover {
+  border-color: rgba(125, 211, 252, 0.56);
+}
+.kgGraphControlChip.is-active {
+  border-color: rgba(134, 239, 172, 0.62);
+  color: rgba(246, 255, 250, 0.98);
+  background: linear-gradient(140deg, rgba(16, 185, 129, 0.22), rgba(56, 189, 248, 0.2));
+}
+.kgGraphEngineBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(134, 239, 172, 0.56);
+  background: linear-gradient(140deg, rgba(16, 185, 129, 0.2), rgba(56, 189, 248, 0.2));
+  color: rgba(245, 255, 250, 0.96);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+}
+.kgGraphEngineMeta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px dashed rgba(125, 211, 252, 0.26);
+  background: rgba(8, 18, 38, 0.62);
+  color: rgba(192, 211, 232, 0.84);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.kgGraphLaneList,
+.kgGraphYearList {
+  max-width: 100%;
+}
+.kgGraphLaneChip,
+.kgGraphYearChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  background: rgba(8, 18, 38, 0.56);
+  color: rgba(196, 215, 236, 0.86);
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+}
+.kgGraphFilterChip {
+  min-height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  padding: 4px 9px;
+  background: rgba(10, 23, 49, 0.7);
+  color: rgba(222, 236, 252, 0.9);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.15s, background-color 0.15s, opacity 0.15s;
+}
+.kgGraphFilterChip:hover {
+  border-color: rgba(125, 211, 252, 0.58);
+}
+.kgGraphFilterChip.is-muted {
+  opacity: 0.52;
+  border-style: dashed;
+}
+.kgGraphFilterDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+.kgGraphFilterReset {
+  margin-top: 7px;
+}
+ .kgGraphFilterReset .kgBtn {
+  min-height: 28px;
+}
+.kgCanvasHudBtn {
+  min-width: 36px;
+  min-height: 30px;
+  background: rgba(6, 16, 36, 0.74);
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  color: rgba(220, 234, 252, 0.84);
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  backdrop-filter: blur(10px);
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background-color 0.15s,
+    transform 0.15s;
+}
+.kgCanvasHudBtn:hover {
+  border-color: rgba(125, 211, 252, 0.62);
+  color: rgba(244, 251, 255, 0.98);
+  background: rgba(10, 24, 52, 0.8);
+  transform: translateY(-1px);
+}
+.kgCanvasHudBtn.is-active {
+  border-color: rgba(134, 239, 172, 0.68);
+  background: linear-gradient(145deg, rgba(134, 239, 172, 0.26), rgba(56, 189, 248, 0.22));
+  color: rgba(245, 255, 250, 0.98);
+}
+
+/* Module switch loading overlay */
+.kgCanvasOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 10, 24, 0.44);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.kgCanvasOverlay.is-loading { opacity: 1; pointer-events: all; }
+.kgLoadingRing {
+  width: 36px; height: 36px;
+  border: 2px solid rgba(0,212,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: kgSpin 0.8s linear infinite;
+}
+@keyframes kgSpin { to { transform: rotate(360deg); } }
+
+/* ── Status Bar ── */
+.kgStatusBar {
+  grid-row: 4;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  background: rgba(4, 10, 22, 0.90);
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+.kgStatusItem { display: flex; align-items: center; gap: 4px; }
+.kgStatusItem b { color: var(--muted); }
+.kgStatusDivider { width: 1px; height: 12px; background: var(--border); flex-shrink: 0; }
+
+/* ── Shared panel sub-components ── */
+.kgCard {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.kgCardTitle {
+  font-size: 11px; font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.kgCardBody { font-size: 11px; color: var(--muted); line-height: 1.6; }
+
+.kgTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+  background: rgba(0,212,255,0.04);
+  font-family: var(--font-mono);
+}
+
+.kgBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--bg-elevated);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.kgBtn:hover { border-color: var(--border-hover); color: var(--accent); }
+.kgBtn--primary {
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.30);
+  color: var(--accent);
+}
+.kgBtn--primary:hover {
+  background: rgba(0, 212, 255, 0.20);
+  border-color: rgba(0, 212, 255, 0.50);
+}
+.kgBtn--sm { padding: 3px 9px; font-size: 11px; }
+.kgBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.kgInput {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+.kgInput:focus { border-color: var(--border-hover); outline: none; }
+.kgInput::placeholder { color: var(--faint); }
+
+.kgTextarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  transition: border-color 0.15s;
+}
+.kgTextarea:focus { border-color: var(--border-hover); outline: none; }
+
+.kgLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.kgListItem {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+  border: 1px solid transparent;
+}
+.kgListItem:hover { background: rgba(0,212,255,0.05); }
+.kgListItem.is-active {
+  background: rgba(0,212,255,0.08);
+  border-color: rgba(0,212,255,0.20);
+}
+.kgListItemTitle { font-size: 12px; font-weight: 600; color: var(--text); }
+.kgListItemMeta { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+
+.kgInfoHero {
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 12px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(4, 14, 32, 0.74), rgba(4, 10, 24, 0.74));
+}
+.kgInfoHeroTitle {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  color: rgba(242, 249, 255, 0.98);
+}
+.kgInfoHeroMeta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kgInfoDescription {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.58;
+  color: rgba(206, 223, 244, 0.86);
+}
+.kgInfoMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.kgInfoMetricCard {
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 10px;
+  padding: 8px 9px;
+  background: rgba(8, 19, 41, 0.66);
+}
+.kgInfoMetricLabel {
+  font-size: 10px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.kgInfoMetricValue {
+  margin-top: 3px;
+  font-size: 16px;
+  font-family: var(--font-mono);
+  color: rgba(243, 250, 255, 0.96);
+}
+.kgInfoSection {
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 10px;
+  padding: 8px 9px;
+  background: rgba(7, 17, 37, 0.58);
+}
+.kgInfoLine {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: rgba(206, 223, 244, 0.84);
+  border-bottom: 1px dashed rgba(125, 211, 252, 0.12);
+}
+.kgInfoLine:last-child {
+  border-bottom: none;
+}
+.kgInfoLine b {
+  font-weight: 600;
+  color: rgba(236, 245, 255, 0.96);
+  text-align: right;
+}
+.kgInfoNeighborList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.kgInfoNeighborCard {
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: rgba(9, 20, 42, 0.64);
+}
+.kgInfoNeighborTitle {
+  font-size: 11.5px;
+  color: rgba(238, 247, 255, 0.95);
+  font-weight: 620;
+}
+.kgInfoNeighborMeta {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.kgInfoRaw {
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 10px;
+  background: rgba(3, 9, 21, 0.72);
+  padding: 8px;
+  color: rgba(218, 233, 252, 0.9);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+  max-height: 240px;
+  overflow: auto;
+}
+.kgTimelineList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kgTimelineRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.kgTimelineYear {
+  width: 44px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  background: rgba(8, 19, 41, 0.58);
+  padding: 5px 6px;
+  text-align: center;
+  font-size: 10.5px;
+  color: rgba(226, 240, 255, 0.9);
+  font-family: var(--font-mono);
+}
+.kgTimelineTrack {
+  flex: 1;
+  min-width: 0;
+}
+.kgTimelineBar {
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.94), rgba(52, 211, 153, 0.92), rgba(56, 189, 248, 0.95));
+  box-shadow: 0 0 0 1px rgba(186, 230, 253, 0.1);
+}
+.kgTimelineMeta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.kgTimelineSample {
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--faint);
+  line-height: 1.35;
+}
+
+.kgStatGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.kgStatCard {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  text-align: center;
+}
+.kgStatLabel { font-size: 9.5px; color: var(--faint); font-family: var(--font-mono); text-transform: uppercase; }
+.kgStatValue { font-size: 20px; font-weight: 700; color: var(--accent); font-family: var(--font-mono); line-height: 1.2; margin-top: 2px; }
+.kgStatValue.is-muted { color: var(--muted); font-size: 14px; }
+
+.kgSectionTitle {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 12px 0 6px;
+}
+
+.kgStack { display: flex; flex-direction: column; gap: 6px; }
+.kgRow { display: flex; align-items: center; gap: 6px; }
+.kgFill { flex: 1; }
+
+.kgAskPanelSection {
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  background: rgba(6, 16, 35, 0.56);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.kgAskChatShell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kgAskConversationSection {
+  flex: 1 1 260px;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kgAskConversationSection .kgAskChatList {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.kgAskConversationEmpty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.kgAskComposerSection .kgTextarea {
+  min-height: 88px;
+}
+
+.kgAskScopeDetails summary {
+  cursor: pointer;
+  user-select: none;
+  margin: 0;
+}
+
+.kgAskInputMeta {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.kgAskHistoryList {
+  gap: 6px;
+}
+
+.kgAskScopeList {
+  margin-top: 8px;
+  max-height: min(28vh, 280px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+
+.kgAskScopeItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  background: rgba(8, 20, 41, 0.62);
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.kgAskScopeItem.is-active {
+  border-color: rgba(125, 211, 252, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.28);
+}
+
+.kgAskHistoryItem {
+  width: 100%;
+  text-align: left;
+}
+
+.kgAskHistoryItem .kgListItemMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kgAskChatList {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: min(34vh, 360px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.kgAskChatList--assistant {
+  gap: 8px;
+}
+
+.kgAskMessageRow {
+  display: flex;
+  width: 100%;
+}
+
+.kgAskMessageRow.is-user {
+  justify-content: flex-end;
+}
+
+.kgAskMessageRow.is-assistant {
+  justify-content: flex-start;
+}
+
+.kgAskMessageBubble {
+  width: min(94%, 500px);
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(9, 20, 42, 0.82);
+  color: inherit;
+  padding: 9px 10px;
+  font-size: 11px;
+  line-height: 1.54;
+  cursor: pointer;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.kgAskMessageBubble:hover {
+  border-color: rgba(125, 211, 252, 0.45);
+}
+
+.kgAskMessageBubble.is-active {
+  border-color: rgba(125, 211, 252, 0.66);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.26);
+}
+
+.kgAskMessageBubble--user {
+  border-color: rgba(59, 130, 246, 0.42);
+  background: linear-gradient(180deg, rgba(30, 64, 175, 0.36), rgba(22, 48, 138, 0.36));
+}
+
+.kgAskMessageBubble--assistant {
+  border-color: rgba(125, 211, 252, 0.3);
+  background: linear-gradient(180deg, rgba(10, 24, 48, 0.88), rgba(7, 18, 38, 0.84));
+}
+
+.kgAskMessageBubble.is-error {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.kgAskMessageHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.kgAskMessageRole {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--faint);
+}
+
+.kgAskMessageMeta {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.kgAskMessageFoot {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.kgAskStreamTag {
+  margin-left: 8px;
+  color: rgba(125, 211, 252, 0.95);
+  font-family: var(--font-mono);
+  animation: kgAskStreamPulse 1.15s ease-in-out infinite;
+}
+
+@keyframes kgAskStreamPulse {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.kgAskAnswerPanel {
+  max-height: min(38vh, 420px);
+  overflow: auto;
+}
+
+.kgAskAnswerMarkdown {
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.kgAskAnswerMarkdown--chat {
+  font-size: 11.5px;
+}
+
+.kgAskScopeSelected {
+  margin-top: 8px;
+  border: 1px dashed rgba(125, 211, 252, 0.22);
+  border-radius: 10px;
+  background: rgba(4, 12, 28, 0.62);
+  padding: 8px;
+}
+
+.kgAskScopeSelectedTitle {
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.5px;
+}
+
+.kgAskTurnList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kgAskRightStack {
+  gap: 8px;
+}
+
+.kgAskRightTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(5, 14, 31, 0.74), rgba(4, 10, 24, 0.68));
+}
+
+.kgAskRightTab {
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background: rgba(8, 19, 41, 0.6);
+  color: rgba(206, 223, 244, 0.88);
+  font-size: 11px;
+  font-weight: 600;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.kgAskRightTab:hover {
+  border-color: rgba(125, 211, 252, 0.46);
+  color: rgba(237, 247, 255, 0.96);
+}
+
+.kgAskRightTab.is-active {
+  border-color: rgba(56, 189, 248, 0.74);
+  background: linear-gradient(180deg, rgba(14, 38, 72, 0.86), rgba(10, 28, 54, 0.8));
+  color: rgba(244, 250, 255, 0.98);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
+}
+
+.kgAskRightPanel {
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(6, 16, 35, 0.5);
+}
+
+.kgAskNodeContent {
+  padding: 10px;
+}
+
+.kgAskNodeContentText {
+  white-space: pre-wrap;
+  font-size: 11px;
+  line-height: 1.62;
+  color: rgba(214, 230, 249, 0.92);
+  max-height: 180px;
+  overflow: auto;
+  border: 1px dashed rgba(125, 211, 252, 0.2);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: rgba(4, 12, 27, 0.72);
+}
+
+.kgAskNodeContentText.is-expanded {
+  max-height: min(44vh, 520px);
+}
+
+.kgAskTurnItem {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background: rgba(7, 18, 38, 0.72);
+}
+
+.kgAskTurnItem.is-active {
+  border-color: rgba(125, 211, 252, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
+}
+
+.kgAskMetricGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.kgAskBarList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kgAskBarRow {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.kgAskBarLabel {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.kgAskBarTrack {
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(8, 18, 38, 0.62);
+  overflow: hidden;
+}
+
+.kgAskBarFill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.95), rgba(45, 212, 191, 0.92));
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.32);
+}
+
+.kgAskBarValue {
+  min-width: 28px;
+  text-align: right;
+  font-size: 10px;
+  color: rgba(227, 240, 255, 0.95);
+  font-family: var(--font-mono);
+}
+
+.kgAskSourceList .kgInfoLine span {
+  max-width: 52%;
+}
+
+.kgAskEvidenceList {
+  max-height: min(42vh, 480px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.kgAskEvidenceCard {
+  background: linear-gradient(180deg, rgba(9, 20, 42, 0.78), rgba(7, 16, 35, 0.68));
+}
+
+.kgAskEvidenceSnippet {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.48;
+  color: rgba(206, 223, 244, 0.88);
+  max-height: 110px;
+  overflow: auto;
+  border: 1px dashed rgba(125, 211, 252, 0.18);
+  border-radius: 8px;
+  padding: 6px 7px;
+  background: rgba(4, 12, 27, 0.68);
+}
+
+@media (max-width: 1180px) {
+  .kgWorkBar {
+    padding: 5px 8px 5px 10px;
+    gap: 8px;
+  }
+
+  .kgWorkBarPrimary,
+  .kgWorkBarSecondary {
+    gap: 5px;
+  }
+
+  .kgWorkHint {
+    max-width: 34vw;
+  }
+
+  .kgFrame {
+    --left-frame-w: min(38vw, 320px);
+    --right-frame-w: min(44vw, 360px);
+  }
+}
+
+@media (max-width: 920px) {
+  .kgShell {
+    grid-template-rows: var(--topbar-h) auto 1fr var(--statusbar-h);
+  }
+
+  .kgWorkBar {
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .kgWorkBarPrimary,
+  .kgWorkBarSecondary {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .kgWorkHint {
+    max-width: 100%;
+    flex: 1;
+  }
+
+  .kgFrame {
+    --left-frame-w: var(--panel-w-icon);
+    --right-frame-w: var(--panel-w-icon);
+    --resize-w: 0px;
+  }
+
+  .kgResize {
+    pointer-events: none;
+  }
+
+  .kgAskMessageBubble {
+    width: 100%;
+  }
+
+  .kgAskInputMeta {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .kgAskBarRow {
+    grid-template-columns: 76px 1fr auto;
+  }
+
+  .kgAskConversationSection .kgAskChatList {
+    min-height: 0;
+  }
+
+  .kgAskConversationSection {
+    min-height: 170px;
+  }
+}
+
+@media (max-width: 768px) {
+  .kgGraphLegend {
+    top: 8px;
+    left: 8px;
+    width: min(360px, calc(100% - 16px));
+  }
+
+  .kgMiniMapWrap {
+    right: 8px;
+    top: auto;
+    bottom: 48px;
+    width: 148px;
+  }
+
+  .kgMiniMap {
+    height: 92px;
+  }
+
+  .kgTimelineAxisWrap {
+    left: 8px;
+    right: 164px;
+    bottom: 8px;
+    padding: 6px 8px 7px;
+  }
+
+  .kgTimelineAxisTrack {
+    height: 34px;
+  }
+
+  .kgTimelineAxisTrack::before {
+    top: 12px;
+  }
+
+  .kgTimelineAxisTickDot {
+    margin-top: 9px;
+    width: 5px;
+    height: 5px;
+  }
+
+  .kgTimelineAxisTickLabel {
+    font-size: 8px;
+  }
+
+  .kgGraphFilterChip {
+    min-height: 26px;
+    padding: 3px 7px;
+    font-size: 10px;
+  }
+
+  .kgInfoMetricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .kgCanvasHud {
+    right: 8px;
+    bottom: 8px;
+    gap: 4px;
+  }
+
+  .kgCanvasViewSwitch {
+    margin-right: 0;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .kgCanvasHudBtn {
+    min-width: 34px;
+    min-height: 28px;
+    font-size: 10.5px;
+    padding: 4px 8px;
+  }
+}

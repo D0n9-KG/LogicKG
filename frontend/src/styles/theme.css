@@ -1,0 +1,78 @@
+/* frontend/src/styles/theme.css */
+:root {
+  /* ── Fonts ── */
+  --font-display: 'Fraunces', 'Noto Serif SC', ui-serif, Georgia, serif;
+  --font-body: 'IBM Plex Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ── Background layers ── */
+  --bg:            #04080f;
+  --bg-canvas:     #020509;
+  --bg-panel:      rgba(6, 14, 30, 0.90);
+  --bg-panel-2:    rgba(10, 20, 42, 0.94);
+  --bg-elevated:   rgba(14, 26, 54, 0.96);
+  --bg-input:      rgba(8, 18, 40, 0.85);
+
+  /* ── Accent ── */
+  --accent:        #00c8ff;
+  --accent-2:      #2060e0;
+  --accent-3:      #5046e5;
+  --accent-warm:   #f5aa00;  /* UI accent warmth: graph node Proposition, highlights */
+
+  /* ── Semantic ── */
+  --success:       #10b981;
+  --danger:        #ef4444;
+  --warning:       #f59e0b;  /* Warning state: toasts, badges — same amber, separate role */
+
+  /* ── Text ── */
+  --text:          rgba(240, 248, 255, 0.95);
+  --muted:         rgba(180, 210, 240, 0.72);
+  --faint:         rgba(140, 170, 210, 0.50);
+  --link-color:    #60d4ff;
+
+  /* ── Border ── */
+  --border:        rgba(0, 200, 255, 0.15);
+  --border-hover:  rgba(0, 200, 255, 0.40);
+  --border-2:      rgba(80, 140, 220, 0.20);
+
+  /* ── Graph node colors ── */
+  --node-paper-a1: #60a5fa;
+  --node-paper-a2: #3b82f6;
+  --node-paper-b:  #2563eb;
+  --node-paper-c:  #1d4ed8;
+  --node-logic:    #10b981;
+  --node-claim:    #a855f7;
+  --node-prop:     #f59e0b;
+  --node-entity:   #06b6d4;
+  --node-group:    #6366f1;
+  --node-citation: #94a3b8;
+
+  /* ── Shadows ── */
+  --shadow:        0 8px 32px rgba(0, 0, 0, 0.60);
+  --shadow-soft:   0 4px 16px rgba(0, 0, 0, 0.40);
+  --shadow-glow:   0 0 24px rgba(0, 200, 255, 0.15);
+
+  /* ── Geometry ── */
+  --radius:        14px;
+  --radius-sm:     8px;
+  --radius-pill:   999px;
+
+  /* ── Animation ── */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:   cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:      120ms;
+  --dur-base:      250ms;
+  --dur-slow:      400ms;
+
+  /* ── Layout ── */
+  --topbar-h:      52px;
+  --statusbar-h:   28px;
+  --panel-w:       260px;
+  --panel-w-icon:  44px;
+
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --ease-out: linear; --ease-in-out: linear; }
+}

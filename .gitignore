@@ -1,0 +1,68 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Env
+.env
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Runtime data
+backend/runs/
+backend/storage/
+logs/
+dev_pids.json
+
+# Temp session files
+task_plan.md
+progress.md
+findings.md
+
+# Docs (track formal docs only, ignore ad-hoc notes by default)
+docs/*
+!docs/
+!docs/neo4j-setup.md
+!docs/plans/
+!docs/plans/**
+!docs/migrations/
+!docs/migrations/**
+!docs/benchmarks/
+!docs/benchmarks/**
+!docs/runbooks/
+!docs/runbooks/**
+!docs/releases/
+!docs/releases/**
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env.local
+frontend/.env.*.local
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.eslintcache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local git worktrees
+.worktrees/

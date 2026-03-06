@@ -1,0 +1,293 @@
+{
+  "paper_type": "research",
+  "version": 7,
+  "steps": [
+    {
+      "id": "Background",
+      "label_zh": "背景",
+      "label_en": "Background",
+      "enabled": true,
+      "order": 0
+    },
+    {
+      "id": "Problem",
+      "label_zh": "问题",
+      "label_en": "Problem",
+      "enabled": true,
+      "order": 1
+    },
+    {
+      "id": "Method",
+      "label_zh": "方法",
+      "label_en": "Method",
+      "enabled": true,
+      "order": 2
+    },
+    {
+      "id": "Experiment",
+      "label_zh": "实验",
+      "label_en": "Experiment",
+      "enabled": true,
+      "order": 3
+    },
+    {
+      "id": "Result",
+      "label_zh": "结果",
+      "label_en": "Result",
+      "enabled": true,
+      "order": 4
+    },
+    {
+      "id": "Conclusion",
+      "label_zh": "结论",
+      "label_en": "Conclusion",
+      "enabled": true,
+      "order": 5
+    }
+  ],
+  "claim_kinds": [
+    {
+      "id": "Definition",
+      "label_zh": "定义",
+      "label_en": "Definition",
+      "enabled": true
+    },
+    {
+      "id": "Method",
+      "label_zh": "方法",
+      "label_en": "Method",
+      "enabled": true
+    },
+    {
+      "id": "Result",
+      "label_zh": "结果",
+      "label_en": "Result",
+      "enabled": true
+    },
+    {
+      "id": "Conclusion",
+      "label_zh": "结论",
+      "label_en": "Conclusion",
+      "enabled": true
+    },
+    {
+      "id": "Gap",
+      "label_zh": "缺口",
+      "label_en": "Gap",
+      "enabled": true
+    },
+    {
+      "id": "Critique",
+      "label_zh": "批判",
+      "label_en": "Critique",
+      "enabled": true
+    },
+    {
+      "id": "Limitation",
+      "label_zh": "局限",
+      "label_en": "Limitation",
+      "enabled": true
+    },
+    {
+      "id": "FutureWork",
+      "label_zh": "未来工作",
+      "label_en": "FutureWork",
+      "enabled": true
+    },
+    {
+      "id": "Comparison",
+      "label_zh": "对比",
+      "label_en": "Comparison",
+      "enabled": true
+    },
+    {
+      "id": "Assumption",
+      "label_zh": "假设",
+      "label_en": "Assumption",
+      "enabled": true
+    },
+    {
+      "id": "Scope",
+      "label_zh": "范围",
+      "label_en": "Scope",
+      "enabled": true
+    },
+    {
+      "id": "Taxonomy",
+      "label_zh": "分类",
+      "label_en": "Taxonomy",
+      "enabled": true
+    }
+  ],
+  "rules": {
+    "claims_per_paper_min": 22,
+    "claims_per_paper_max": 44,
+    "machine_evidence_min": 1,
+    "machine_evidence_max": 2,
+    "logic_evidence_min": 1,
+    "logic_evidence_max": 2,
+    "citation_context_sentence_window": 1,
+    "targets_per_claim_max": 3,
+    "require_targets_for_kinds": [
+      "Gap",
+      "Critique",
+      "Limitation",
+      "Comparison"
+    ],
+    "evidence_verification": "llm",
+    "phase2_critical_steps": [
+      "Method",
+      "Experiment",
+      "Result",
+      "Conclusion"
+    ],
+    "phase2_critical_kinds": [],
+    "phase2_conflict_positive_terms_en": [
+      "increase",
+      "improve",
+      "outperform",
+      "higher",
+      "gain",
+      "enhance",
+      "boost",
+      "better"
+    ],
+    "phase2_conflict_negative_terms_en": [
+      "decrease",
+      "reduce",
+      "lower",
+      "worse",
+      "decline",
+      "drop",
+      "weaken",
+      "underperform"
+    ],
+    "phase2_conflict_positive_terms_zh": [
+      "提高",
+      "增加",
+      "改善",
+      "优于",
+      "更高",
+      "增强"
+    ],
+    "phase2_conflict_negative_terms_zh": [
+      "降低",
+      "减少",
+      "恶化",
+      "劣于",
+      "更低",
+      "下降",
+      "削弱"
+    ],
+    "phase2_conflict_stop_terms_en": [
+      "the",
+      "and",
+      "of",
+      "to",
+      "in",
+      "for",
+      "with",
+      "we",
+      "our",
+      "paper",
+      "method",
+      "result"
+    ],
+    "phase2_conflict_stop_terms_zh": [
+      "本文",
+      "该文",
+      "我们",
+      "其",
+      "通过",
+      "方法",
+      "结果",
+      "进行"
+    ],
+    "phase1_claim_worker_count": 3,
+    "phase1_logic_chunks_max": 80,
+    "phase1_logic_chunk_chars_max": 460,
+    "phase1_logic_lexical_topk_min": 7,
+    "phase1_logic_lexical_topk_multiplier": 3,
+    "phase1_logic_evidence_weak_score_threshold": 2,
+    "phase1_claim_chunks_max": 9999,
+    "phase1_claims_per_chunk_max": 3,
+    "phase1_chunk_chars_max": 1800,
+    "phase1_doc_chars_max": 48000,
+    "phase1_evidence_verify_batch_size": 6,
+    "phase1_evidence_lexical_topk": 10,
+    "phase1_evidence_verify_candidates_max": 6,
+    "phase1_gate_supported_ratio_min": 0.5,
+    "phase1_gate_step_coverage_min": 0.45,
+    "phase1_grounding_mode": "skip",
+    "phase1_grounding_semantic_supported_min": 0.75,
+    "phase1_grounding_semantic_weak_min": 0.55,
+    "phase1_grounding_supported_overlap_min": 0.66,
+    "phase1_grounding_weak_overlap_min": 0.42,
+    "phase1_grounding_supported_score_substring": 0.8,
+    "phase1_grounding_supported_score_overlap": 0.74,
+    "phase1_grounding_weak_score": 0.56,
+    "phase1_grounding_insufficient_score": 0.18,
+    "phase1_grounding_unsupported_score": 0.22,
+    "phase1_grounding_empty_score": 0,
+    "phase2_gate_critical_slot_coverage_min": 0.4,
+    "phase2_gate_critical_slot_bypass_excellent": true,
+    "phase2_gate_critical_slot_bypass_supported_min": 0.95,
+    "phase2_gate_conflict_rate_max": 0.3,
+    "phase2_auto_step_kind_map_enabled": true,
+    "phase2_auto_step_kind_map_trigger_slots": 12,
+    "phase2_auto_step_kind_map_max_kinds_per_step": 2,
+    "phase2_conflict_mode": "hybrid",
+    "phase2_conflict_semantic_threshold": 0.74,
+    "phase2_conflict_candidate_max_pairs": 120,
+    "phase2_conflict_gate_min_comparable_pairs": 4,
+    "phase2_conflict_gate_min_conflict_pairs": 1,
+    "phase2_conflict_shared_tokens_min": 2,
+    "phase2_conflict_samples_max": 10,
+    "citation_purpose_max_contexts_per_cite": 3,
+    "citation_purpose_max_context_chars": 1000,
+    "citation_purpose_max_cites_per_batch": 72,
+    "citation_purpose_max_labels_per_cite": 3,
+    "citation_purpose_fallback_score": 0.35,
+    "phase1_filter_reference_sections": true,
+    "phase1_excluded_section_terms": [
+      "reference",
+      "references",
+      "bibliography",
+      "further reading",
+      "acknowledg",
+      "funding",
+      "appendix references",
+      "参考文献",
+      "致谢"
+    ],
+    "reference_recovery_enabled": true,
+    "reference_recovery_trigger_max_existing_refs": 12,
+    "reference_recovery_trigger_min_refs": 18,
+    "reference_recovery_trigger_min_refs_per_1k_chars": 0.45,
+    "reference_recovery_max_refs": 220,
+    "reference_recovery_doc_chars_max": 64000,
+    "reference_recovery_agent_timeout_sec": 110.0,
+    "citation_event_recovery_enabled": true,
+    "citation_event_recovery_trigger_max_existing_events": 6,
+    "citation_event_recovery_trigger_min_events_per_ref": 0.25,
+    "citation_event_recovery_numeric_bracket_enabled": true,
+    "citation_event_recovery_paren_numeric_enabled": true,
+    "citation_event_recovery_author_year_enabled": true,
+    "citation_event_recovery_max_events_per_chunk": 12,
+    "citation_event_recovery_context_chars": 900,
+    "crossref_confidence_threshold": 0.55
+  },
+  "prompts": {
+    "logic_claims_system": "You extract a paper's reasoning structure for a knowledge graph.\nReturn STRICT JSON only.\nBalance precision and coverage.\nStay faithful to text; do not invent details.\nLogic summaries: 2-6 full sentences per supported step.\nFor each logic step, include evidence_quotes: 1-3 verbatim quotes (20-200 chars each) copied directly from the paper text that support this summary.\nClaims: atomic, non-duplicate, one step_type each, claim_kinds list from allowed kinds.\nConfidence in [0,1].",
+    "logic_claims_user_template": "Extraction mode: BALANCED.\n\nTitle: {{title}}\nAuthors: {{authors}}\nYear: {{year}}\nDOI: {{doi}}\n\nAllowed step types: {{step_ids}}\nAllowed claim kinds: {{kind_ids}}\nTarget claims: {{cmin}}-{{cmax}}\n\nPaper text:\n{{body}}\n\nOutput JSON schema:\n{\n  \"logic\": {\"<StepType>\":{\"summary\":\"2-6 full sentences...\",\"confidence\":0.0,\"evidence_quotes\":[\"verbatim quote from paper...\"]}},\n  \"claims\": [{\"text\":\"1-2 full sentences...\",\"confidence\":0.0,\"step_type\":\"<StepType>\",\"claim_kinds\":[\"KindA\",\"KindB\"]}]\n}",
+    "evidence_pick_system": "Pick evidence chunks for claims.\nReturn STRICT JSON only.\nPrefer direct support and key metric/definition overlap.\nIf support is weak, choose best available and set weak=true.",
+    "evidence_pick_user_template": "Mode: BALANCED evidence mapping.\nPick {{emin}}-{{emax}} chunk_id(s) from candidates per claim.\nIf none strongly supports, return best 1 and weak=true.\n\nInput JSON:\n{{payload_json}}\n\nOutput JSON schema: { \"items\": [ {\"claim_key\":\"...\",\"evidence_chunk_ids\":[\"...\"],\"weak\":false} ] }",
+    "phase1_logic_bind_system": "Bind each logic summary to supporting chunk IDs.\nReturn STRICT JSON only.\nUse only provided chunk IDs.\nKeep evidence concise and relevant.\nSet evidence_weak=true when support is weak.",
+    "phase1_logic_bind_user_template": "Mode: BALANCED logic binding.\nAllowed step types: {{step_ids}}\n\nLogic summaries JSON:\n{{logic_brief_json}}\n\nChunk catalog JSON:\n{{chunks_json}}\n\nOutput JSON schema: { \"items\": [ {\"step_type\":\"Background\",\"evidence_chunk_ids\":[\"c1\",\"c2\"],\"evidence_weak\":false} ] }",
+    "phase1_chunk_claim_extract_system": "Extract atomic claims from one paper chunk. Return STRICT JSON only.\n\nGROUNDING:\n- Each claim must be directly supported by the provided chunk text.\n- Do not invent information outside this chunk.\n\nSCIENTIFIC VALUE (CRITICAL):\n- Extract ONLY scientific contributions, methods, findings, and conclusions.\n- DO NOT extract meta-information such as:\n  * Author names, affiliations, correspondence addresses\n  * Submission/acceptance/publication dates\n  * Funding sources, grant numbers, acknowledgments\n  * Journal names, DOIs, paper identifiers\n  * Conflict of interest statements\n  * Dataset availability, code repository links (unless core to the method)\n- Focus on WHAT was discovered/proposed, not WHO/WHEN/WHERE published.\n- When encountering pure meta-information chunks, output empty claims array.",
+    "phase1_chunk_claim_extract_user_template": "Mode: BALANCED chunk extraction.\nAllowed step types: {{step_ids}}\nAllowed claim kinds: {{kind_ids}}\nMax claims: {{max_claims}}\n\nChunk text:\n{{chunk_text}}\n\nOutput JSON schema: { \"claims\": [ {\"text\":\"...\",\"step_type\":\"Background\",\"claim_kinds\":[\"Definition\"],\"confidence\":0.0} ] }",
+    "citation_purpose_batch_system": "Classify citation PURPOSE in mechanics paper.\nReturn STRICT JSON only.\nOutput 1-3 labels from allowed list with scores in [0,1].\nIf weak evidence, use Background/Summary with lower confidence.\nAllowed labels: {{allowed_labels}}",
+    "citation_purpose_batch_user_template": "Mode: BALANCED citation purpose classification.\nCiting paper title: {{citing_title}}\n\nInput JSON:\n{{cites_json}}\n\nAllowed labels: {{allowed_labels}}\n\nOutput JSON schema: { \"cites\": [ {\"cited_paper_id\":\"doi:10....\",\"labels\":[\"MethodUse\"],\"scores\":[0.72]} ] }"
+  },
+  "name": "均衡-测试"
+}

@@ -1,0 +1,336 @@
+.discoveryPage {
+  max-width: 1440px;
+}
+
+.discoveryActionWrap {
+  width: 100%;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.discoveryConfigPanel {
+  width: min(100%, 1120px);
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(146, 168, 217, 0.24);
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+  background:
+    radial-gradient(circle at 22% 12%, rgba(124, 255, 203, 0.1), transparent 36%),
+    radial-gradient(circle at 80% 10%, rgba(126, 139, 255, 0.12), transparent 40%),
+    rgba(146, 168, 217, 0.08);
+}
+
+.discoveryConfigHint {
+  font-size: 12px;
+  color: rgba(217, 230, 249, 0.88);
+  line-height: 1.45;
+}
+
+.discoveryConfigHint code {
+  font-size: 11px;
+}
+
+.discoveryParamGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.discoveryField {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(146, 168, 217, 0.2);
+  border-radius: 11px;
+  padding: 8px 9px;
+  background: rgba(5, 10, 20, 0.34);
+}
+
+.discoveryField--wide {
+  grid-column: span 2;
+}
+
+.discoveryFieldLabel {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(213, 227, 248, 0.86);
+  text-transform: uppercase;
+}
+
+.discoveryFieldHint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(185, 203, 232, 0.72);
+}
+
+.discoveryField .input {
+  width: 100%;
+}
+
+.discoveryDomainInput {
+  width: 100%;
+  max-width: 100%;
+}
+
+.discoveryDryRun {
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.discoveryDryRun input {
+  accent-color: rgba(124, 255, 203, 0.9);
+}
+
+.discoveryToggleBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.discoverySummaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.discoveryButtonBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.discoveryGrid {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
+  align-items: start;
+}
+
+.pipelineList {
+  display: grid;
+  gap: 10px;
+}
+
+.pipelineItem {
+  position: relative;
+  border: 1px solid rgba(146, 168, 217, 0.26);
+  background: rgba(146, 168, 217, 0.08);
+  border-radius: 12px;
+  padding: 10px 12px 10px 14px;
+  text-align: left;
+}
+
+.pipelineItem::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: rgba(146, 168, 217, 0.38);
+}
+
+.pipelineItem.is-active {
+  border-color: rgba(124, 255, 203, 0.5);
+  background: rgba(124, 255, 203, 0.14);
+}
+
+.pipelineItem.is-active::before {
+  background: rgba(124, 255, 203, 0.9);
+}
+
+.pipelineItem.is-completed {
+  border-color: rgba(124, 255, 203, 0.38);
+}
+
+.pipelineItem.is-completed::before {
+  background: rgba(124, 255, 203, 0.76);
+}
+
+.pipelineItem.is-error {
+  border-color: rgba(255, 122, 122, 0.5);
+  background: rgba(255, 122, 122, 0.14);
+}
+
+.pipelineItem.is-error::before {
+  background: rgba(255, 122, 122, 0.88);
+}
+
+.pipelineMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pipelineTitle {
+  margin-top: 5px;
+  font-size: 14px;
+  font-weight: 640;
+  color: rgba(239, 247, 255, 0.96);
+  line-height: 1.4;
+}
+
+.pipelineDesc {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: rgba(214, 226, 244, 0.84);
+  line-height: 1.55;
+}
+
+.traceLog {
+  border: 1px solid rgba(146, 168, 217, 0.22);
+  background: rgba(4, 9, 18, 0.5);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+  max-height: 176px;
+  overflow: auto;
+}
+
+.traceLine {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: rgba(210, 226, 248, 0.82);
+  line-height: 1.5;
+  border-bottom: 1px dashed rgba(146, 168, 217, 0.18);
+  padding-bottom: 6px;
+}
+
+.traceLine:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.discoveryMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metricCard {
+  border-radius: 10px;
+  border: 1px solid rgba(146, 168, 217, 0.24);
+  background: rgba(146, 168, 217, 0.08);
+  padding: 10px 12px;
+}
+
+.metricLabel {
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.metricValue {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: rgba(243, 250, 255, 0.96);
+}
+
+.candidateList {
+  display: grid;
+  gap: 10px;
+}
+
+.candidateCard {
+  text-align: left;
+  width: 100%;
+  border: 1px solid rgba(146, 168, 217, 0.24);
+  border-radius: 12px;
+  background: rgba(146, 168, 217, 0.09);
+  padding: 11px 12px;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.candidateCard:hover {
+  border-color: rgba(124, 255, 203, 0.48);
+  background: rgba(124, 255, 203, 0.12);
+  transform: translateY(-1px);
+}
+
+.candidateCard.is-active {
+  border-color: rgba(124, 255, 203, 0.58);
+  background: linear-gradient(145deg, rgba(124, 255, 203, 0.18), rgba(126, 139, 255, 0.16));
+}
+
+.candidateTitle {
+  font-size: 13px;
+  font-weight: 620;
+  color: rgba(241, 248, 255, 0.95);
+  line-height: 1.45;
+}
+
+.candidateMetaRow {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.qualityMeter {
+  margin-top: 9px;
+  border-radius: 999px;
+  height: 7px;
+  overflow: hidden;
+  background: rgba(146, 168, 217, 0.22);
+}
+
+.qualityBar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 179, 106, 0.92), rgba(124, 255, 203, 0.94));
+}
+
+@media (max-width: 1100px) {
+  .discoveryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .discoveryParamGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .discoveryField--wide {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 680px) {
+  .discoveryActionWrap {
+    width: 100%;
+  }
+
+  .discoveryParamGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .discoveryField--wide {
+    grid-column: span 1;
+  }
+
+  .discoveryToggleBar,
+  .discoveryButtonBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .discoveryMetrics {
+    grid-template-columns: 1fr;
+  }
+}
