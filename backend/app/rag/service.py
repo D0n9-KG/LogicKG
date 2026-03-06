@@ -11,6 +11,11 @@ from app.graph.neo4j_client import Neo4jClient
 from app.ingest.paper_meta import load_canonical_meta
 from app.rag.evidence_orchestrator import _rrf_fuse, merge_evidence
 from app.rag.models import EvidenceBundle
+from app.rag.fusion_retrieval import (
+    format_fusion_evidence_block,
+    has_dual_evidence,
+    rank_fusion_basics,
+)
 from app.rag.retrieval import latest_run_dir, load_chunks_from_run, lexical_retrieve
 from app.rag.tree_router import route_query
 from app.retrieval.pageindex_adapter import PageIndexAdapter
@@ -461,6 +466,7 @@ def _prepare_ask_v2_context(
     # Hybrid graph context + structured knowledge
     graph_context = None
     structured_knowledge = None
+    fusion_evidence: list[dict[str, Any]] = []
     if evidence:
         paper_sources = list({e["paper_source"] for e in evidence if e.get("paper_source")})
         if paper_sources:
@@ -474,9 +480,15 @@ def _prepare_ask_v2_context(
                         structured_knowledge = client.get_structured_knowledge_for_papers(paper_sources)
                     except Exception:
                         structured_knowledge = None
+                    try:
+                        fusion_rows = client.list_fusion_basics_by_paper_sources(paper_sources, limit=200)
+                        fusion_evidence = rank_fusion_basics(question, fusion_rows, k=min(12, max(4, want)))
+                    except Exception:
+                        fusion_evidence = []
             except Exception:
                 graph_context = None
                 structured_knowledge = None
+                fusion_evidence = []
 
     system = _build_system_prompt(domain_prompt, locale=normalized_locale)
     graph_block = _format_graph_context(graph_context)
@@ -486,10 +498,17 @@ def _prepare_ask_v2_context(
         user_parts.append(knowledge_block)
     if graph_block:
         user_parts.append(graph_block)
+    if fusion_evidence:
+        user_parts.append(format_fusion_evidence_block(fusion_evidence))
     user = "\n\n".join(user_parts)
 
     bundle = EvidenceBundle(
         evidence=evidence,
+        fusion_evidence=fusion_evidence,
+        dual_evidence_coverage=has_dual_evidence(
+            paper_evidence_count=len(evidence),
+            textbook_evidence_count=len(fusion_evidence),
+        ),
         retrieval_mode=retrieval_mode,
         graph_context=graph_context,
         structured_knowledge=structured_knowledge,

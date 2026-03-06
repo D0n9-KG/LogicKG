@@ -7,6 +7,7 @@ from app.ingest.rebuild import rebuild_global_faiss, rebuild_paper
 from app.ingest.upload_actions import commit_ready, replace_with_new
 from app.ingest.textbook_pipeline import ingest_textbook
 from app.discovery.service import run_discovery_batch
+from app.fusion.service import rebuild_fusion_graph
 from app.evolution.service import rebuild_evolution_graph
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
@@ -186,6 +187,21 @@ def handle_rebuild_similarity(
         update(stage, p, msg)
 
     return rebuild_similarity_global(progress=progress, log=log)
+
+
+def handle_rebuild_fusion(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    payload = _load_payload(task_id)
+    paper_id = str(payload.get("paper_id") or "").strip() or None
+    update("fusion:rebuild", 0.02, "Rebuilding fusion graph and communities")
+
+    def progress(stage: str, p: float, msg: str | None = None) -> None:
+        update(stage, p, msg)
+
+    return rebuild_fusion_graph(paper_id=paper_id, progress=progress, log=log)
 
 
 def handle_rebuild_evolution(

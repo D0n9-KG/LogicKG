@@ -1,8 +1,11 @@
 """Tests for RAG service helpers (P2-14)."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.rag.service import (
     _rrf_fuse,
+    _prepare_ask_v2_context,
     _build_system_prompt,
     _format_graph_context,
     _format_structured_knowledge,
@@ -289,3 +292,85 @@ def test_build_system_prompt_mentions_claims():
     """System prompt should instruct LLM to reference claim IDs."""
     prompt = _build_system_prompt()
     assert "[CL:" in prompt
+
+
+def test_prepare_ask_v2_context_adds_fusion_evidence(monkeypatch):
+    class _Doc:
+        def __init__(self):
+            self.page_content = "Finite element method is used."
+            self.metadata = {
+                "chunk_id": "c1",
+                "paper_source": "paper-A",
+                "paper_title": "Paper A",
+                "md_path": "runs/paper-A/content.md",
+                "start_line": 1,
+                "end_line": 5,
+                "section": "Method",
+                "kind": "chunk",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, question, k=0):
+            return [(_Doc(), 0.91)]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return [{"paper_source": paper_sources[0], "cited_title": "Prior Work"}]
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {
+                "logic_steps": [{"paper_source": paper_sources[0], "step_type": "Method", "summary": "Uses FEM"}],
+                "claims": [],
+            }
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return [
+                {
+                    "paper_source": paper_sources[0],
+                    "paper_id": "doi:10.1000/test",
+                    "logic_step_id": "ls-1",
+                    "step_type": "Method",
+                    "entity_id": "ent-1",
+                    "entity_name": "Finite Element Method",
+                    "entity_type": "method",
+                    "description": "A numerical method for PDE discretization.",
+                    "score": 0.83,
+                    "evidence_quote": "Finite element method discretizes structure.",
+                }
+            ]
+
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: _FakeStore())
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    ctx = _prepare_ask_v2_context("What method is used?", k=4)
+
+    bundle = ctx["bundle"]
+    assert bundle.fusion_evidence
+    assert bundle.dual_evidence_coverage is True
+    assert "Textbook Fundamentals" in ctx["user"]

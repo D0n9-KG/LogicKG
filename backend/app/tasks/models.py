@@ -22,6 +22,7 @@ class TaskType(str, Enum):
     rebuild_faiss = "rebuild_faiss"
     rebuild_all = "rebuild_all"
     rebuild_similarity = "rebuild_similarity"
+    rebuild_fusion = "rebuild_fusion"
     rebuild_evolution = "rebuild_evolution"
     update_similarity_paper = "update_similarity_paper"
     ingest_textbook = "ingest_textbook"

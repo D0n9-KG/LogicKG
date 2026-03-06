@@ -42,8 +42,32 @@ class EvidenceItem(BaseModel):
     rrf_score: float | None = None
 
 
+class FusionEvidenceItem(BaseModel):
+    paper_source: str | None = None
+    paper_id: str | None = None
+    logic_step_id: str | None = None
+    step_type: str | None = None
+    entity_id: str | None = None
+    entity_name: str | None = None
+    entity_type: str | None = None
+    description: str | None = None
+    score: float | None = None
+    rank_score: float | None = None
+    reasons: list[str] | None = None
+    evidence_chunk_ids: list[str] | None = None
+    source_chunk_id: str | None = None
+    evidence_quote: str | None = None
+    source_chapter_id: str | None = None
+    textbook_id: str | None = None
+    textbook_title: str | None = None
+    chapter_id: str | None = None
+    chapter_title: str | None = None
+
+
 class EvidenceBundle(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
+    fusion_evidence: list[FusionEvidenceItem] = Field(default_factory=list)
+    dual_evidence_coverage: bool = False
     retrieval_mode: str = "faiss"
     graph_context: list[dict[str, Any]] | None = None
     structured_knowledge: dict[str, list[dict[str, Any]]] | None = None
@@ -54,6 +78,8 @@ class EvidenceBundle(BaseModel):
 class AskV2Response(BaseModel):
     answer: str
     evidence: list[EvidenceItem] = Field(default_factory=list)
+    fusion_evidence: list[FusionEvidenceItem] = Field(default_factory=list)
+    dual_evidence_coverage: bool = False
     retrieval_mode: str = "faiss"
     graph_context: list[dict[str, Any]] | None = None
     structured_knowledge: dict[str, list[dict[str, Any]]] | None = None

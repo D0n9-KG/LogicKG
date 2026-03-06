@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import hashlib
@@ -221,7 +221,7 @@ class Neo4jClient:
             "CREATE INDEX evidence_event_type IF NOT EXISTS FOR (ev:EvidenceEvent) ON (ev.event_type)",
             "CREATE INDEX evidence_event_status IF NOT EXISTS FOR (ev:EvidenceEvent) ON (ev.status)",
             "CREATE INDEX collection_name IF NOT EXISTS FOR (co:Collection) ON (co.name)",
-            # ── Textbook sub-graph constraints & indexes ──
+            # 鈹€鈹€ Textbook sub-graph constraints & indexes 鈹€鈹€
             "CREATE CONSTRAINT textbook_id_unique IF NOT EXISTS FOR (t:Textbook) REQUIRE t.textbook_id IS UNIQUE",
             "CREATE CONSTRAINT chapter_id_unique IF NOT EXISTS FOR (tc:TextbookChapter) REQUIRE tc.chapter_id IS UNIQUE",
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (ke:KnowledgeEntity) REQUIRE ke.entity_id IS UNIQUE",
@@ -1310,7 +1310,7 @@ LIMIT 400
 
             def _norm_claim_text(t: str) -> str:
                 s = " ".join((t or "").split()).strip()
-                while s and s[-1] in ".;。；":
+                while s and s[-1] in ".;銆傦紱":
                     s = s[:-1].rstrip()
                 return s
 
@@ -3427,9 +3427,9 @@ RETURN count(c) AS updated
             return 0
         return int(row["updated"] or 0)
 
-    # ──────────────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Textbook sub-graph CRUD
-    # ──────────────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def upsert_textbook(
         self,
@@ -3586,6 +3586,355 @@ RETURN count(*) AS cnt
             result = session.run(cypher, chapter_id=str(chapter_id), entity_ids=[str(e) for e in entity_ids])
             row = result.single()
         return int(row["cnt"]) if row else 0
+
+    def create_fusion_explains_edges(self, links: list[dict]) -> int:
+        """Create or update EXPLAINS edges between LogicStep and KnowledgeEntity."""
+        if not links:
+            return 0
+        cypher = """
+UNWIND $rows AS r
+MATCH (ls:LogicStep {logic_step_id: r.logic_step_id})
+MATCH (e:KnowledgeEntity {entity_id: r.entity_id})
+MERGE (ls)-[rel:EXPLAINS]->(e)
+SET rel.score = coalesce(r.score, rel.score),
+    rel.reasons = coalesce(r.reasons, rel.reasons),
+    rel.evidence_chunk_ids = coalesce(r.evidence_chunk_ids, rel.evidence_chunk_ids),
+    rel.source_chunk_id = CASE
+        WHEN r.source_chunk_id IS NULL OR trim(toString(r.source_chunk_id)) = '' THEN rel.source_chunk_id
+        ELSE r.source_chunk_id
+    END,
+    rel.evidence_quote = CASE
+        WHEN r.evidence_quote IS NULL OR trim(toString(r.evidence_quote)) = '' THEN rel.evidence_quote
+        ELSE r.evidence_quote
+    END,
+    rel.source_chapter_id = CASE
+        WHEN r.source_chapter_id IS NULL OR trim(toString(r.source_chapter_id)) = '' THEN rel.source_chapter_id
+        ELSE r.source_chapter_id
+    END,
+    rel.updated_at = datetime()
+RETURN count(rel) AS cnt
+"""
+        rows = []
+        for link in links:
+            sid = str(link.get("logic_step_id") or "").strip()
+            eid = str(link.get("entity_id") or "").strip()
+            if not sid or not eid:
+                continue
+            rows.append(
+                {
+                    "logic_step_id": sid,
+                    "entity_id": eid,
+                    "score": float(link["score"]) if link.get("score") is not None else None,
+                    "reasons": [str(x) for x in (link.get("reasons") or []) if str(x).strip()],
+                    "evidence_chunk_ids": [
+                        str(x) for x in (link.get("evidence_chunk_ids") or []) if str(x).strip()
+                    ],
+                    "source_chunk_id": str(link.get("source_chunk_id") or "").strip() or None,
+                    "evidence_quote": str(link.get("evidence_quote") or "").strip() or None,
+                    "source_chapter_id": str(link.get("source_chapter_id") or "").strip() or None,
+                }
+            )
+        if not rows:
+            return 0
+        with self._driver.session() as session:
+            result = session.run(cypher, rows=rows)
+            row = result.single()
+        return int(row["cnt"]) if row else 0
+
+    def upsert_fusion_communities(self, communities: list[dict]) -> int:
+        """Write FusionCommunity nodes and IN_COMMUNITY memberships."""
+        if not communities:
+            return 0
+
+        cypher = """
+UNWIND $rows AS r
+MERGE (fc:FusionCommunity {community_id: r.community_id})
+SET fc.title = r.title,
+    fc.confidence = r.confidence,
+    fc.representative_evidence = r.representative_evidence,
+    fc.updated_at = datetime()
+WITH fc, r
+UNWIND r.member_ids AS member_id
+OPTIONAL MATCH (ls:LogicStep {logic_step_id: member_id})
+OPTIONAL MATCH (cl:Claim {claim_id: member_id})
+OPTIONAL MATCH (ke:KnowledgeEntity {entity_id: member_id})
+WITH fc, r, coalesce(ls, cl, ke) AS m
+WHERE m IS NOT NULL
+MERGE (m)-[ic:IN_COMMUNITY]->(fc)
+SET ic.weight = r.weight
+RETURN count(DISTINCT fc) AS cnt
+"""
+        rows = []
+        for item in communities:
+            cid = str(item.get("community_id") or "").strip()
+            if not cid:
+                continue
+            members = [str(x).strip() for x in (item.get("member_ids") or []) if str(x).strip()]
+            if not members:
+                continue
+            rows.append(
+                {
+                    "community_id": cid,
+                    "title": str(item.get("title") or cid),
+                    "confidence": float(item.get("confidence") or 0.0),
+                    "representative_evidence": str(item.get("representative_evidence") or ""),
+                    "member_ids": members,
+                    "weight": float(item.get("weight") or 1.0),
+                }
+            )
+        if not rows:
+            return 0
+        with self._driver.session() as session:
+            result = session.run(cypher, rows=rows)
+            row = result.single()
+        return int(row["cnt"]) if row else 0
+
+    def upsert_fusion_keywords(self, keyword_rows: list[dict]) -> int:
+        """Write FusionKeyword nodes and HAS_KEYWORD edges from FusionCommunity."""
+        if not keyword_rows:
+            return 0
+        cypher = """
+UNWIND $rows AS r
+MATCH (fc:FusionCommunity {community_id: r.community_id})
+MERGE (fk:FusionKeyword {keyword_id: r.keyword_id})
+SET fk.keyword = r.keyword,
+    fk.weight = r.weight,
+    fk.updated_at = datetime()
+MERGE (fc)-[hk:HAS_KEYWORD]->(fk)
+SET hk.rank = r.rank,
+    hk.weight = r.weight
+RETURN count(hk) AS cnt
+"""
+        rows = []
+        for item in keyword_rows:
+            cid = str(item.get("community_id") or "").strip()
+            kid = str(item.get("keyword_id") or "").strip()
+            keyword = str(item.get("keyword") or "").strip()
+            if not cid or not kid or not keyword:
+                continue
+            rows.append(
+                {
+                    "community_id": cid,
+                    "keyword_id": kid,
+                    "keyword": keyword,
+                    "rank": int(item.get("rank") or 0),
+                    "weight": float(item.get("weight") or 0.0),
+                }
+            )
+        if not rows:
+            return 0
+        with self._driver.session() as session:
+            result = session.run(cypher, rows=rows)
+            row = result.single()
+        return int(row["cnt"]) if row else 0
+
+    def list_logic_steps_for_fusion(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
+        cypher = """
+MATCH (p:Paper)-[:HAS_LOGIC_STEP]->(ls:LogicStep)
+WHERE $paper_id = '' OR p.paper_id = $paper_id
+OPTIONAL MATCH (ls)-[:EVIDENCED_BY]->(ch:Chunk)
+WITH p, ls, collect(DISTINCT ch.chunk_id) AS evidence_chunk_ids
+RETURN ls.logic_step_id AS logic_step_id,
+       p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       ls.step_type AS step_type,
+       ls.summary AS summary,
+       ls.order AS step_order,
+       evidence_chunk_ids AS evidence_chunk_ids
+ORDER BY p.paper_id ASC, coalesce(ls.order, 999) ASC, ls.logic_step_id ASC
+LIMIT $limit
+"""
+        pid = str(paper_id or "").strip()
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_id=pid, limit=int(limit))]
+
+    def list_claims_for_fusion(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
+        cypher = """
+MATCH (p:Paper)-[:HAS_CLAIM]->(cl:Claim)
+WHERE $paper_id = '' OR p.paper_id = $paper_id
+RETURN cl.claim_id AS claim_id,
+       p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       cl.step_type AS step_type,
+       cl.text AS text,
+       cl.confidence AS confidence
+ORDER BY p.paper_id ASC, cl.step_type ASC, cl.claim_id ASC
+LIMIT $limit
+"""
+        pid = str(paper_id or "").strip()
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_id=pid, limit=int(limit))]
+
+    def list_textbook_entities_for_fusion(self, textbook_id: str | None = None, limit: int = 50000) -> list[dict]:
+        cypher = """
+MATCH (t:Textbook)-[:HAS_CHAPTER]->(c:TextbookChapter)-[:HAS_ENTITY]->(e:KnowledgeEntity)
+WHERE $textbook_id = '' OR t.textbook_id = $textbook_id
+RETURN DISTINCT e.entity_id AS entity_id,
+       e.name AS name,
+       e.entity_type AS entity_type,
+       e.description AS description,
+       coalesce(e.source_chapter_id, c.chapter_id) AS source_chapter_id
+ORDER BY e.name ASC
+LIMIT $limit
+"""
+        tid = str(textbook_id or "").strip()
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, textbook_id=tid, limit=int(limit))]
+
+    def list_textbook_relations_for_fusion(self, textbook_id: str | None = None, limit: int = 100000) -> list[dict]:
+        cypher = """
+MATCH (t:Textbook)-[:HAS_CHAPTER]->(:TextbookChapter)-[:HAS_ENTITY]->(e1:KnowledgeEntity)
+MATCH (e1)-[r:RELATES_TO]->(e2:KnowledgeEntity)
+WHERE $textbook_id = '' OR t.textbook_id = $textbook_id
+RETURN DISTINCT e1.entity_id AS start_id,
+       e2.entity_id AS end_id,
+       r.rel_type AS rel_type,
+       r.confidence AS confidence,
+       r.source_chunk_id AS source_chunk_id,
+       r.evidence_quote AS evidence_quote
+LIMIT $limit
+"""
+        tid = str(textbook_id or "").strip()
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, textbook_id=tid, limit=int(limit))]
+
+    def list_fusion_graph(self, limit_nodes: int = 1000, limit_edges: int = 3000) -> dict[str, list[dict]]:
+        cypher_nodes = """
+MATCH (n)
+WHERE n:LogicStep OR n:Claim OR n:KnowledgeEntity OR n:FusionCommunity OR n:FusionKeyword
+RETURN
+  CASE
+    WHEN n:LogicStep THEN n.logic_step_id
+    WHEN n:Claim THEN n.claim_id
+    WHEN n:KnowledgeEntity THEN n.entity_id
+    WHEN n:FusionCommunity THEN n.community_id
+    WHEN n:FusionKeyword THEN n.keyword_id
+    ELSE toString(id(n))
+  END AS id,
+  CASE
+    WHEN n:LogicStep THEN 'LogicStep'
+    WHEN n:Claim THEN 'Claim'
+    WHEN n:KnowledgeEntity THEN 'KnowledgeEntity'
+    WHEN n:FusionCommunity THEN 'FusionCommunity'
+    WHEN n:FusionKeyword THEN 'FusionKeyword'
+    ELSE 'Node'
+  END AS label,
+  coalesce(n.summary, n.text, n.name, n.title, n.keyword, '') AS text
+LIMIT $limit_nodes
+"""
+        cypher_edges = """
+MATCH (a)-[r]->(b)
+WHERE type(r) IN ['EXPLAINS', 'RELATES_TO', 'IN_COMMUNITY', 'HAS_KEYWORD', 'HAS_CLAIM']
+RETURN
+  CASE
+    WHEN a:LogicStep THEN a.logic_step_id
+    WHEN a:Claim THEN a.claim_id
+    WHEN a:KnowledgeEntity THEN a.entity_id
+    WHEN a:FusionCommunity THEN a.community_id
+    WHEN a:FusionKeyword THEN a.keyword_id
+    ELSE toString(id(a))
+  END AS source,
+  CASE
+    WHEN b:LogicStep THEN b.logic_step_id
+    WHEN b:Claim THEN b.claim_id
+    WHEN b:KnowledgeEntity THEN b.entity_id
+    WHEN b:FusionCommunity THEN b.community_id
+    WHEN b:FusionKeyword THEN b.keyword_id
+    ELSE toString(id(b))
+  END AS target,
+  type(r) AS type,
+  coalesce(r.score, r.weight, r.rank, 0.0) AS weight,
+  r.reasons AS reasons
+LIMIT $limit_edges
+"""
+        with self._driver.session() as session:
+            nodes = [dict(r) for r in session.run(cypher_nodes, limit_nodes=int(limit_nodes))]
+            edges = [dict(r) for r in session.run(cypher_edges, limit_edges=int(limit_edges))]
+        return {"nodes": nodes, "edges": edges}
+
+    def list_fusion_sections_for_paper(self, paper_id: str) -> list[dict]:
+        cypher = """
+MATCH (p:Paper {paper_id: $paper_id})-[:HAS_LOGIC_STEP]->(ls:LogicStep)
+OPTIONAL MATCH (ls)-[ex:EXPLAINS]->(:KnowledgeEntity)
+RETURN ls.logic_step_id AS logic_step_id,
+       ls.step_type AS step_type,
+       ls.summary AS summary,
+       ls.order AS step_order,
+       count(ex) AS basics_count,
+       max(ex.score) AS top_score
+ORDER BY coalesce(ls.order, 999) ASC, ls.step_type ASC
+"""
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_id=str(paper_id))]
+
+    def list_fusion_basics_for_section(self, paper_id: str, step_type: str, limit: int = 50) -> list[dict]:
+        cypher = """
+MATCH (p:Paper {paper_id: $paper_id})-[:HAS_LOGIC_STEP]->(ls:LogicStep)
+WHERE ls.step_type = $step_type
+MATCH (ls)-[ex:EXPLAINS]->(ke:KnowledgeEntity)
+OPTIONAL MATCH (tc:TextbookChapter {chapter_id: coalesce(ex.source_chapter_id, ke.source_chapter_id)})
+OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+RETURN ls.logic_step_id AS logic_step_id,
+       ls.step_type AS step_type,
+       ke.entity_id AS entity_id,
+       ke.name AS entity_name,
+       ke.entity_type AS entity_type,
+       ke.description AS description,
+       ex.score AS score,
+       ex.reasons AS reasons,
+       ex.evidence_chunk_ids AS evidence_chunk_ids,
+       ex.source_chunk_id AS source_chunk_id,
+       ex.evidence_quote AS evidence_quote,
+       tb.textbook_id AS textbook_id,
+       tb.title AS textbook_title,
+       tc.chapter_id AS chapter_id,
+       tc.title AS chapter_title
+ORDER BY coalesce(ex.score, 0.0) DESC, ke.name ASC
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [
+                dict(r)
+                for r in session.run(
+                    cypher,
+                    paper_id=str(paper_id),
+                    step_type=str(step_type),
+                    limit=int(limit),
+                )
+            ]
+
+    def list_fusion_basics_by_paper_sources(self, paper_sources: list[str], limit: int = 200) -> list[dict]:
+        if not paper_sources:
+            return []
+        cypher = """
+MATCH (p:Paper)-[:HAS_LOGIC_STEP]->(ls:LogicStep)-[ex:EXPLAINS]->(ke:KnowledgeEntity)
+WHERE p.paper_source IN $paper_sources
+RETURN p.paper_source AS paper_source,
+       p.paper_id AS paper_id,
+       ls.logic_step_id AS logic_step_id,
+       ls.step_type AS step_type,
+       ke.entity_id AS entity_id,
+       ke.name AS entity_name,
+       ke.entity_type AS entity_type,
+       ke.description AS description,
+       ex.score AS score,
+       ex.reasons AS reasons,
+       ex.evidence_chunk_ids AS evidence_chunk_ids,
+       ex.source_chunk_id AS source_chunk_id,
+       ex.evidence_quote AS evidence_quote,
+       ex.source_chapter_id AS source_chapter_id
+ORDER BY coalesce(ex.score, 0.0) DESC
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [
+                dict(r)
+                for r in session.run(
+                    cypher,
+                    paper_sources=[str(x) for x in paper_sources if str(x).strip()],
+                    limit=int(limit),
+                )
+            ]
 
     def list_textbooks(self, limit: int = 100) -> list[dict]:
         cypher = """
@@ -3767,3 +4116,4 @@ RETURN count(DISTINCT pr) AS prop_cnt
             result = session.run(cypher, items=items, now=datetime.now(tz=timezone.utc).isoformat())
             row = result.single()
         return {"entities": len(items), "propositions": int(row["prop_cnt"]) if row else 0}
+

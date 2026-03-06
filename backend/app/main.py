@@ -12,6 +12,7 @@ from app.api.routers.schema import router as schema_router
 from app.api.routers.collections import router as collections_router
 from app.api.routers.discovery import router as discovery_router
 from app.api.routers.config_center import router as config_center_router
+from app.api.routers.fusion import router as fusion_router
 from app.api.routers.textbooks import router as textbooks_router
 
 from app.tasks.handlers import (
@@ -20,6 +21,7 @@ from app.tasks.handlers import (
     handle_ingest_upload_ready,
     handle_discovery_batch,
     handle_rebuild_all,
+    handle_rebuild_fusion,
     handle_rebuild_evolution,
     handle_rebuild_faiss,
     handle_rebuild_paper,
@@ -50,6 +52,7 @@ app.include_router(schema_router)
 app.include_router(collections_router)
 app.include_router(discovery_router)
 app.include_router(config_center_router)
+app.include_router(fusion_router)
 app.include_router(textbooks_router)
 
 
@@ -61,6 +64,7 @@ def _start_tasks() -> None:
     task_manager.register(TaskType.rebuild_paper, handle_rebuild_paper)
     task_manager.register(TaskType.rebuild_faiss, handle_rebuild_faiss)
     task_manager.register(TaskType.rebuild_all, handle_rebuild_all)
+    task_manager.register(TaskType.rebuild_fusion, handle_rebuild_fusion)
     task_manager.register(TaskType.rebuild_evolution, handle_rebuild_evolution)
     task_manager.register(TaskType.rebuild_similarity, handle_rebuild_similarity)
     task_manager.register(TaskType.update_similarity_paper, handle_update_similarity_paper)

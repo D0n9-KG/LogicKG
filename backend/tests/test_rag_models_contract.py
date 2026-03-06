@@ -8,6 +8,8 @@ def test_ask_v2_response_contract_has_required_fields():
     assert hasattr(res, "answer")
     assert hasattr(res, "evidence")
     assert hasattr(res, "retrieval_mode")
+    assert hasattr(res, "fusion_evidence")
+    assert hasattr(res, "dual_evidence_coverage")
 
 
 def test_evidence_item_supports_paper_title():
