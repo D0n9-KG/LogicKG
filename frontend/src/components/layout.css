@@ -181,6 +181,7 @@
   --right-frame-w: var(--right-panel-w, var(--panel-w));
   --resize-w: 8px;
   grid-row: 3;
+  position: relative;
   display: grid;
   grid-template-columns: var(--left-frame-w) var(--resize-w) minmax(0, 1fr) var(--resize-w) var(--right-frame-w);
   overflow: hidden;
@@ -210,11 +211,14 @@
 }
 
 .kgResize {
+  grid-column: auto;
   position: relative;
   cursor: col-resize;
   background: transparent;
   transition: background-color 0.15s;
 }
+.kgResize--left { grid-column: 2; }
+.kgResize--right { grid-column: 4; }
 
 .kgResize::before {
   content: '';
@@ -246,6 +250,7 @@
 
 /* ── Panels (shared) ── */
 .kgPanel {
+  grid-column: auto;
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
@@ -257,6 +262,37 @@
 }
 .kgPanel--left { border-right: 1px solid var(--border); }
 .kgPanel--right { border-left: 1px solid var(--border); }
+.kgPanel--left { grid-column: 1; }
+.kgPanel--right { grid-column: 5; }
+.kgPanel--floating {
+  grid-column: 1 / -1;
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  z-index: 16;
+  max-width: calc(100% - 72px);
+  overflow: hidden;
+  box-shadow:
+    0 18px 48px rgba(2, 8, 23, 0.56),
+    0 0 0 1px rgba(125, 211, 252, 0.12);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 36, 0.94), rgba(3, 10, 23, 0.92)),
+    var(--bg-panel);
+}
+.kgPanel--floating.kgPanel--left {
+  left: 10px;
+  right: auto;
+  width: var(--left-frame-w);
+}
+.kgPanel--floating.kgPanel--right {
+  left: auto;
+  right: 10px;
+  width: var(--right-frame-w);
+}
+.kgPanel--floating .kgPanelContent,
+.kgPanel--floating .kgPanelBody {
+  min-height: 0;
+}
 
 .kgPanelHeader {
   display: flex;
@@ -325,6 +361,7 @@
 
 /* ── Canvas ── */
 .kgCanvasSlot {
+  grid-column: 3;
   position: relative;
   overflow: hidden;
   background:

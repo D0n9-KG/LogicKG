@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import ForceGraph3D from '3d-force-graph'
 import * as THREE from 'three'
 import { useI18n } from '../i18n'
+import { buildFitAllCameraTarget, buildGraph3DSceneConfig, buildGraph3DViewConfig } from './graph3dModel'
 import type { GraphElement, SelectedNode } from '../state/types'
 
 type Props = {
@@ -32,7 +33,28 @@ type FGLink = {
 }
 
 type Graph3DHandle = {
-  graphData: (data: { nodes: FGNode[]; links: FGLink[] }) => void
+  graphData: (data?: { nodes: FGNode[]; links: FGLink[] }) => { nodes: FGNode[]; links: FGLink[] } | void
+  zoomToFit: (ms?: number, paddingPx?: number, nodeFilterFn?: (node: FGNode) => boolean) => void
+  cameraPosition: (position?: { x?: number; y?: number; z?: number }, lookAt?: { x: number; y: number; z: number }, ms?: number) => void
+  getGraphBbox: (nodeFilterFn?: (node: FGNode) => boolean) => { x: [number, number]; y: [number, number]; z: [number, number] } | null
+  onEngineStop: (callback: (() => void) | null) => void
+  controls: () =>
+    | {
+        enableDamping?: boolean
+        dampingFactor?: number
+        rotateSpeed?: number
+        zoomSpeed?: number
+        panSpeed?: number
+        minDistance?: number
+        maxDistance?: number
+        autoRotate?: boolean
+        autoRotateSpeed?: number
+      }
+    | null
+  camera: () => THREE.Camera & { position: THREE.Vector3 }
+  scene: () => THREE.Scene
+  d3VelocityDecay: (value: number) => void
+  d3Force: (name: string) => unknown
 }
 
 const LABEL_SHOW_DISTANCE = 190
@@ -173,6 +195,9 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph3DHandle | null>(null)
   const frameRef = useRef<number | null>(null)
+  const autoFitTimerRef = useRef<number | null>(null)
+  const pendingAutoFitRef = useRef(false)
+  const viewConfigRef = useRef(buildGraph3DViewConfig(0))
   const labelSpritesRef = useRef<Map<string, THREE.Sprite>>(new Map())
   const hoveredNodeIdRef = useRef<string | null>(null)
   const onSelectNodeRef = useRef(onSelectNode)
@@ -216,12 +241,64 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
     return { nodes: nextNodes, links: nextLinks }
   }, [elements])
 
+  const applyGraphFit = (fg: Graph3DHandle, animateMs: number) => {
+    const container = containerRef.current
+    const graphData = fg.graphData() as { nodes: FGNode[]; links: FGLink[] } | void
+    const nodeCount = graphData?.nodes.length ?? nodes.length
+    const finiteNodeFilter = (node: FGNode) => Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z)
+    const camera = fg.camera() as THREE.Camera & {
+      position: THREE.Vector3
+      fov?: number
+      aspect?: number
+      far?: number
+      updateProjectionMatrix?: () => void
+    }
+    const bounds = fg.getGraphBbox?.(finiteNodeFilter)
+    if (!container || !bounds) {
+      fg.zoomToFit(animateMs, viewConfigRef.current.autoFitPadding)
+      return
+    }
+
+    const aspect = Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1)
+    const fitTarget = buildFitAllCameraTarget(bounds, {
+      aspect,
+      fovDeg: camera instanceof THREE.PerspectiveCamera ? camera.fov : Number(camera.fov) || 40,
+      minDistance: viewConfigRef.current.minDistance,
+    })
+    if (![fitTarget.position.x, fitTarget.position.y, fitTarget.position.z, fitTarget.lookAt.x, fitTarget.lookAt.y, fitTarget.lookAt.z].every(Number.isFinite)) {
+      fg.zoomToFit(animateMs, viewConfigRef.current.autoFitPadding, finiteNodeFilter)
+      return
+    }
+    viewConfigRef.current = buildGraph3DViewConfig(nodeCount, fitTarget.diagonal)
+    const sceneConfig = buildGraph3DSceneConfig(nodeCount, fitTarget.diagonal, fitTarget.distance)
+
+    const controls = fg.controls()
+    if (controls) {
+      controls.zoomSpeed = viewConfigRef.current.zoomSpeed
+      controls.minDistance = viewConfigRef.current.minDistance
+      controls.maxDistance = Math.max(viewConfigRef.current.maxDistance, Math.round(fitTarget.distance * 8))
+    }
+
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.aspect = aspect
+      camera.far = Math.max(camera.far, fitTarget.distance * 10)
+      camera.updateProjectionMatrix()
+    } else if (typeof camera.updateProjectionMatrix === 'function' && typeof camera.far === 'number') {
+      camera.far = Math.max(camera.far, fitTarget.distance * 10)
+        camera.updateProjectionMatrix()
+    }
+
+    fg.scene().fog = new THREE.FogExp2(0x01030a, sceneConfig.fogDensity)
+    fg.cameraPosition(fitTarget.position, fitTarget.lookAt, animateMs)
+  }
+
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
     const labelSprites = labelSpritesRef.current
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    viewConfigRef.current = buildGraph3DViewConfig(nodes.length)
     const fg = (() => {
       const originalWarn = console.warn
       const suppressClockWarning = (message: unknown) =>
@@ -330,12 +407,12 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
       controls.enableDamping = true
       controls.dampingFactor = 0.08
       controls.rotateSpeed = 0.7
-      controls.zoomSpeed = 0.86
+      controls.zoomSpeed = viewConfigRef.current.zoomSpeed
       controls.panSpeed = 0.8
-      controls.minDistance = 56
-      controls.maxDistance = 980
-      controls.autoRotate = !prefersReducedMotion
-      controls.autoRotateSpeed = 0.2
+      controls.minDistance = viewConfigRef.current.minDistance
+      controls.maxDistance = viewConfigRef.current.maxDistance
+      controls.autoRotate = false
+      controls.autoRotateSpeed = prefersReducedMotion ? 0 : 0.2
     }
 
     fg.d3VelocityDecay(0.32)
@@ -346,7 +423,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
     linkForce?.strength?.(0.22)
 
     const scene = fg.scene()
-    scene.fog = new THREE.FogExp2(0x01030a, 0.0017)
+    scene.fog = null
     scene.add(new THREE.AmbientLight(0x94a3b8, 1.5))
     scene.add(new THREE.HemisphereLight(0x7dd3fc, 0x020617, 1.3))
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.55)
@@ -390,13 +467,22 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
       frameRef.current = window.requestAnimationFrame(updateLabels)
     }
 
+    fg.onEngineStop(() => {
+      if (!pendingAutoFitRef.current || !graphRef.current) return
+      applyGraphFit(graphRef.current, viewConfigRef.current.autoFitMs)
+      pendingAutoFitRef.current = false
+    })
+
     frameRef.current = window.requestAnimationFrame(updateLabels)
-    graphRef.current = fg
+    graphRef.current = fg as unknown as Graph3DHandle
     applyNavHint(container, t('左键旋转，滚轮/中键缩放，右键平移', 'Left-click: rotate, mouse wheel/middle-click: zoom, right-click: pan'))
 
     return () => {
       if (frameRef.current) window.cancelAnimationFrame(frameRef.current)
       frameRef.current = null
+      if (autoFitTimerRef.current) window.clearTimeout(autoFitTimerRef.current)
+      autoFitTimerRef.current = null
+      pendingAutoFitRef.current = false
       hoveredNodeIdRef.current = null
       container.style.cursor = 'default'
 
@@ -426,8 +512,25 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
   }, [t])
 
   useEffect(() => {
-    if (!graphRef.current) return
-    graphRef.current.graphData({ nodes, links })
+    const fg = graphRef.current
+    if (!fg) return
+    viewConfigRef.current = buildGraph3DViewConfig(nodes.length)
+    const controls = fg.controls()
+    if (controls) {
+      controls.zoomSpeed = viewConfigRef.current.zoomSpeed
+      controls.minDistance = viewConfigRef.current.minDistance
+      controls.maxDistance = viewConfigRef.current.maxDistance
+    }
+    pendingAutoFitRef.current = nodes.length > 0
+    fg.graphData({ nodes, links })
+    if (autoFitTimerRef.current) window.clearTimeout(autoFitTimerRef.current)
+    if (pendingAutoFitRef.current) {
+      autoFitTimerRef.current = window.setTimeout(() => {
+        autoFitTimerRef.current = null
+        if (!graphRef.current) return
+        applyGraphFit(graphRef.current, viewConfigRef.current.autoFitMs)
+      }, 720)
+    }
   }, [links, nodes])
 
   return (

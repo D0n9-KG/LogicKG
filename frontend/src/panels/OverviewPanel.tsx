@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiGet, apiPost } from '../api'
+import { apiPost } from '../api'
 import { useI18n } from '../i18n'
+import {
+  invalidateOverviewStatsCache,
+  invalidatePaperDataCache,
+  loadOverviewStatsSnapshot,
+  type DiscoveryCandidate,
+} from '../loaders/panelData'
 import { useGlobalState } from '../state/store'
-import { loadOverviewGraph } from '../loaders/overview'
+import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
 
 type Stats = { paperCount: number; ingestedCount: number }
-type DiscoveryCandidate = {
-  candidate_id?: string
-  status?: string
-  quality_score?: number
-}
 
 function normalizeStatus(status: string | undefined) {
   const s = String(status ?? '').trim()
@@ -49,16 +50,13 @@ export default function OverviewPanel() {
     }
   }, [dispatch])
 
-  async function refreshStats() {
+  async function refreshStats(force = false) {
     setRefreshingStats(true)
     try {
-      const [paperRes, discoveryRes] = await Promise.all([
-        apiGet<{ papers: unknown[] }>('/graph/papers?limit=1000'),
-        apiGet<{ candidates: DiscoveryCandidate[] }>('/discovery/candidates').catch(() => ({ candidates: [] as DiscoveryCandidate[] })),
-      ])
-      const papers = Array.isArray(paperRes.papers) ? paperRes.papers.length : 0
-      setStats({ paperCount: papers, ingestedCount: papers })
-      setDiscoveryItems(Array.isArray(discoveryRes.candidates) ? discoveryRes.candidates : [])
+      if (force) invalidateOverviewStatsCache()
+      const snapshot = await loadOverviewStatsSnapshot()
+      setStats({ paperCount: snapshot.paperCount, ingestedCount: snapshot.paperCount })
+      setDiscoveryItems(snapshot.discoveryItems)
     } finally {
       setRefreshingStats(false)
     }
@@ -77,7 +75,9 @@ export default function OverviewPanel() {
     try {
       const res = await apiPost<{ task_id: string }>('/tasks/ingest/path', { path })
       setMsg(t(`导入任务已提交：${res.task_id}`, `Ingest task submitted: ${res.task_id}`))
-      void refreshStats().catch(() => {})
+      invalidateOverviewGraphCache()
+      invalidatePaperDataCache()
+      void refreshStats(true).catch(() => {})
     } catch (e: unknown) {
       setError(String((e as { message?: unknown } | null)?.message ?? e))
     } finally {
@@ -174,7 +174,8 @@ export default function OverviewPanel() {
           onClick={() => {
             if (refreshingGraphRef.current) return
             refreshingGraphRef.current = true
-            void loadOverviewGraph()
+            invalidateOverviewGraphCache()
+            void loadOverviewGraph(200, 600, { force: true })
               .then((els) => dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' }))
               .catch(() => {})
               .finally(() => {
@@ -184,7 +185,7 @@ export default function OverviewPanel() {
         >
           {t('刷新图谱', 'Refresh Graph')}
         </button>
-        <button className="kgBtn kgBtn--sm" disabled={refreshingStats} onClick={() => void refreshStats().catch(() => {})}>
+        <button className="kgBtn kgBtn--sm" disabled={refreshingStats} onClick={() => void refreshStats(true).catch(() => {})}>
           {refreshingStats ? t('更新中...', 'Refreshing...') : t('刷新统计', 'Refresh Stats')}
         </button>
       </div>

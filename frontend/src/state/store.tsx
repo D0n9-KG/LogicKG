@@ -3,11 +3,12 @@
 import { createContext, useContext, useReducer, useCallback, type ReactNode } from 'react'
 import type { GlobalState, GlobalAction, ModuleId } from './types'
 
-const INITIAL_STATE: GlobalState = {
+export const INITIAL_STATE: GlobalState = {
   activeModule: 'overview',
   graphElements: [],
   graphLayout: 'cose',
   layoutTrigger: 0,
+  graphUpdateReason: 'replace',
   selectedNode: null,
   transitioning: false,
 
@@ -17,23 +18,34 @@ const INITIAL_STATE: GlobalState = {
   textbooks: { selectedTextbookId: null, selectedChapterId: null },
 }
 
-function reducer(state: GlobalState, action: GlobalAction): GlobalState {
+export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
   switch (action.type) {
     case 'SET_MODULE':
       return { ...state, activeModule: action.module, selectedNode: null }
     case 'SET_GRAPH':
-      return { ...state, graphElements: action.elements, graphLayout: action.layout, layoutTrigger: state.layoutTrigger + 1 }
+      return {
+        ...state,
+        graphElements: action.elements,
+        graphLayout: action.layout,
+        layoutTrigger: state.layoutTrigger + 1,
+        graphUpdateReason: 'replace',
+      }
     case 'MERGE_GRAPH': {
       const existingIds = new Set(state.graphElements.map((e) => e.data.id))
       const newEls = action.elements.filter((e) => !existingIds.has(e.data.id))
-      return { ...state, graphElements: [...state.graphElements, ...newEls], layoutTrigger: state.layoutTrigger + 1 }
+      return {
+        ...state,
+        graphElements: [...state.graphElements, ...newEls],
+        layoutTrigger: state.layoutTrigger + 1,
+        graphUpdateReason: 'merge',
+      }
     }
     case 'SET_SELECTED':
       return { ...state, selectedNode: action.node }
     case 'SET_TRANSITIONING':
       return { ...state, transitioning: action.value }
     case 'RELAYOUT':
-      return { ...state, layoutTrigger: state.layoutTrigger + 1 }
+      return { ...state, layoutTrigger: state.layoutTrigger + 1, graphUpdateReason: 'relayout' }
 
     case 'PAPERS_SELECT':
       return { ...state, papers: { ...state.papers, selectedPaperId: action.paperId } }

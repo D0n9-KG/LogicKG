@@ -1,15 +1,19 @@
 import cytoscape from 'cytoscape'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n, type UILocale } from '../i18n'
+import { paperRefForAskScope } from '../paperRefs'
 import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNode } from '../state/types'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import Graph3D from './Graph3D'
+import { resolveGraphRenderPlan } from './graphRenderPlan'
 
 type Props = {
   elements: GraphElement[]
   layout: LayoutName
   layoutTrigger: number
+  overviewMode: '3d' | '2d'
+  onOverviewModeChange: (mode: '3d' | '2d') => void
   transitioning: boolean
   onSelectNode: (node: SelectedNode | null) => void
 }
@@ -151,25 +155,6 @@ function validYear(value: unknown): number | null {
   if (!Number.isFinite(year)) return null
   if (year < 1900 || year > 2100) return null
   return Math.round(year)
-}
-
-function paperIdFromNodeId(nodeId: string): string {
-  const id = String(nodeId ?? '').trim()
-  if (!id) return ''
-  if (id.startsWith('paper:')) return id.slice('paper:'.length).trim()
-  const m = id.match(/^(logic|claim):([^:]+):\d+$/)
-  if (m) return String(m[2] ?? '').trim()
-  return ''
-}
-
-function paperIdForAskScope(node: GraphNodeData): string {
-  const direct = String(node.paperId ?? '').trim()
-  if (direct) return direct
-  if (String(node.kind ?? '') === 'paper') {
-    const fromId = String(node.id ?? '').trim()
-    if (fromId) return fromId
-  }
-  return paperIdFromNodeId(String(node.id ?? ''))
 }
 
 function kindLabel(kind: string, locale: UILocale) {
@@ -1428,11 +1413,18 @@ function buildMiniMapSnapshot(cy: cytoscape.Core): MiniMapSnapshot | null {
   }
 }
 
-export default function GraphCanvas({ elements, layout, layoutTrigger, transitioning, onSelectNode }: Props) {
+export default function GraphCanvas({
+  elements,
+  layout,
+  layoutTrigger,
+  overviewMode,
+  onOverviewModeChange,
+  transitioning,
+  onSelectNode,
+}: Props) {
   const { state } = useGlobalState()
   const { locale, t } = useI18n()
-  const { activeModule, selectedNode } = state
-  const [overviewMode, setOverviewMode] = useState<'3d' | '2d'>('3d')
+  const { activeModule, selectedNode, graphUpdateReason } = state
   const [hiddenKinds, setHiddenKinds] = useState<string[]>([])
   const [placementMode, setPlacementMode] = useState<PlacementMode>('timeline')
   const [showGraphDetails, setShowGraphDetails] = useState(false)
@@ -1452,7 +1444,7 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (activeModule !== 'overview') {
-        setOverviewMode('2d')
+        if (overviewMode !== '2d') onOverviewModeChange('2d')
         setPlacementMode('raw')
         setShowGraphDetails(true)
       } else {
@@ -1462,7 +1454,7 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
       setHiddenKinds([])
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeModule])
+  }, [activeModule, onOverviewModeChange, overviewMode])
 
   useEffect(() => {
     if (placementMode !== 'timeline') {
@@ -1661,7 +1653,7 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
       const rawEvent = evt.originalEvent as MouseEvent | undefined
       const multiPick = Boolean(rawEvent?.ctrlKey || rawEvent?.metaKey || rawEvent?.shiftKey)
       if (multiPick) {
-        const paperId = paperIdForAskScope(data)
+        const paperId = paperRefForAskScope(data)
         if (paperId) {
           const scope = loadScope()
           const existing = scope.mode === 'papers' ? scope.paperIds ?? [] : []
@@ -1718,8 +1710,8 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
     const cy = cyRef.current
     if (!cy) return
 
-    cy.elements().addClass('faded')
-    const timer = window.setTimeout(() => {
+    const renderPlan = resolveGraphRenderPlan(graphUpdateReason)
+    const applyGraph = () => {
       cy.batch(() => {
         cy.elements().remove()
         cy.add(preparedGraph.elements as unknown as Parameters<typeof cy.add>[0])
@@ -1731,14 +1723,23 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
           name: 'preset',
           fit: true,
           padding: 64,
-          animate: true,
-          animationDuration: 260,
+          animate: renderPlan.animate,
+          animationDuration: renderPlan.animationDuration,
         } as cytoscape.LayoutOptions)
         .run()
-    }, 70)
+    }
 
-    return () => window.clearTimeout(timer)
-  }, [preparedGraph, layoutTrigger])
+    if (renderPlan.fadeBeforeSwap) {
+      cy.elements().addClass('faded')
+    }
+
+    if (renderPlan.delayMs > 0) {
+      const timer = window.setTimeout(applyGraph, renderPlan.delayMs)
+      return () => window.clearTimeout(timer)
+    }
+
+    applyGraph()
+  }, [graphUpdateReason, layoutTrigger, preparedGraph])
 
   const selectedNodeId = selectedNode?.id ?? ''
 
@@ -2121,14 +2122,14 @@ export default function GraphCanvas({ elements, layout, layoutTrigger, transitio
             <button
               className={`kgCanvasHudBtn${overviewMode === '3d' ? ' is-active' : ''}`}
               type="button"
-              onClick={() => setOverviewMode('3d')}
+              onClick={() => onOverviewModeChange('3d')}
             >
               3D
             </button>
             <button
               className={`kgCanvasHudBtn${overviewMode === '2d' ? ' is-active' : ''}`}
               type="button"
-              onClick={() => setOverviewMode('2d')}
+              onClick={() => onOverviewModeChange('2d')}
             >
               2D
             </button>

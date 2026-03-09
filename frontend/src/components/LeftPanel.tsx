@@ -16,7 +16,13 @@ const PANEL_ICONS: Record<string, string> = {
   ops: 'S',
 }
 
-export default function LeftPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+type Props = {
+  collapsed: boolean
+  floating?: boolean
+  onToggle: () => void
+}
+
+export default function LeftPanel({ collapsed, floating = false, onToggle }: Props) {
   const { state } = useGlobalState()
   const { t } = useI18n()
   const { activeModule } = state
@@ -48,6 +54,11 @@ export default function LeftPanel({ collapsed, onToggle }: { collapsed: boolean;
             {PANEL_ICONS[activeModule] ?? 'M'}
           </button>
         </div>
+        {floating ? (
+          <div aria-hidden="true" style={{ display: 'none' }}>
+            {renderContent()}
+          </div>
+        ) : null}
       </aside>
     )
   }
@@ -70,8 +81,12 @@ export default function LeftPanel({ collapsed, onToggle }: { collapsed: boolean;
     return null
   }
 
+  const panelClass = ['kgPanel', 'kgPanel--left', floating ? 'kgPanel--floating kgPanel--floating-left' : '']
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <aside className="kgPanel kgPanel--left">
+    <aside className={panelClass}>
       <div className="kgPanelHeader">
         <span className="kgPanelTitle">
           {PANEL_ICONS[activeModule]} {activeModule.toUpperCase()}

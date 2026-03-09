@@ -4,31 +4,12 @@ import { useI18n, type UILocale } from '../i18n'
 import type { AskItem, GraphEdgeData, GraphNodeData } from '../state/types'
 import { apiGet } from '../api'
 import { buildEvidenceNodeId } from '../loaders/ask'
-import { buildNodeContentState, filterEvidenceRows, rankRelationRows } from './rightPanelModel'
+import { buildNodeAskQuestion } from '../nodeAskPrompt'
+import { buildGenericNodeContext, buildNodeContentState, filterEvidenceRows, rankRelationRows } from './rightPanelModel'
+import { paperRefForAskScope } from '../paperRefs'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import { assistantTurnText, buildEvidenceStats, toConversationTurns } from '../panels/askPanelModel'
-
-type NeighborRow = {
-  id: string
-  label: string
-  kind: string
-  links: number
-  inCount: number
-  outCount: number
-  relations: string[]
-}
-
-type TimelineRow = {
-  key: string
-  year: number | null
-  total: number
-  supports: number
-  challenges: number
-  cites: number
-  evidencedBy: number
-  samples: string[]
-}
 
 type AskStoreSnapshot = {
   currentId?: string
@@ -105,13 +86,6 @@ function formatMetric(value: number | null | undefined, digits = 2): string {
   return Number(value).toFixed(digits)
 }
 
-function validYear(value: unknown): number | null {
-  const year = Number(value ?? 0)
-  if (!Number.isFinite(year)) return null
-  if (year < 1900 || year > 2100) return null
-  return Math.round(year)
-}
-
 function shortText(value: unknown, max = 120): string {
   const text = normalizeText(value)
   if (!text) return ''
@@ -133,15 +107,6 @@ function summarizeAskTurn(item: AskItem, locale: UILocale): string {
   return shortText(assistantTurnText(item, locale), 180)
 }
 
-function paperIdFromNodeId(nodeId: string): string {
-  const id = normalizeText(nodeId)
-  if (!id) return ''
-  if (id.startsWith('paper:')) return normalizeText(id.slice('paper:'.length))
-  const m = id.match(/^(logic|claim):([^:]+):\d+$/)
-  if (m) return normalizeText(m[2] ?? '')
-  return ''
-}
-
 function loadAskSnapshot(): AskStoreSnapshot | null {
   try {
     const raw = localStorage.getItem(ASK_STORE_KEY)
@@ -156,7 +121,13 @@ function loadAskSnapshot(): AskStoreSnapshot | null {
   }
 }
 
-export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+type Props = {
+  collapsed: boolean
+  floating?: boolean
+  onToggle: () => void
+}
+
+export default function RightPanel({ collapsed, floating = false, onToggle }: Props) {
   const { state, dispatch, switchModule } = useGlobalState()
   const { locale, t } = useI18n()
   const { activeModule, ask, selectedNode, graphElements } = state
@@ -302,135 +273,18 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
 
   const genericContext = useMemo(() => {
     if (activeModule === 'ask') return null
-    if (!selectedNode) return null
-
     const nodes = graphElements.filter((element) => element.group === 'nodes').map((element) => element.data as GraphNodeData)
     const edges = graphElements.filter((element) => element.group === 'edges').map((element) => element.data as GraphEdgeData)
-    const nodeMap = new Map(nodes.map((node) => [node.id, node]))
-    const center = nodeMap.get(selectedNode.id) ?? null
-
-    const relationCounts = new Map<string, number>()
-    const neighborMap = new Map<string, NeighborRow>()
-    const timelineMap = new Map<string, TimelineRow>()
-
-    let inCount = 0
-    let outCount = 0
-
-    for (const edge of edges) {
-      const source = String(edge.source ?? '')
-      const target = String(edge.target ?? '')
-      if (source !== selectedNode.id && target !== selectedNode.id) continue
-
-      const rel = String(edge.kind ?? 'relates_to')
-      relationCounts.set(rel, (relationCounts.get(rel) ?? 0) + 1)
-
-      const neighborId = source === selectedNode.id ? target : source
-      const neighborNode = nodeMap.get(neighborId)
-      const prev =
-        neighborMap.get(neighborId) ??
-        ({
-          id: neighborId,
-          label: neighborNode?.label ?? neighborId,
-          kind: neighborNode?.kind ?? 'unknown',
-          links: 0,
-          inCount: 0,
-          outCount: 0,
-          relations: [],
-        } satisfies NeighborRow)
-
-      prev.links += 1
-      if (source === selectedNode.id) {
-        prev.outCount += 1
-        outCount += 1
-      } else {
-        prev.inCount += 1
-        inCount += 1
-      }
-      if (!prev.relations.includes(rel)) prev.relations.push(rel)
-      neighborMap.set(neighborId, prev)
-
-      const eventYear = validYear(neighborNode?.year) ?? validYear(center?.year)
-      const timelineKey = eventYear ? String(eventYear) : 'unknown'
-      const timelineRow =
-        timelineMap.get(timelineKey) ??
-        ({
-          key: timelineKey,
-          year: eventYear,
-          total: 0,
-          supports: 0,
-          challenges: 0,
-          cites: 0,
-          evidencedBy: 0,
-          samples: [],
-        } satisfies TimelineRow)
-
-      timelineRow.total += 1
-      if (rel === 'supports') timelineRow.supports += 1
-      if (rel === 'challenges') timelineRow.challenges += 1
-      if (rel === 'cites') timelineRow.cites += 1
-      if (rel === 'evidenced_by') timelineRow.evidencedBy += 1
-      if (timelineRow.samples.length < 2) {
-        timelineRow.samples.push(`${relationLabel(rel, locale)} -> ${neighborNode?.label ?? neighborId}`)
-      }
-      timelineMap.set(timelineKey, timelineRow)
-    }
-
-    const relationRows = Array.from(relationCounts.entries())
-      .map(([kind, count]) => ({ kind, label: relationLabel(kind, locale), count }))
-      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
-
-    const neighbors = Array.from(neighborMap.values())
-      .sort((a, b) => b.links - a.links || a.label.localeCompare(b.label))
-      .slice(0, 12)
-
-    const timeline = Array.from(timelineMap.values()).sort((a, b) => {
-      if (a.year === null && b.year === null) return 0
-      if (a.year === null) return 1
-      if (b.year === null) return -1
-      return a.year - b.year
-    })
-    const timelinePeak = timeline.reduce((max, item) => Math.max(max, item.total), 1)
-    const knownYears = timeline.filter((item) => item.year !== null).map((item) => item.year as number)
-    const timelineRange =
-      knownYears.length > 1
-        ? `${Math.min(...knownYears)} - ${Math.max(...knownYears)}`
-        : knownYears.length === 1
-          ? String(knownYears[0])
-          : t('未知', 'Unknown')
-
-    const qualityScore = typeof center?.confidence === 'number' ? Math.round(center.confidence * 100) : null
-
-    return {
-      center,
-      inCount,
-      outCount,
-      relationRows,
-      neighbors,
-      timeline,
-      timelinePeak,
-      timelineRange,
-      degree: inCount + outCount,
-      relationDiversity: relationRows.length,
-      neighborCount: neighborMap.size,
-      qualityScore,
-      raw: {
-        selectedNode,
-        center,
-      },
-    }
-  }, [activeModule, graphElements, locale, selectedNode, t])
+    return buildGenericNodeContext({ selectedNode, nodes, edges })
+  }, [activeModule, graphElements, selectedNode])
 
   const genericPaperId = useMemo(() => {
     if (!genericContext) return ''
-    const direct =
-      normalizeText(genericContext.center?.paperId) || normalizeText(genericContext.raw.selectedNode.paperId)
-    if (direct) return direct
-    const effectiveKind = normalizeText(genericContext.center?.kind ?? genericContext.raw.selectedNode.kind)
-    if (effectiveKind === 'paper') {
-      const paperNodeId = normalizeText(genericContext.center?.id ?? genericContext.raw.selectedNode.id)
-      if (paperNodeId) return paperNodeId
-    }
-    return paperIdFromNodeId(normalizeText(genericContext.raw.selectedNode.id))
+    return paperRefForAskScope({
+      id: normalizeText(genericContext.center?.id ?? genericContext.raw.selectedNode.id),
+      kind: normalizeText(genericContext.center?.kind ?? genericContext.raw.selectedNode.kind),
+      paperId: normalizeText(genericContext.center?.paperId ?? genericContext.raw.selectedNode.paperId),
+    })
   }, [genericContext])
 
   const askScopePaperIds = (() => {
@@ -535,26 +389,7 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
     const nodeKind = normalizeText(node.kind) || 'node'
     const nodeLabel = normalizeText(node.label) || normalizeText(node.id)
     const paperId = genericPaperId
-    const question =
-      nodeKind === 'paper'
-        ? t(
-            `请围绕这篇论文提炼核心方法、关键结论，并标出可核验的证据：${nodeLabel}`,
-            `Summarize this paper's core methods, key findings, and verifiable evidence: ${nodeLabel}`,
-          )
-        : nodeKind === 'logic'
-          ? t(
-              `请解释该逻辑步骤在论文中的作用、证据来源与局限：${nodeLabel}`,
-              `Explain this logic step in the paper, including role, evidence sources, and limitations: ${nodeLabel}`,
-            )
-          : nodeKind === 'claim'
-            ? t(
-                `请评估该论断的证据充分性与可验证性：${nodeLabel}`,
-                `Assess this claim for evidence sufficiency and verifiability: ${nodeLabel}`,
-              )
-            : t(
-                `请基于该节点给出解释，并梳理证据链：${nodeLabel}`,
-                `Explain this node and outline its evidence chain: ${nodeLabel}`,
-              )
+    const question = buildNodeAskQuestion(nodeKind, nodeLabel, locale)
 
     dispatch({ type: 'ASK_SET_DRAFT', question, k: 8 })
     dispatch({ type: 'ASK_SET_CURRENT', id: null })
@@ -615,6 +450,10 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
     saveScope({ mode: 'all' })
   }
 
+  const panelClass = ['kgPanel', 'kgPanel--right', floating ? 'kgPanel--floating kgPanel--floating-right' : '']
+    .filter(Boolean)
+    .join(' ')
+
   if (collapsed) {
     return (
       <aside className="kgPanel kgPanel--right">
@@ -659,7 +498,7 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
     const nodeContentText = selectedNodeContent.full
 
     return (
-      <aside className="kgPanel kgPanel--right">
+      <aside className={panelClass}>
         <div className="kgPanelHeader">
           <span className="kgPanelTitle">{t('问答上下文', 'Ask Context')}</span>
           <button className="kgPanelCollapseBtn" type="button" onClick={onToggle} title={t('折叠', 'Collapse')}>
@@ -739,7 +578,6 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
                         <div className="kgCardBody">{assistantTurnText(current, locale)}</div>
                       </div>
                     )}
-
                     <div className="kgSectionTitle">{t('子图指标', 'Subgraph Metrics')}</div>
                     <div className="kgInfoMetricGrid kgAskMetricGrid">
                       <div className="kgInfoMetricCard">
@@ -1031,7 +869,7 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
   }
 
   return (
-    <aside className="kgPanel kgPanel--right">
+    <aside className={panelClass}>
       <div className="kgPanelHeader">
         <span className="kgPanelTitle">{t('节点分析', 'Node Analysis')}</span>
         <button className="kgPanelCollapseBtn" type="button" onClick={onToggle} title={t('折叠', 'Collapse')}>
@@ -1042,20 +880,33 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
         <div className="kgPanelBody">
           {genericContext ? (
             <div className="kgStack">
-              <div className="kgInfoHero">
-                <div className="kgInfoHeroTitle">{genericContext.center?.label ?? genericContext.raw.selectedNode.label}</div>
-                <div className="kgInfoHeroMeta">
-                  <span className="kgTag">{kindLabel(genericContext.center?.kind ?? genericContext.raw.selectedNode.kind, locale)}</span>
-                  <span className="kgTag">ID: {genericContext.raw.selectedNode.id}</span>
-                  {genericContext.center?.qualityTier && <span className="kgTag">{t('层级', 'Tier')} {genericContext.center.qualityTier}</span>}
-                  {typeof genericContext.qualityScore === 'number' && <span className="kgTag">{t('置信', 'Confidence')} {genericContext.qualityScore}%</span>}
-                  {typeof genericContext.center?.year === 'number' && <span className="kgTag">{genericContext.center.year}</span>}
-                  <span className="kgTag">{t('问答范围', 'Ask Scope')}: {askScopePaperIds.length}</span>
-                </div>
-                {(genericContext.center?.description || genericContext.raw.selectedNode.description) && (
-                  <div className="kgInfoDescription">{genericContext.center?.description || genericContext.raw.selectedNode.description}</div>
-                )}
-              </div>
+              {(() => {
+                const heroKind = genericContext.center?.kind ?? genericContext.raw.selectedNode.kind
+                const heroTitle =
+                  heroKind === 'paper'
+                    ? normalizeText(genericContext.center?.description || genericContext.raw.selectedNode.description)
+                      || normalizeText(genericContext.center?.label || genericContext.raw.selectedNode.label)
+                    : normalizeText(genericContext.center?.label || genericContext.raw.selectedNode.label)
+                const heroSource =
+                  heroKind === 'paper' ? normalizeText(genericContext.center?.label || genericContext.raw.selectedNode.label) : ''
+                const heroDescription = normalizeText(genericContext.center?.description || genericContext.raw.selectedNode.description)
+
+                return (
+                  <div className="kgInfoHero">
+                    <div className="kgInfoHeroTitle">{heroTitle}</div>
+                    <div className="kgInfoHeroMeta">
+                      <span className="kgTag">{kindLabel(heroKind, locale)}</span>
+                      {heroSource && <span className="kgTag">{t('标号', 'Source')}: {heroSource}</span>}
+                      <span className="kgTag">ID: {genericContext.raw.selectedNode.id}</span>
+                      {genericContext.center?.qualityTier && <span className="kgTag">{t('层级', 'Tier')} {genericContext.center.qualityTier}</span>}
+                      {typeof genericContext.qualityScore === 'number' && <span className="kgTag">{t('置信', 'Confidence')} {genericContext.qualityScore}%</span>}
+                      {typeof genericContext.center?.year === 'number' && <span className="kgTag">{genericContext.center.year}</span>}
+                      <span className="kgTag">{t('问答范围', 'Ask Scope')}: {askScopePaperIds.length}</span>
+                    </div>
+                    {heroKind !== 'paper' && heroDescription && <div className="kgInfoDescription">{heroDescription}</div>}
+                  </div>
+                )
+              })()}
 
               <div className="kgRow" style={{ flexWrap: 'wrap', gap: 6 }}>
                 {genericPaperId && (
@@ -1141,6 +992,14 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
                   </div>
                 </div>
                 <div className="kgInfoMetricCard">
+                  <div className="kgInfoMetricLabel">{t('子节点', 'Child Nodes')}</div>
+                  <div className="kgInfoMetricValue">{genericContext.childNeighbors.length}</div>
+                </div>
+                <div className="kgInfoMetricCard">
+                  <div className="kgInfoMetricLabel">{t('父节点', 'Parent Nodes')}</div>
+                  <div className="kgInfoMetricValue">{genericContext.parentNeighbors.length}</div>
+                </div>
+                <div className="kgInfoMetricCard">
                   <div className="kgInfoMetricLabel">{t('时间跨度', 'Time Span')}</div>
                   <div className="kgInfoMetricValue">{genericContext.timelineRange}</div>
                 </div>
@@ -1174,11 +1033,39 @@ export default function RightPanel({ collapsed, onToggle }: { collapsed: boolean
               <div className="kgInfoSection">
                 {genericContext.relationRows.map((row) => (
                   <div key={row.kind} className="kgInfoLine">
-                    <span>{row.label}</span>
+                    <span>{relationLabel(row.kind, locale)}</span>
                     <b>{row.count}</b>
                   </div>
                 ))}
                 {genericContext.relationRows.length === 0 && <div className="text-faint">{t('暂无关系数据。', 'No relation data yet.')}</div>}
+              </div>
+
+              <div className="kgSectionTitle">{t('子节点信息', 'Child Node Details')}</div>
+              <div className="kgInfoSection kgInfoNeighborList">
+                {genericContext.childNeighbors.map((neighbor) => (
+                  <div key={neighbor.id} className="kgInfoNeighborCard">
+                    <div className="kgInfoNeighborTitle">{neighbor.label}</div>
+                    <div className="kgInfoNeighborMeta">
+                      {kindLabel(neighbor.kind, locale)} | {t('连接', 'links')} {neighbor.links} | {t('入/出', 'in/out')} {neighbor.inCount}/{neighbor.outCount}
+                    </div>
+                    <div className="kgInfoNeighborMeta">{t('关系', 'Relations')}: {neighbor.relations.map((kind) => relationLabel(kind, locale)).join(', ') || '-'}</div>
+                  </div>
+                ))}
+                {genericContext.childNeighbors.length === 0 && <div className="text-faint">{t('暂无子节点信息。', 'No child node details yet.')}</div>}
+              </div>
+
+              <div className="kgSectionTitle">{t('父节点信息', 'Parent Node Details')}</div>
+              <div className="kgInfoSection kgInfoNeighborList">
+                {genericContext.parentNeighbors.map((neighbor) => (
+                  <div key={neighbor.id} className="kgInfoNeighborCard">
+                    <div className="kgInfoNeighborTitle">{neighbor.label}</div>
+                    <div className="kgInfoNeighborMeta">
+                      {kindLabel(neighbor.kind, locale)} | {t('连接', 'links')} {neighbor.links} | {t('入/出', 'in/out')} {neighbor.inCount}/{neighbor.outCount}
+                    </div>
+                    <div className="kgInfoNeighborMeta">{t('关系', 'Relations')}: {neighbor.relations.map((kind) => relationLabel(kind, locale)).join(', ') || '-'}</div>
+                  </div>
+                ))}
+                {genericContext.parentNeighbors.length === 0 && <div className="text-faint">{t('暂无父节点信息。', 'No parent node details yet.')}</div>}
               </div>
 
               <div className="kgSectionTitle">{t('相邻节点', 'Neighbor Nodes')}</div>

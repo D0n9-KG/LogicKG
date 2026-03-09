@@ -1,4 +1,3 @@
-// frontend/src/loaders/evolution.ts
 import { apiGet } from '../api'
 import type { GraphElement, GraphNodeData, GraphEdgeData } from '../state/types'
 
@@ -22,23 +21,38 @@ type GroupDetail = {
   }>
 }
 
+const evolutionGraphCache = new Map<number, GraphElement[]>()
+const evolutionGraphPending = new Map<number, Promise<GraphElement[]>>()
+
 export async function loadEvolutionGraph(limit = 30): Promise<GraphElement[]> {
-  const res = await apiGet<{ groups: PropositionGroup[] }>(`/evolution/groups?limit=${limit}`)
-  const groups = res.groups ?? []
+  const cached = evolutionGraphCache.get(limit)
+  if (cached) return cached
 
-  const nodes: GraphElement[] = groups.map((g) => ({
-    group: 'nodes' as const,
-    data: {
-      id: `group:${g.group_id}`,
-      label: g.label_text || g.group_id,
-      kind: 'group',
-      propId: g.group_id,
-      degree: g.proposition_count,
-    } satisfies GraphNodeData,
-  }))
+  const pending = evolutionGraphPending.get(limit)
+  if (pending) return pending
 
-  // No edges at group level — connections are added when groups are expanded via expandEvolutionGroup
-  return nodes
+  const request = apiGet<{ groups: PropositionGroup[] }>(`/evolution/groups?limit=${limit}`)
+    .then((res) => {
+      const groups = res.groups ?? []
+      const nodes: GraphElement[] = groups.map((g) => ({
+        group: 'nodes' as const,
+        data: {
+          id: `group:${g.group_id}`,
+          label: g.label_text || g.group_id,
+          kind: 'group',
+          propId: g.group_id,
+          degree: g.proposition_count,
+        } satisfies GraphNodeData,
+      }))
+      evolutionGraphCache.set(limit, nodes)
+      return nodes
+    })
+    .finally(() => {
+      evolutionGraphPending.delete(limit)
+    })
+
+  evolutionGraphPending.set(limit, request)
+  return request
 }
 
 export async function expandEvolutionGroup(groupId: string): Promise<GraphElement[]> {

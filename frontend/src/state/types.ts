@@ -52,6 +52,8 @@ export type LayoutName =
   | 'concentric'    // focal (paper neighborhood)
   | 'preset'    // keep current positions
 
+export type GraphUpdateReason = 'replace' | 'merge' | 'relayout'
+
 // ── Selected node context ────────────────────────────────────
 export type SelectedNode = {
   id: string
@@ -137,6 +139,7 @@ export type GlobalState = {
   graphElements: GraphElement[]
   graphLayout: LayoutName
   layoutTrigger: number       // increment to force layout re-run
+  graphUpdateReason: GraphUpdateReason
   selectedNode: SelectedNode | null
   transitioning: boolean
 

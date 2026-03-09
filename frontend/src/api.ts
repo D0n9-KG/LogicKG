@@ -2,6 +2,7 @@ const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://
 
 let resolvedApiUrl = API_URL.replace(/\/+$/, '')
 let resolveApiPromise: Promise<string> | null = null
+let resolvedApiUrlVerified = false
 
 function uniq(values: string[]) {
   return Array.from(new Set(values.map((v) => String(v || '').trim().replace(/\/+$/, '')).filter(Boolean)))
@@ -66,6 +67,7 @@ async function probeApiSurface(baseUrl: string) {
 }
 
 async function resolveApiUrl() {
+  if (resolvedApiUrlVerified) return resolvedApiUrl
   if (resolveApiPromise) return resolveApiPromise
 
   resolveApiPromise = (async () => {
@@ -73,6 +75,7 @@ async function resolveApiUrl() {
     for (const baseUrl of candidates) {
       if (await probeApiSurface(baseUrl)) {
         resolvedApiUrl = baseUrl
+        resolvedApiUrlVerified = true
         return baseUrl
       }
     }
@@ -93,7 +96,7 @@ function isNetworkFailure(error: unknown) {
 }
 
 async function fetchWithFailover(path: string, init?: RequestInit) {
-  const primary = await resolveApiUrl()
+  const primary = resolvedApiUrlVerified ? resolvedApiUrl : await resolveApiUrl()
   const candidates = uniq([primary, ...candidateApiUrls()])
 
   let lastNetworkError: unknown = null
@@ -112,13 +115,18 @@ async function fetchWithFailover(path: string, init?: RequestInit) {
         if (isCriticalApiPath(path)) continue
       }
       resolvedApiUrl = baseUrl
+      resolvedApiUrlVerified = true
       return res
     } catch (error: unknown) {
       if (!isNetworkFailure(error)) throw error
+      if (baseUrl === resolvedApiUrl) {
+        resolvedApiUrlVerified = false
+      }
       lastNetworkError = error
     }
   }
 
+  resolvedApiUrlVerified = false
   throw lastNetworkError ?? new Error('Failed to fetch API endpoint')
 }
 

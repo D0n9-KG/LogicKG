@@ -1,28 +1,26 @@
 // frontend/src/panels/PapersPanel.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { apiDelete, apiGet, apiPatch, apiPost } from '../api'
+import { apiDelete, apiPatch, apiPost } from '../api'
 import { useI18n } from '../i18n'
+import {
+  invalidateOverviewStatsCache,
+  invalidatePaperDataCache,
+  loadPaperCatalog,
+  loadPaperCollections,
+  type CollectionRow,
+  type PaperRow,
+} from '../loaders/panelData'
 import { saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import { loadPaperNeighborhood } from '../loaders/papers'
-import { loadOverviewGraph } from '../loaders/overview'
-
-type Paper = {
-  paper_id: string
-  paper_source: string
-  title?: string
-  year?: number
-  ingested?: boolean
-  collections?: CollectionRow[]
-}
-type CollectionRow = { collection_id: string; name: string }
+import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
 
 export default function PapersPanel() {
   const { state, dispatch, switchModule } = useGlobalState()
   const { locale, t } = useI18n()
   const { papers } = state
-  const [allPapers, setAllPapers] = useState<Paper[]>([])
+  const [allPapers, setAllPapers] = useState<PaperRow[]>([])
   const [collections, setCollections] = useState<CollectionRow[]>([])
   const [collectionFilter, setCollectionFilter] = useState('all')
   const [loading, setLoading] = useState(false)
@@ -31,7 +29,7 @@ export default function PapersPanel() {
 
   // Modal states
   const [assignOpen, setAssignOpen] = useState(false)
-  const [assignPaper, setAssignPaper] = useState<Paper | null>(null)
+  const [assignPaper, setAssignPaper] = useState<PaperRow | null>(null)
   const [assignSelected, setAssignSelected] = useState<Record<string, boolean>>({})
   const [assignBusy, setAssignBusy] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState('')
@@ -42,17 +40,13 @@ export default function PapersPanel() {
   const [collEditBusy, setCollEditBusy] = useState(false)
 
   const reloadCollections = useCallback(async () => {
-    const r = await apiGet<{ collections: CollectionRow[] }>('/collections?limit=200')
-    setCollections(r.collections ?? [])
+    setCollections(await loadPaperCollections())
   }, [])
 
   const reloadPapers = useCallback(async () => {
     setLoading(true)
     try {
-      const cid = collectionFilter === 'all' ? '' : collectionFilter
-      const qs = cid ? `&collection_id=${encodeURIComponent(cid)}` : ''
-      const r = await apiGet<{ papers: Paper[] }>(`/graph/papers?limit=600${qs}`)
-      setAllPapers(r.papers ?? [])
+      setAllPapers(await loadPaperCatalog(collectionFilter))
     } catch (e: unknown) {
       setError(String((e as { message?: unknown })?.message ?? e))
     } finally {
@@ -96,7 +90,7 @@ export default function PapersPanel() {
       })
   }
 
-  function openAssign(p: Paper, e: React.MouseEvent) {
+  function openAssign(p: PaperRow, e: React.MouseEvent) {
     e.stopPropagation()
     const sel: Record<string, boolean> = {}
     for (const c of p.collections ?? []) sel[c.collection_id] = true
@@ -110,11 +104,12 @@ export default function PapersPanel() {
     setAssignBusy(true)
     try {
       const before = new Set((assignPaper.collections ?? []).map((c) => c.collection_id))
-      const after = new Set(Object.entries(assignSelected).filter(([, v]) => v).map(([k]) => k))
-      for (const cid of [...after].filter((x) => !before.has(x)))
+      const after = new Set<string>(Object.entries(assignSelected).filter(([, value]) => value).map(([key]) => key))
+      for (const cid of [...after].filter((value): value is string => !before.has(value)))
         await apiPost(`/collections/${encodeURIComponent(cid)}/papers/${encodeURIComponent(assignPaper.paper_id)}`, {})
-      for (const cid of [...before].filter((x) => !after.has(x)))
+      for (const cid of [...before].filter((value): value is string => !after.has(value)))
         await apiDelete(`/collections/${encodeURIComponent(cid)}/papers/${encodeURIComponent(assignPaper.paper_id)}`)
+      invalidatePaperDataCache()
       setAssignOpen(false)
       await reloadPapers()
     } catch (e: unknown) {
@@ -128,6 +123,9 @@ export default function PapersPanel() {
     setDeleteBusy(true)
     try {
       await apiDelete(`/papers/${encodeURIComponent(deleteConfirmId)}`)
+      invalidatePaperDataCache()
+      invalidateOverviewStatsCache()
+      invalidateOverviewGraphCache()
       setDeleteConfirmId('')
       await reloadPapers()
     } catch (e: unknown) {
@@ -148,6 +146,7 @@ export default function PapersPanel() {
       } else {
         await apiPatch(`/collections/${encodeURIComponent(collectionFilter)}`, { name })
       }
+      invalidatePaperDataCache()
       await reloadCollections()
       setCollEditOpen(false)
     } catch (e: unknown) {

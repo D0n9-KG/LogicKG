@@ -1,19 +1,21 @@
 // frontend/src/panels/TextbooksPanel.tsx
 import { useEffect, useRef, useState } from 'react'
-import { apiGet } from '../api'
 import { useI18n } from '../i18n'
+import {
+  loadTextbookCatalog,
+  loadTextbookChapters,
+  type ChapterRow,
+  type TextbookRow,
+} from '../loaders/panelData'
 import { useGlobalState } from '../state/store'
 import { loadTextbookEntityGraph } from '../loaders/textbooks'
-
-type Textbook = { textbook_id: string; title: string; chapter_count: number; entity_count: number }
-type Chapter = { chapter_id: string; chapter_num: number; title: string }
 
 export default function TextbooksPanel() {
   const { state, dispatch } = useGlobalState()
   const { t } = useI18n()
   const { textbooks } = state
-  const [allTextbooks, setAllTextbooks] = useState<Textbook[]>([])
-  const [chapters, setChapters] = useState<Chapter[]>([])
+  const [allTextbooks, setAllTextbooks] = useState<TextbookRow[]>([])
+  const [chapters, setChapters] = useState<ChapterRow[]>([])
   const [loading, setLoading] = useState(false)
   const selectReqRef = useRef<string | null>(null)
 
@@ -21,8 +23,8 @@ export default function TextbooksPanel() {
     // Clear transitioning set by switchModule (textbooks has no immediate graph load)
     dispatch({ type: 'SET_TRANSITIONING', value: false })
     let cancelled = false
-    apiGet<{ textbooks: Textbook[] }>('/textbooks?limit=100')
-      .then((r) => { if (!cancelled) setAllTextbooks(r.textbooks ?? []) })
+    loadTextbookCatalog()
+      .then((rows) => { if (!cancelled) setAllTextbooks(rows) })
       .catch(() => {})
     return () => { cancelled = true }
   }, [dispatch])
@@ -33,12 +35,12 @@ export default function TextbooksPanel() {
     setLoading(true)
     selectReqRef.current = textbookId
     Promise.all([
-      apiGet<{ chapters: Chapter[] }>(`/textbooks/${encodeURIComponent(textbookId)}`),
+      loadTextbookChapters(textbookId),
       loadTextbookEntityGraph(textbookId),
     ])
-      .then(([res, els]) => {
+      .then(([chapterRows, els]) => {
         if (selectReqRef.current !== textbookId) return
-        setChapters(res.chapters ?? [])
+        setChapters(chapterRows)
         dispatch({ type: 'SET_GRAPH', elements: els, layout: 'breadthfirst' })
       })
       .catch(() => {})

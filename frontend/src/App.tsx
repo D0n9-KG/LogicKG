@@ -6,6 +6,7 @@ import StatusBar from './components/StatusBar'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import GraphCanvas from './components/GraphCanvas'
+import { resolveOverview3DPanelState, type OverviewMode } from './components/overview3dLayout'
 import PaperDetailPage from './pages/PaperDetailPage'
 import TextbookDetailPage from './pages/TextbookDetailPage'
 import PageWorkbench from './components/PageWorkbench'
@@ -18,6 +19,7 @@ import type { ModuleId, SelectedNode } from './state/types'
 import './components/layout.css'
 
 type WorkspacePreset = 'focus' | 'balanced' | 'analysis'
+type OverviewGraphMode = OverviewMode
 
 function clamp(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min
@@ -41,17 +43,55 @@ function Shell() {
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [workspacePreset, setWorkspacePreset] = useState<WorkspacePreset>('balanced')
+  const [overviewGraphMode, setOverviewGraphMode] = useState<OverviewGraphMode>('3d')
+  const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
+  const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftWidth, setLeftWidth] = useState(300)
   const [rightWidth, setRightWidth] = useState(340)
   const [resizing, setResizing] = useState<null | 'left' | 'right'>(null)
+  const panelState = resolveOverview3DPanelState({
+    activeModule,
+    overviewMode: overviewGraphMode,
+    hasGraphData: graphElements.length > 0,
+    leftCollapsed,
+    rightCollapsed,
+    leftDrawerOpen,
+    rightDrawerOpen,
+  })
+  const floatingPanelMode = panelState.immersive
+  const layoutLeftCollapsed = panelState.layoutLeftCollapsed
+  const layoutRightCollapsed = panelState.layoutRightCollapsed
+  const leftPanelCollapsed = panelState.leftPanelCollapsed
+  const rightPanelCollapsed = panelState.rightPanelCollapsed
 
   const handleSelectNode = useCallback(
     (node: SelectedNode | null) => {
       dispatch({ type: 'SET_SELECTED', node })
-      if (node && rightCollapsed) setRightCollapsed(false)
+      if (!node) return
+      if (floatingPanelMode) {
+        setRightDrawerOpen(true)
+        return
+      }
+      if (rightCollapsed) setRightCollapsed(false)
     },
-    [dispatch, rightCollapsed],
+    [dispatch, floatingPanelMode, rightCollapsed],
   )
+
+  const toggleLeftPanel = useCallback(() => {
+    if (floatingPanelMode) {
+      setLeftDrawerOpen((value) => !value)
+      return
+    }
+    setLeftCollapsed((value) => !value)
+  }, [floatingPanelMode])
+
+  const toggleRightPanel = useCallback(() => {
+    if (floatingPanelMode) {
+      setRightDrawerOpen((value) => !value)
+      return
+    }
+    setRightCollapsed((value) => !value)
+  }, [floatingPanelMode])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -109,6 +149,18 @@ function Shell() {
     return () => window.clearTimeout(timer)
   }, [activeModule, workspacePreset])
 
+  useEffect(() => {
+    if (activeModule !== 'overview' && overviewGraphMode !== '2d') {
+      setOverviewGraphMode('2d')
+    }
+  }, [activeModule, overviewGraphMode])
+
+  useEffect(() => {
+    if (floatingPanelMode) return
+    if (leftDrawerOpen) setLeftDrawerOpen(false)
+    if (rightDrawerOpen) setRightDrawerOpen(false)
+  }, [floatingPanelMode, leftDrawerOpen, rightDrawerOpen])
+
   const frameStyle = {
     '--left-panel-w': `${leftWidth}px`,
     '--right-panel-w': `${rightWidth}px`,
@@ -117,8 +169,9 @@ function Shell() {
   const frameClass = [
     'kgFrame',
     activeModule === 'ask' ? 'is-ask-mode' : '',
-    leftCollapsed ? 'left-collapsed' : '',
-    rightCollapsed ? 'right-collapsed' : '',
+    layoutLeftCollapsed ? 'left-collapsed' : '',
+    layoutRightCollapsed ? 'right-collapsed' : '',
+    floatingPanelMode ? 'is-floating-panel-mode' : '',
     resizing ? 'is-resizing' : '',
   ]
     .filter(Boolean)
@@ -169,11 +222,11 @@ function Shell() {
       </div>
 
       <div className={frameClass} style={frameStyle}>
-        <LeftPanel collapsed={leftCollapsed} onToggle={() => setLeftCollapsed((v) => !v)} />
+        <LeftPanel collapsed={leftPanelCollapsed} floating={floatingPanelMode} onToggle={toggleLeftPanel} />
         <div
-          className={`kgResize kgResize--left${leftCollapsed ? ' is-hidden' : ''}`}
+          className={`kgResize kgResize--left${layoutLeftCollapsed ? ' is-hidden' : ''}`}
           onMouseDown={() => {
-            if (!leftCollapsed) setResizing('left')
+            if (!layoutLeftCollapsed) setResizing('left')
           }}
           title={t('拖动调整左侧面板宽度', 'Drag to resize left panel')}
         />
@@ -181,17 +234,19 @@ function Shell() {
           elements={graphElements}
           layout={graphLayout}
           layoutTrigger={layoutTrigger}
+          overviewMode={overviewGraphMode}
+          onOverviewModeChange={setOverviewGraphMode}
           transitioning={transitioning}
           onSelectNode={handleSelectNode}
         />
         <div
-          className={`kgResize kgResize--right${rightCollapsed ? ' is-hidden' : ''}`}
+          className={`kgResize kgResize--right${layoutRightCollapsed ? ' is-hidden' : ''}`}
           onMouseDown={() => {
-            if (!rightCollapsed) setResizing('right')
+            if (!layoutRightCollapsed) setResizing('right')
           }}
           title={t('拖动调整右侧面板宽度', 'Drag to resize right panel')}
         />
-        <RightPanel collapsed={rightCollapsed} onToggle={() => setRightCollapsed((v) => !v)} />
+        <RightPanel collapsed={rightPanelCollapsed} floating={floatingPanelMode} onToggle={toggleRightPanel} />
       </div>
       <StatusBar />
     </div>
