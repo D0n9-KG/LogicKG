@@ -185,7 +185,7 @@ export function buildChatMessages(turns: ConversationTurn[], locale: AskUiLocale
 export function shouldAutoRetryWithAllScope(scopeMode: AskScopeMode, response: AskResponseLike): boolean {
   if (scopeMode === 'all') return false
   if (!response.insufficient_scope_evidence) return false
-  return !normalize(response.answer)
+  return false
 }
 
 export function getScopePaperRenderState(options: ScopePaperOption[], limit: number): {

@@ -35,19 +35,26 @@ def _canonical_dir_for_paper_id(paper_id: str) -> Path:
     return _source_dir_from_neo4j(paper_id)
 
 
-def _source_dir_from_neo4j(paper_id: str) -> Path:
-    """Look up source_md_path in Neo4j and return its parent directory."""
+def _source_md_file_for_paper_id(paper_id: str) -> Path | None:
     try:
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
             paper = client.get_paper_basic(paper_id)
-    except KeyError:
-        raise FileNotFoundError(f"Paper not found: {paper_id}")
+    except Exception:
+        return None
     md_path = str(paper.get("source_md_path") or "").strip()
     if not md_path:
-        raise FileNotFoundError(f"No source path found for {paper_id}")
+        return None
     p = Path(md_path)
-    if not p.exists():
-        raise FileNotFoundError(f"Source file not found on disk: {md_path}")
+    if not p.exists() or not p.is_file():
+        return None
+    return p
+
+
+def _source_dir_from_neo4j(paper_id: str) -> Path:
+    """Look up source_md_path in Neo4j and return its parent directory."""
+    p = _source_md_file_for_paper_id(paper_id)
+    if p is None:
+        raise FileNotFoundError(f"Paper not found: {paper_id}")
     return p.parent
 
 
@@ -90,7 +97,13 @@ def get_paper_content(paper_id: str):
     try:
         base = _canonical_dir_for_paper_id(paper_id)
         md_file: Path | None = None
-        for name in ("paper.md", "source.md", "content.md"):
+        exact_md = _source_md_file_for_paper_id(paper_id)
+        if exact_md is not None and exact_md.exists() and exact_md.is_file():
+            exact_md.resolve().relative_to(base.resolve())
+            md_file = exact_md
+        for name in ("source.md", "paper.md", "content.md"):
+            if md_file is not None:
+                break
             candidate = base / name
             if candidate.exists() and candidate.is_file():
                 md_file = candidate

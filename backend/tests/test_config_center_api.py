@@ -80,3 +80,25 @@ def test_config_center_catalog_and_assistant(monkeypatch, tmp_path):
     assert any(_has_cjk(str(item.get("rationale") or "")) for item in suggestions if isinstance(item, dict))
     anchors = {str(item.get("anchor")) for item in suggestions if isinstance(item, dict)}
     assert "discovery.max_gaps" in anchors or "similarity.group_clustering_threshold" in anchors
+
+
+def test_config_center_assistant_keeps_extraction_accuracy_goals_off_discovery(monkeypatch, tmp_path):
+    import app.ops_config_store as config_store
+
+    monkeypatch.setattr(config_store, "_CONFIG_PATH_OVERRIDE", tmp_path / "config_center.json")
+
+    client = TestClient(app)
+    assist_resp = client.post(
+        "/config-center/assistant",
+        json={"goal": "我要提高一下抽取知识图谱的准确性", "max_suggestions": 6, "locale": "zh-CN"},
+    )
+    assert assist_resp.status_code == 200, assist_resp.text
+
+    payload = assist_resp.json()
+    suggestions = payload.get("suggestions") or []
+    assert suggestions, payload
+
+    anchors = {str(item.get("anchor")) for item in suggestions if isinstance(item, dict)}
+    assert anchors
+    assert not any(anchor.startswith("discovery.") for anchor in anchors)
+    assert any(anchor.startswith("schema.") or anchor.startswith("similarity.") for anchor in anchors)

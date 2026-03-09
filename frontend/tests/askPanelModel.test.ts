@@ -67,16 +67,16 @@ describe('askPanelModel', () => {
     expect(messages.find((item) => item.id === 't2:assistant')?.k).toBe(8)
   })
 
-  test('shouldAutoRetryWithAllScope only retries when scope is narrowed and answer is empty', () => {
+  test('shouldAutoRetryWithAllScope respects explicit user scope selections', () => {
     expect(
       shouldAutoRetryWithAllScope('papers', {
         answer: '',
         insufficient_scope_evidence: true,
       }),
-    ).toBe(true)
+    ).toBe(false)
     expect(
       shouldAutoRetryWithAllScope('collection', {
-        answer: 'has answer',
+        answer: '',
         insufficient_scope_evidence: true,
       }),
     ).toBe(false)

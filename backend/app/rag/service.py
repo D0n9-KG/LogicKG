@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,19 @@ from app.settings import settings
 from app.vector.faiss_store import load_faiss
 
 log = logging.getLogger(__name__)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_ASCII_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_:+./-]*|\d[\d_./-]*")
+_ZH_RETRIEVAL_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("方法", "做法", "算法", "模型", "框架", "技术路线"), "method methodology approach framework model algorithm pipeline"),
+    (("结论", "发现", "结果"), "results findings conclusion key findings"),
+    (("证据", "依据", "支撑", "证明", "验证"), "evidence support experimental evidence table figure quantitative result"),
+    (("机制", "机理", "原因"), "mechanism explanation causal mechanism"),
+    (("实验", "试验", "仿真", "模拟"), "experiment simulation evaluation setup"),
+    (("背景", "动机"), "background motivation introduction"),
+    (("贡献", "创新"), "contribution novelty main contribution"),
+    (("问题", "任务", "目标"), "research question problem task objective"),
+    (("比较", "对比", "优缺点"), "comparison baseline ablation advantage limitation"),
+)
 
 
 def _runs_dir() -> Path:
@@ -111,7 +125,7 @@ def _allowed_paper_sources(scope: dict | None) -> set[str] | None:
             return set()
     if mode == "papers":
         ids = scope.get("paper_ids") or []
-        paper_ids = [str(x).strip() for x in ids if str(x).strip()]
+        paper_ids = _normalize_scope_paper_refs(ids)
         if not paper_ids:
             return set()
         try:
@@ -120,6 +134,216 @@ def _allowed_paper_sources(scope: dict | None) -> set[str] | None:
         except Exception:
             return set()
     return None
+
+
+def _normalize_scope_paper_refs(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if text.startswith("paper:"):
+            text = text[len("paper:"):].strip()
+        elif text.startswith("paper_source:"):
+            text = text[len("paper_source:"):].strip()
+        else:
+            match = re.match(r"^(logic|claim):([^:]+):\d+$", text)
+            if match:
+                text = str(match.group(2) or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _single_scope_paper_context(scope: dict | None) -> dict[str, str] | None:
+    if not scope:
+        return None
+    mode = str(scope.get("mode") or "all").strip().lower()
+    if mode != "papers":
+        return None
+    refs = _normalize_scope_paper_refs(scope.get("paper_ids") or [])
+    if len(refs) != 1:
+        return None
+    paper_ref = refs[0]
+    try:
+        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+            detail = client.get_paper_detail(paper_ref)
+    except Exception:
+        return None
+    paper = detail.get("paper") if isinstance(detail, dict) else None
+    if not isinstance(paper, dict):
+        return None
+    paper_id = str(paper.get("paper_id") or "").strip()
+    paper_source = str(paper.get("paper_source") or "").strip()
+    paper_title = str(paper.get("title") or "").strip()
+    if not (paper_id or paper_source or paper_title):
+        return None
+    return {
+        "paper_id": paper_id,
+        "paper_source": paper_source,
+        "paper_title": paper_title,
+    }
+
+
+def _contains_cjk(text: str | None) -> bool:
+    return bool(_CJK_RE.search(str(text or "")))
+
+
+def _dedupe_text_parts(parts: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in parts:
+        text = re.sub(r"\s+", " ", str(raw or "")).strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _sanitize_retrieval_rewrite(text: str | None) -> str:
+    raw = str(text or "").replace("```", " ").strip()
+    if not raw:
+        return ""
+    cleaned_lines: list[str] = []
+    for line in raw.splitlines():
+        item = re.sub(r"^[\s>*`#\-0-9\.\)\(]+", "", line).strip()
+        item = re.sub(r"(?i)^(english retrieval rewrite|retrieval rewrite|retrieval query|query)\s*:\s*", "", item)
+        item = item.strip(" \"'`")
+        if item:
+            cleaned_lines.append(item)
+    if not cleaned_lines:
+        return ""
+    merged = " ".join(cleaned_lines[:3])
+    return re.sub(r"\s+", " ", merged).strip()[:400]
+
+
+def _heuristic_retrieval_rewrite(question: str) -> str:
+    text = str(question or "").strip()
+    if not text:
+        return ""
+    parts: list[str] = []
+    for needles, expansion in _ZH_RETRIEVAL_HINTS:
+        if any(needle in text for needle in needles):
+            parts.append(expansion)
+    ascii_tokens = [
+        token
+        for token in _ASCII_TOKEN_RE.findall(text)
+        if token and len(token) >= 2 and token.casefold() not in {"what", "which", "this", "that", "with", "from"}
+    ]
+    if ascii_tokens:
+        parts.append("keywords " + " ".join(_dedupe_text_parts(ascii_tokens)[:12]))
+    return "\n".join(_dedupe_text_parts(parts))
+
+
+def _llm_retrieval_rewrite(question: str, locale: str | None = None) -> str:
+    text = str(question or "").strip()
+    if not text or not _contains_cjk(text):
+        return ""
+    api_key = settings.effective_llm_api_key()
+    base_url = settings.effective_llm_base_url()
+    if not api_key:
+        return ""
+    timeout_seconds = max(5, min(20, int(getattr(settings, "llm_timeout_seconds", 60) or 60) // 4 or 12))
+    try:
+        client = ChatOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            model=settings.llm_model,
+            temperature=0,
+            timeout=timeout_seconds,
+            max_tokens=96,
+            max_retries=0,
+        )
+        response = client.invoke(
+            [
+                (
+                    "system",
+                    (
+                        "Rewrite scientific questions into a short English retrieval query for an English research corpus. "
+                        "Preserve technical nouns, acronyms, formulas, paper IDs, and specific entities. "
+                        "Return one concise line only, without commentary."
+                    ),
+                ),
+                (
+                    "user",
+                    (
+                        f"Locale: {_normalize_locale(locale)}\n"
+                        "Task: rewrite the question into English search keywords for retrieval.\n"
+                        f"Question: {text}"
+                    ),
+                ),
+            ]
+        )
+    except Exception:
+        log.debug("Retrieval rewrite LLM failed; falling back to heuristics", exc_info=True)
+        return ""
+    return _sanitize_retrieval_rewrite(getattr(response, "content", ""))
+
+
+def _rewrite_query_for_retrieval(question: str, locale: str | None = None) -> str:
+    text = str(question or "").strip()
+    if not text:
+        return ""
+    normalized_locale = _normalize_locale(locale)
+    if normalized_locale != "zh-CN" and not _contains_cjk(text):
+        return ""
+    parts: list[str] = []
+    llm_rewrite = _llm_retrieval_rewrite(text, locale=normalized_locale)
+    if llm_rewrite:
+        parts.append(llm_rewrite)
+    heuristic_rewrite = _heuristic_retrieval_rewrite(text)
+    if heuristic_rewrite:
+        parts.append(heuristic_rewrite)
+    return "\n".join(_dedupe_text_parts(parts))
+
+
+def _build_retrieval_query(
+    question: str,
+    scope_paper: dict[str, str] | None,
+    *,
+    locale: str | None = None,
+) -> str:
+    base = str(question or "").strip()
+    parts = [base]
+    bilingual_rewrite = _rewrite_query_for_retrieval(base, locale=locale)
+    if bilingual_rewrite:
+        parts.append(f"English retrieval rewrite: {bilingual_rewrite}")
+    if not scope_paper:
+        return "\n".join(part for part in parts if part)
+    paper_title = str(scope_paper.get("paper_title") or "").strip()
+    paper_source = str(scope_paper.get("paper_source") or "").strip()
+    paper_id = str(scope_paper.get("paper_id") or "").strip()
+    if paper_title:
+        parts.append(f"paper title: {paper_title}")
+    if paper_source:
+        parts.append(f"paper source: {paper_source}")
+    if paper_id:
+        parts.append(f"paper id: {paper_id}")
+    parts.append("focus: abstract introduction method results conclusion contribution evidence")
+    return "\n".join(part for part in parts if part)
+
+
+def _format_scope_paper_context(scope_paper: dict[str, str] | None) -> str:
+    if not scope_paper:
+        return ""
+    lines = ["Scoped Paper:"]
+    paper_title = str(scope_paper.get("paper_title") or "").strip()
+    paper_source = str(scope_paper.get("paper_source") or "").strip()
+    paper_id = str(scope_paper.get("paper_id") or "").strip()
+    if paper_title:
+        lines.append(f"title={paper_title}")
+    if paper_source:
+        lines.append(f"source={paper_source}")
+    if paper_id:
+        lines.append(f"paper_id={paper_id}")
+    return "\n".join(lines)
 
 
 def _normalize_locale(locale: str | None) -> str:
@@ -313,10 +537,12 @@ def _prepare_ask_v2_context(
         raise RuntimeError("LLM API key is required for /rag/ask (set DEEPSEEK_API_KEY or LLM_API_KEY)")
 
     allowed_sources = _allowed_paper_sources(scope)
+    scope_paper = _single_scope_paper_context(scope)
+    retrieval_query = _build_retrieval_query(question, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
     route = route_query(
-        question,
+        retrieval_query,
         pageindex_enabled=bool(settings.pageindex_enabled),
     )
     pageindex_results: list[dict[str, Any]] = []
@@ -325,7 +551,7 @@ def _prepare_ask_v2_context(
     faiss_results: list[dict[str, Any]] = []
     try:
         store = load_faiss(str(latest_faiss_dir()))
-        docs_and_scores = store.similarity_search_with_score(question, k=oversample)
+        docs_and_scores = store.similarity_search_with_score(retrieval_query, k=oversample)
         for doc, score in docs_and_scores:
             md = doc.metadata or {}
             snippet = (doc.page_content or "").strip()[:1200]
@@ -358,7 +584,7 @@ def _prepare_ask_v2_context(
         try:
             adapter = PageIndexAdapter()
             raw_pageindex = adapter.retrieve(
-                question,
+                retrieval_query,
                 k=oversample,
                 allowed_sources=allowed_sources,
             )
@@ -382,7 +608,7 @@ def _prepare_ask_v2_context(
     try:
         run_dir = latest_run_dir(_runs_dir())
         chunks = load_chunks_from_run(run_dir)
-        lex_hits = lexical_retrieve(question, chunks, k=oversample)
+        lex_hits = lexical_retrieve(retrieval_query, chunks, k=oversample)
         for hit in lex_hits:
             md_path = str(hit.md_path or "").strip() or None
             paper_source = str(hit.paper_source or "").strip() or _paper_source_from_md_path(md_path)
@@ -482,7 +708,7 @@ def _prepare_ask_v2_context(
                         structured_knowledge = None
                     try:
                         fusion_rows = client.list_fusion_basics_by_paper_sources(paper_sources, limit=200)
-                        fusion_evidence = rank_fusion_basics(question, fusion_rows, k=min(12, max(4, want)))
+                        fusion_evidence = rank_fusion_basics(retrieval_query, fusion_rows, k=min(12, max(4, want)))
                     except Exception:
                         fusion_evidence = []
             except Exception:
@@ -494,6 +720,9 @@ def _prepare_ask_v2_context(
     graph_block = _format_graph_context(graph_context)
     knowledge_block = _format_structured_knowledge(structured_knowledge)
     user_parts = [f"Question:\n{question}", "Evidence:\n" + "\n\n".join(context_lines)]
+    scope_paper_block = _format_scope_paper_context(scope_paper)
+    if scope_paper_block:
+        user_parts.insert(1, scope_paper_block)
     if knowledge_block:
         user_parts.append(knowledge_block)
     if graph_block:

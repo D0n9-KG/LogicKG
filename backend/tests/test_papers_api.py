@@ -105,6 +105,48 @@ def test_get_paper_content_fallback_to_source_md():
             assert b"# Source" in resp.body
 
 
+def test_get_paper_content_prefers_source_md_when_both_exist():
+    """Should prefer source.md over paper.md so rendered lines match indexed content."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paper_dir = Path(tmpdir) / "papers" / "doi" / "10.1000_test"
+        paper_dir.mkdir(parents=True)
+        (paper_dir / "paper.md").write_text("# Paper Version", encoding="utf-8")
+        (paper_dir / "source.md").write_text("# Source Version", encoding="utf-8")
+
+        with patch("app.api.routers.papers._canonical_dir_for_paper_id", return_value=paper_dir):
+            from app.api.routers.papers import get_paper_content
+
+            resp = get_paper_content("doi:10.1000/test")
+
+            assert resp.status_code == 200
+            assert b"# Source Version" in resp.body
+            assert b"# Paper Version" not in resp.body
+
+
+def test_get_paper_content_prefers_exact_indexed_source_path_when_available():
+    """Should prefer the exact indexed markdown file recorded in Neo4j."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paper_dir = Path(tmpdir) / "papers" / "doi" / "10.1000_test"
+        paper_dir.mkdir(parents=True)
+        indexed_md = paper_dir / "indexed-source.md"
+        indexed_md.write_text("# Indexed Source Version", encoding="utf-8")
+        (paper_dir / "source.md").write_text("# Generic Source Version", encoding="utf-8")
+
+        with patch("app.api.routers.papers._canonical_dir_for_paper_id", return_value=paper_dir):
+            with patch(
+                "app.api.routers.papers._source_md_file_for_paper_id",
+                return_value=indexed_md,
+                create=True,
+            ):
+                from app.api.routers.papers import get_paper_content
+
+                resp = get_paper_content("doi:10.1000/test")
+
+                assert resp.status_code == 200
+                assert b"# Indexed Source Version" in resp.body
+                assert b"# Generic Source Version" not in resp.body
+
+
 def test_get_paper_content_no_md_file():
     """Should raise 404 when no markdown file exists."""
     with tempfile.TemporaryDirectory() as tmpdir:

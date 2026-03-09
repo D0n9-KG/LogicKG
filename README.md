@@ -42,14 +42,11 @@ LogicKG 是一个面向科研论文的结构化知识图谱系统，核心目标
 │  ├─ src/
 │  ├─ tests/
 │  └─ package.json
-├─ docs/
-│  └─ releases/
-│     ├─ README.md
-│     └─ 2026-02-20-round8-evidence-quote-and-p03-gate.md
 ├─ docker-compose.yml        # 本地 Neo4j 启动（可选）
 ├─ .env.example              # 根目录示例配置
 ├─ run.ps1                   # Windows 一键开发启动
-└─ README.md
+├─ README.md
+└─ TECHNICAL_OVERVIEW.zh-CN.md
 ```
 
 ---
@@ -234,12 +231,11 @@ rg -n "ghp_|github_pat_|sk-|BEGIN .*PRIVATE KEY" -S .
 
 ---
 
-## 11. 发布说明
+## 11. 技术文档
 
-历史发布说明见：
+项目中文技术总览见：
 
-- [docs/releases/README.md](docs/releases/README.md)
-- [docs/releases/2026-02-20-round8-evidence-quote-and-p03-gate.md](docs/releases/2026-02-20-round8-evidence-quote-and-p03-gate.md)
+- [TECHNICAL_OVERVIEW.zh-CN.md](TECHNICAL_OVERVIEW.zh-CN.md)
 
 ---
 

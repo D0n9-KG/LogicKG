@@ -4,6 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.rag.service import (
+    _allowed_paper_sources,
+    _build_retrieval_query,
     _rrf_fuse,
     _prepare_ask_v2_context,
     _build_system_prompt,
@@ -108,6 +110,53 @@ def test_build_system_prompt_empty_string():
     """Empty string should fall back to default."""
     prompt = _build_system_prompt("")
     assert "scientific research assistant" in prompt
+
+
+def test_allowed_paper_sources_normalizes_scope_refs(monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def list_paper_sources_for_paper_ids(self, paper_ids):
+            captured["paper_ids"] = list(paper_ids)
+            return ["07_1605"]
+
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+        ),
+    )
+
+    out = _allowed_paper_sources(
+        {
+            "mode": "papers",
+            "paper_ids": [
+                "paper:doi:10.1000/test",
+                "paper_source:07_1605",
+                "logic:bc082d21ddcde94212aab4ab474d9e32097a34ab90995a8bd181b29b1ed29026:0",
+                "claim:bc082d21ddcde94212aab4ab474d9e32097a34ab90995a8bd181b29b1ed29026:1",
+            ],
+        }
+    )
+
+    assert out == {"07_1605"}
+    assert captured["paper_ids"] == [
+        "doi:10.1000/test",
+        "07_1605",
+        "bc082d21ddcde94212aab4ab474d9e32097a34ab90995a8bd181b29b1ed29026",
+    ]
 
 
 # ── Graph context formatting ──
@@ -374,3 +423,197 @@ def test_prepare_ask_v2_context_adds_fusion_evidence(monkeypatch):
     assert bundle.fusion_evidence
     assert bundle.dual_evidence_coverage is True
     assert "Textbook Fundamentals" in ctx["user"]
+
+
+def test_prepare_ask_v2_context_augments_single_paper_scope_query(monkeypatch):
+    class _Doc:
+        def __init__(self, chunk_id: str, section: str, content: str):
+            self.page_content = content
+            self.metadata = {
+                "chunk_id": chunk_id,
+                "paper_source": "05_340",
+                "paper_title": "Grain-scale experimental investigation of localised deformation in sand: a discrete particle tracking approach",
+                "md_path": "runs/05_340/paper.md",
+                "start_line": 1,
+                "end_line": 8,
+                "section": section,
+                "kind": "block",
+            }
+
+    class _FakeStore:
+        def __init__(self):
+            self.last_query = None
+
+        def similarity_search_with_score(self, question, k=0):
+            self.last_query = question
+            return [
+                (_Doc("c1", "Abstract", "Abstract about localised deformation in sand."), 0.91),
+                (_Doc("c2", "4 Conclusions", "Conclusions and method summary."), 0.87),
+            ]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def list_paper_sources_for_paper_ids(self, paper_ids):
+            return ["05_340"] if "05_340" in paper_ids else []
+
+        def get_paper_detail(self, paper_id):
+            assert paper_id == "05_340"
+            return {
+                "paper": {
+                    "paper_id": "24fefb2c62ea3a1d453d51b306b4c141e09df44fc14f14160c3420b24f35f79c",
+                    "paper_source": "05_340",
+                    "title": "Grain-scale experimental investigation of localised deformation in sand: a discrete particle tracking approach",
+                }
+            }
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return []
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {"logic_steps": [], "claims": []}
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return []
+
+    store = _FakeStore()
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: store)
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    ctx = _prepare_ask_v2_context(
+        "这篇论文的主要方法是什么？核心结论是什么？",
+        k=8,
+        scope={"mode": "papers", "paper_ids": ["05_340"]},
+        locale="zh-CN",
+    )
+
+    assert "Grain-scale experimental investigation of localised deformation in sand" in str(store.last_query or "")
+    assert "05_340" in str(store.last_query or "")
+    assert "Scoped Paper" in ctx["user"]
+
+
+def test_build_retrieval_query_adds_bilingual_rewrite_for_chinese_question(monkeypatch):
+    monkeypatch.setattr(
+        "app.rag.service._rewrite_query_for_retrieval",
+        lambda question, locale=None: (
+            "granular avalanche size segregation waves particle recirculation mechanism"
+        ),
+    )
+
+    query = _build_retrieval_query(
+        "颗粒雪崩中的尺寸偏析波和颗粒回流机制是什么？",
+        None,
+        locale="zh-CN",
+    )
+
+    assert "English retrieval rewrite:" in query
+    assert "granular avalanche size segregation waves particle recirculation mechanism" in query
+
+
+def test_prepare_ask_v2_context_uses_bilingual_rewrite_for_global_chinese_question(monkeypatch):
+    class _Doc:
+        def __init__(self, chunk_id: str, section: str, content: str):
+            self.page_content = content
+            self.metadata = {
+                "chunk_id": chunk_id,
+                "paper_source": "07_1605",
+                "paper_title": "Breaking size segregation waves and particle recirculation in granular avalanches",
+                "md_path": "runs/07_1605/paper.md",
+                "start_line": 1,
+                "end_line": 8,
+                "section": section,
+                "kind": "block",
+            }
+
+    class _FakeStore:
+        def __init__(self):
+            self.last_query = None
+
+        def similarity_search_with_score(self, question, k=0):
+            self.last_query = question
+            return [
+                (_Doc("c1", "Abstract", "Size segregation waves and particle recirculation in granular avalanches."), 0.93),
+                (_Doc("c2", "Conclusions", "Conclusions and mechanistic explanation."), 0.88),
+            ]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return []
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {"logic_steps": [], "claims": []}
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return []
+
+    store = _FakeStore()
+    monkeypatch.setattr(
+        "app.rag.service._rewrite_query_for_retrieval",
+        lambda question, locale=None: (
+            "granular avalanche size segregation waves particle recirculation mechanism"
+        ),
+    )
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: store)
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    _prepare_ask_v2_context(
+        "颗粒雪崩中的尺寸偏析波和颗粒回流机制是什么？",
+        k=8,
+        scope={"mode": "all"},
+        locale="zh-CN",
+    )
+
+    assert "English retrieval rewrite:" in str(store.last_query or "")
+    assert "granular avalanche size segregation waves particle recirculation mechanism" in str(
+        store.last_query or ""
+    )

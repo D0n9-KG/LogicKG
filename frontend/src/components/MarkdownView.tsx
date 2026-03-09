@@ -6,77 +6,12 @@ import remarkMath from 'remark-math'
 import remarkBreaks from 'remark-breaks'
 
 import { apiBaseUrl } from '../api'
+import { normalizeMathMarkdown } from './markdownMath'
 
 type Props = {
   markdown: string
   paperId?: string
   className?: string
-}
-
-function looksLikeStandaloneFormula(text: string): boolean {
-  const t = String(text ?? '').trim()
-  if (!t) return false
-  if (/\n/.test(t) && !/[=]/.test(t)) return false
-  const commandCount = (t.match(/\\[a-zA-Z]+/g) ?? []).length
-  const symbolicCount = (t.match(/[_^{}=]/g) ?? []).length
-  const longWordCount = (t.match(/[A-Za-z]{4,}/g) ?? []).length
-  return (commandCount >= 2 && symbolicCount >= 5) || (commandCount >= 4 && longWordCount <= 10)
-}
-
-function compactLatexCommands(text: string): string {
-  return text.replace(/\\(?:[a-zA-Z](?:\s+[a-zA-Z])+)/g, (raw) => {
-    return `\\${raw.slice(1).replace(/\s+/g, '')}`
-  })
-}
-
-function normalizeFormulaText(raw: string): string {
-  let t = String(raw ?? '').trim()
-  if (!t) return ''
-
-  t = compactLatexCommands(t)
-  const singleInline = t.match(/^\$([^$\n]+)\$$/)
-  if (singleInline && /\\tag\s*\{[^}]+\}/.test(singleInline[1])) {
-    t = `$$\n${singleInline[1].trim()}\n$$`
-  }
-  t = t
-    .replace(/([_^])\s+\{/g, '$1{')
-    .replace(/\\tag\s+\{/g, '\\tag{')
-    .replace(/\\left\s+([()[\]{}|<>])/g, '\\left$1')
-    .replace(/\\right\s+([()[\]{}|<>])/g, '\\right$1')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-
-  if (!/\$/.test(t) && looksLikeStandaloneFormula(t)) {
-    t = `$$\n${t}\n$$`
-  }
-  return t
-}
-
-function promoteTaggedInlineMath(markdown: string): string {
-  const source = String(markdown ?? '')
-  if (!source.includes('$') || !/\\tag\s*\{[^}]+\}/.test(source)) return source
-
-  return source.replace(/\$([^$\n]+)\$/g, (raw, body: string) => {
-    if (!/\\tag\s*\{[^}]+\}/.test(body)) return raw
-    const normalized = normalizeFormulaText(body).trim()
-    if (!normalized) return raw
-    return `\n$$\n${normalized}\n$$\n`
-  })
-}
-
-function normalizeMathMarkdown(markdown: string): string {
-  const source = String(markdown ?? '')
-  if (!source.trim()) return ''
-  const promoted = promoteTaggedInlineMath(source)
-
-  if (
-    /^\s*(\$\$[\s\S]*\$\$|\$[^$\n]+\$)\s*$/.test(promoted.trim()) ||
-    looksLikeStandaloneFormula(promoted)
-  ) {
-    return normalizeFormulaText(promoted)
-  }
-
-  return promoted
 }
 
 function encodePathSegments(path: string): string {

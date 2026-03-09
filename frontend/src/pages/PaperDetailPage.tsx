@@ -3,6 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { apiBaseUrl, apiGet, apiPatch, apiPost } from '../api'
 import MarkdownView from '../components/MarkdownView'
 import SignalGraph, { type SignalGraphEdge, type SignalGraphNode } from '../components/SignalGraph'
+import { splitOriginalTextForHighlight } from './originalTextHighlight'
+import { formatOriginalTextMarkdown } from './originalTextFormatting'
 import { TERMS } from '../ui/terms'
 
 type PaperCore = {
@@ -311,15 +313,7 @@ function OriginalTextPanel({
 
   // Split content into 3 segments for highlighting
   const segments = useMemo(() => {
-    if (!content || !highlightRange) return null
-    const lines = content.split('\n')
-    const s = Math.max(0, highlightRange.start - 1)
-    const e = Math.min(lines.length, highlightRange.end)
-    return {
-      before: lines.slice(0, s).join('\n'),
-      highlight: lines.slice(s, e).join('\n'),
-      after: lines.slice(e).join('\n'),
-    }
+    return splitOriginalTextForHighlight(content ?? '', highlightRange)
   }, [content, highlightRange])
 
   const renderContent = () => {
@@ -331,15 +325,15 @@ function OriginalTextPanel({
     if (segments) {
       return (
         <>
-          {segments.before && <MarkdownView markdown={segments.before} paperId={paperId} />}
+          {segments.before && <MarkdownView markdown={formatOriginalTextMarkdown(segments.before)} paperId={paperId} className="pdOriginalMarkdown" />}
           <div ref={hlRef} className={`pdHighlightBlock${fading ? ' pdHighlightBlock--fade' : ''}`}>
-            <MarkdownView markdown={segments.highlight} paperId={paperId} />
+            <MarkdownView markdown={formatOriginalTextMarkdown(segments.highlight)} paperId={paperId} className="pdOriginalMarkdown" />
           </div>
-          {segments.after && <MarkdownView markdown={segments.after} paperId={paperId} />}
+          {segments.after && <MarkdownView markdown={formatOriginalTextMarkdown(segments.after)} paperId={paperId} className="pdOriginalMarkdown" />}
         </>
       )
     }
-    return <MarkdownView markdown={content} paperId={paperId} />
+    return <MarkdownView markdown={formatOriginalTextMarkdown(content)} paperId={paperId} className="pdOriginalMarkdown" />
   }
 
   if (mode === 'modal') {

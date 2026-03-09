@@ -796,7 +796,7 @@ RETURN DISTINCT p.paper_source AS paper_source
             return []
         cypher = """
 MATCH (p:Paper)
-WHERE p.paper_id IN $paper_ids
+WHERE p.paper_id IN $paper_ids OR p.paper_source IN $paper_ids
 RETURN DISTINCT p.paper_source AS paper_source
 """
         with self._driver.session() as session:

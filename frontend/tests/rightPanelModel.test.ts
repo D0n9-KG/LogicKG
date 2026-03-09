@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest'
 
-import { buildNodeContentState, filterEvidenceRows, rankRelationRows } from '../src/components/rightPanelModel'
+import {
+  buildGenericNodeContext,
+  buildNodeContentState,
+  filterEvidenceRows,
+  rankRelationRows,
+} from '../src/components/rightPanelModel'
 
 describe('rightPanelModel', () => {
   test('buildNodeContentState prefers description and provides collapsed preview', () => {
@@ -72,5 +77,33 @@ describe('rightPanelModel', () => {
 
     expect(rows).toHaveLength(1)
     expect(rows[0]?.paper_id).toBe('P-2')
+  })
+
+  test('buildGenericNodeContext separates child and parent neighbors', () => {
+    const context = buildGenericNodeContext({
+      selectedNode: { id: 'paper:A', kind: 'paper', label: 'Paper A' },
+      nodes: [
+        { id: 'paper:A', label: 'P-A', description: 'Full Paper A Title', kind: 'paper', year: 2021 },
+        { id: 'paper:B', label: 'P-B', description: 'Full Paper B Title', kind: 'paper', year: 2022 },
+        { id: 'paper:C', label: 'Paper C', kind: 'paper', year: 2020 },
+        { id: 'paper:D', label: 'P-D', description: 'Full Paper D Title', kind: 'paper', year: 2023 },
+      ],
+      edges: [
+        { id: 'ab', source: 'paper:A', target: 'paper:B', kind: 'cites' },
+        { id: 'ca', source: 'paper:C', target: 'paper:A', kind: 'supports' },
+        { id: 'ad', source: 'paper:A', target: 'paper:D', kind: 'relates_to' },
+        { id: 'da', source: 'paper:D', target: 'paper:A', kind: 'challenges' },
+      ],
+    })
+
+    expect(context).not.toBeNull()
+    expect(context?.childNeighbors.map((row) => row.id)).toEqual(['paper:D', 'paper:B'])
+    expect(context?.parentNeighbors.map((row) => row.id)).toEqual(['paper:D', 'paper:C'])
+    expect(context?.center?.description).toBe('Full Paper A Title')
+    expect(context?.childNeighbors[0]?.label).toBe('Full Paper D Title')
+    expect(context?.childNeighbors[1]?.label).toBe('Full Paper B Title')
+    expect(context?.neighborCount).toBe(3)
+    expect(context?.outCount).toBe(2)
+    expect(context?.inCount).toBe(2)
   })
 })
