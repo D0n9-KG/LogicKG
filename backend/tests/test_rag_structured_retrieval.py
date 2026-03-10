@@ -237,3 +237,35 @@ def test_retrieve_claims_calls_faiss_then_falls_back_to_lexical_rows(monkeypatch
             "score": 0.6666666666666666,
         }
     ]
+
+
+def test_corpus_faiss_dir_prefers_global_corpus_when_present(tmp_path, monkeypatch) -> None:
+    structured = _structured_module()
+    global_root = tmp_path / "storage" / "faiss"
+    run_root = tmp_path / "runs" / "run-1" / "faiss"
+    (global_root / "claims").mkdir(parents=True)
+    (run_root / "claims").mkdir(parents=True)
+    latest = tmp_path / "runs" / "LATEST"
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text("run-1", encoding="utf-8")
+
+    monkeypatch.setattr(structured, "_storage_dir", lambda: tmp_path / "storage", raising=False)
+    monkeypatch.setattr(structured, "_runs_dir", lambda: tmp_path / "runs", raising=False)
+
+    assert structured._corpus_faiss_dir("claims") == str(global_root / "claims")
+
+
+def test_corpus_faiss_dir_falls_back_to_latest_run_local_corpus(tmp_path, monkeypatch) -> None:
+    structured = _structured_module()
+    global_root = tmp_path / "storage" / "faiss"
+    run_root = tmp_path / "runs" / "run-1" / "faiss"
+    (global_root / "chunks").mkdir(parents=True)
+    (run_root / "claims").mkdir(parents=True)
+    latest = tmp_path / "runs" / "LATEST"
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text("run-1", encoding="utf-8")
+
+    monkeypatch.setattr(structured, "_storage_dir", lambda: tmp_path / "storage", raising=False)
+    monkeypatch.setattr(structured, "_runs_dir", lambda: tmp_path / "runs", raising=False)
+
+    assert structured._corpus_faiss_dir("claims") == str(run_root / "claims")

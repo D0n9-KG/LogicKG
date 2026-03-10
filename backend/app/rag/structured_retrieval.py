@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
 from app.vector.faiss_store import load_faiss
 
+log = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_:+./-]+|[\u4e00-\u9fff]+")
 _CORPUS_KIND = {
@@ -110,8 +112,37 @@ def _load_corpus_rows(corpus: str) -> list[dict[str, Any]]:
     return []
 
 
+def _storage_dir() -> Path:
+    path = Path(__file__).resolve().parents[2] / settings.storage_dir
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _runs_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "runs"
+
+
 def _corpus_faiss_dir(corpus: str) -> str:
-    return str(Path(__file__).resolve().parents[2] / settings.storage_dir / "faiss" / corpus)
+    corpus_name = str(corpus or "").strip()
+    global_root = _storage_dir() / "faiss"
+    global_corpus = global_root / corpus_name
+    if global_corpus.exists():
+        return str(global_corpus)
+
+    run_corpus: Path | None = None
+    latest = _runs_dir() / "LATEST"
+    if latest.exists():
+        run_id = latest.read_text(encoding="utf-8").strip()
+        if run_id:
+            run_corpus = _runs_dir() / run_id / "faiss" / corpus_name
+            if run_corpus.exists():
+                return str(run_corpus)
+
+    if global_root.exists():
+        return str(global_corpus)
+    if run_corpus is not None:
+        return str(run_corpus)
+    return str(global_corpus)
 
 
 def _normalize_faiss_hit(corpus: str, doc: Any, score: float) -> dict[str, Any]:
@@ -149,7 +180,9 @@ def _search_corpus(corpus: str, query: str, k: int, allowed_sources=None) -> lis
     allowed = {str(x).strip() for x in (allowed_sources or set()) if str(x).strip()} if allowed_sources else None
     try:
         rows = normalize_structured_rows(_search_via_faiss(corpus, query, k))
-    except Exception:
+    except Exception as exc:
+        if not isinstance(exc, FileNotFoundError):
+            log.debug("Structured FAISS retrieval failed for corpus=%s; falling back to lexical rows", corpus, exc_info=True)
         rows = normalize_structured_rows(_load_corpus_rows(corpus))
         for row in rows:
             base_score = row.get("score")
