@@ -101,6 +101,31 @@ describe('RightPanel ask summary fusion coverage', () => {
               logic_steps: [{ paper_source: 'paper-A', step_type: 'Method', summary: 'Uses FEM.' }],
               claims: [],
             },
+            structuredEvidence: [
+              {
+                kind: 'proposition',
+                source_id: 'pr-1',
+                proposition_id: 'pr-1',
+                text: 'Finite element discretization stabilizes PDE solving.',
+                source_kind: 'claim',
+                source_ref_id: 'cl-1',
+              },
+            ],
+            grounding: [
+              {
+                source_kind: 'proposition',
+                source_id: 'pr-1',
+                quote: 'Finite element method discretizes the domain.',
+                chapter_id: 'tb:1:ch001',
+              },
+            ],
+            intent: 'foundational',
+            retrievalPlan: 'textbook_first_then_paper',
+            queryPlan: {
+              main_query: 'finite element method assumptions',
+              textbook_query: 'finite element method definition assumptions discretization',
+              proposition_query: 'finite element method assumptions proposition',
+            },
             retrievalMode: 'hybrid',
             notice: '',
           },
@@ -118,5 +143,9 @@ describe('RightPanel ask summary fusion coverage', () => {
     expect(html).toContain('Top Anchored Chapters')
     expect(html).toContain('Ch.1 Finite Element Foundations')
     expect(html).toContain('Covered')
+    expect(html).toContain('Foundational')
+    expect(html).toContain('textbook_first_then_paper')
+    expect(html).toContain('Structured Evidence')
+    expect(html).toContain('Finite element method discretizes the domain.')
   })
 })

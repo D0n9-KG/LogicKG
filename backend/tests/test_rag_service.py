@@ -617,3 +617,130 @@ def test_prepare_ask_v2_context_uses_bilingual_rewrite_for_global_chinese_questi
     assert "granular avalanche size segregation waves particle recirculation mechanism" in str(
         store.last_query or ""
     )
+
+
+def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grounding(monkeypatch):
+    class _Doc:
+        def __init__(self):
+            self.page_content = "Finite element method is used."
+            self.metadata = {
+                "chunk_id": "c1",
+                "paper_source": "paper-A",
+                "paper_title": "Paper A",
+                "md_path": "runs/paper-A/content.md",
+                "start_line": 1,
+                "end_line": 5,
+                "section": "Method",
+                "kind": "chunk",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, question, k=0):
+            return [(_Doc(), 0.91)]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return []
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {
+                "logic_steps": [{"paper_source": paper_sources[0], "step_type": "Method", "summary": "Uses FEM"}],
+                "claims": [{"claim_id": "cl-1", "paper_source": paper_sources[0], "step_type": "Result", "text": "FEM improves stability."}],
+            }
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return [
+                {
+                    "paper_source": paper_sources[0],
+                    "paper_id": "doi:10.1000/test",
+                    "logic_step_id": "ls-1",
+                    "step_type": "Method",
+                    "entity_id": "ent-1",
+                    "entity_name": "Finite Element Method",
+                    "entity_type": "method",
+                    "description": "A numerical method for PDE discretization.",
+                    "score": 0.83,
+                    "evidence_quote": "Finite element method discretizes structure.",
+                }
+            ]
+
+    monkeypatch.setattr(
+        "app.rag.service.plan_ask_query",
+        lambda question, scope=None, locale=None: {
+            "intent": "foundational",
+            "retrieval_plan": "textbook_first_then_paper",
+            "main_query": "finite element method assumptions",
+            "paper_query": "finite element method assumptions in this paper",
+            "textbook_query": "finite element method definition assumptions discretization",
+            "proposition_query": "finite element method assumptions proposition",
+            "confidence": 0.88,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_structured_evidence",
+        lambda *args, **kwargs: [
+            {
+                "kind": "proposition",
+                "source_id": "pr-1",
+                "proposition_id": "pr-1",
+                "text": "Finite element discretization stabilizes PDE solving.",
+                "source_kind": "claim",
+                "source_ref_id": "cl-1",
+                "paper_source": "paper-A",
+            }
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.rag.service.ground_structured_evidence",
+        lambda *args, **kwargs: [
+            {
+                "source_kind": "proposition",
+                "source_id": "pr-1",
+                "quote": "Finite element method discretizes the domain.",
+                "chunk_id": "c1",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: _FakeStore())
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    ctx = _prepare_ask_v2_context("What assumptions does FEM make?", k=4)
+
+    bundle_dump = ctx["bundle"].model_dump()
+
+    assert "query_plan" in bundle_dump
+    assert bundle_dump["query_plan"]["intent"] == "foundational"
+    assert bundle_dump["structured_evidence"][0]["kind"] == "proposition"
+    assert bundle_dump["grounding"][0]["source_id"] == "pr-1"
+    assert "Structured Evidence" in ctx["user"]
