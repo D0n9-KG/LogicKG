@@ -17,7 +17,7 @@ from app.rag.fusion_retrieval import (
     has_dual_evidence,
     rank_fusion_basics,
 )
-from app.rag.planner import plan_ask_query
+from app.rag.planner import plan_ask_query, resolve_query_plan
 from app.rag.retrieval import latest_run_dir, load_chunks_from_run, lexical_retrieve
 from app.rag.tree_router import route_query
 from app.retrieval.pageindex_adapter import PageIndexAdapter
@@ -569,7 +569,7 @@ def _prepare_ask_v2_context(
     query_plan = (
         raw_query_plan
         if isinstance(raw_query_plan, AskQueryPlan)
-        else AskQueryPlan.model_validate(raw_query_plan)
+        else resolve_query_plan(question, raw_query_plan)
     )
     retrieval_query = _build_retrieval_query(query_plan.main_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
