@@ -13,9 +13,15 @@ from app.settings import settings
 
 _TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 _TRANSIENT_ERROR_SIGNALS = (
-    "502", "503", "504", "timeout", "timed out",
-    "connection reset", "connection aborted",
-    "temporarily unavailable", "rate limit",
+    "502",
+    "503",
+    "504",
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connection aborted",
+    "temporarily unavailable",
+    "rate limit",
 )
 
 
@@ -35,17 +41,7 @@ def _is_retryable_embedding_error(exc: Exception) -> bool:
 
 
 class _RequestsEmbeddings(Embeddings):
-    """Direct requests-based embedding client for OpenAI-compatible providers.
-
-    Bypasses the OpenAI Python SDK to avoid compatibility issues that cause 502
-    errors with certain providers:
-    - SDK sends tokenized input arrays by default (check_embedding_ctx_length=True)
-    - SDK defaults to encoding_format="base64" when not specified
-    - SDK injects X-Stainless-* headers that some providers reject
-
-    This adapter sends a minimal JSON payload: {"model": ..., "input": [str, ...]}
-    identical to what the clustering path (app/similarity/embedding.py) uses.
-    """
+    """Direct requests-based embedding client for OpenAI-compatible providers."""
 
     def __init__(
         self,
@@ -70,7 +66,6 @@ class _RequestsEmbeddings(Embeddings):
         }
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed a single batch with optional retry logic."""
         payload: dict[str, Any] = {"model": self._model, "input": texts}
         last_exc: Exception = RuntimeError("unknown error")
 
@@ -87,15 +82,12 @@ class _RequestsEmbeddings(Embeddings):
                 vectors: list[list[float]] = [item["embedding"] for item in data["data"]]
                 if len(vectors) != len(texts):
                     raise RuntimeError(
-                        f"Embedding response count mismatch: "
-                        f"sent {len(texts)}, received {len(vectors)}"
+                        f"Embedding response count mismatch: sent {len(texts)}, received {len(vectors)}"
                     )
                 return vectors
-
             except requests.exceptions.HTTPError as exc:
                 last_exc = exc
             except requests.exceptions.RequestException as exc:
-                # Covers Timeout, ConnectionError, and other transient network errors
                 last_exc = exc
             except (KeyError, TypeError, ValueError) as exc:
                 raise RuntimeError(f"Embedding API response parse error: {exc}") from exc
@@ -103,18 +95,15 @@ class _RequestsEmbeddings(Embeddings):
             is_retryable = _is_retryable_embedding_error(last_exc)
             is_last_attempt = attempt >= self._max_retries
             if is_retryable and not is_last_attempt:
-                delay = 5 * (2 ** attempt)  # exponential backoff: 5s, 10s, 20s, ...
+                delay = 5 * (2 ** attempt)
                 time.sleep(delay)
             else:
-                reason = (
-                    "non-retryable error" if not is_retryable
-                    else f"failed after {attempt + 1} attempts"
-                )
+                reason = "non-retryable error" if not is_retryable else f"failed after {attempt + 1} attempts"
                 raise RuntimeError(
                     f"Embedding request failed ({reason}). Error: {last_exc}"
                 ) from last_exc
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        raise AssertionError("unreachable")
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -129,16 +118,7 @@ class _RequestsEmbeddings(Embeddings):
 
 
 def _create_provider_compatible_embeddings(*, max_retries: int | None = None) -> Embeddings:
-    """Create requests-based embeddings client that bypasses OpenAI SDK incompatibilities.
-
-    Args:
-        max_retries: Number of internal retries per batch.
-                     None = use default (2 retries, 3 total attempts).
-                     0 = disable internal retries (use when caller handles retries).
-
-    Returns:
-        Configured _RequestsEmbeddings instance.
-    """
+    """Create requests-based embeddings client that bypasses OpenAI SDK incompatibilities."""
     api_key = settings.effective_embedding_api_key()
     base_url = settings.effective_embedding_base_url()
     model = settings.effective_embedding_model()
@@ -160,41 +140,26 @@ def _create_provider_compatible_embeddings(*, max_retries: int | None = None) ->
     )
 
 
-def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
-    if not chunks:
-        raise RuntimeError("FAISS index build failed: no chunks available to index")
+def _build_faiss_from_texts(
+    *,
+    texts: list[str],
+    metadatas: list[dict[str, Any]],
+    out_dir: str,
+) -> None:
+    if not texts:
+        raise RuntimeError("FAISS index build failed: no rows available to index")
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Disable internal retries: outer batch-level retry (5×) handles transient errors.
     embeddings = _create_provider_compatible_embeddings(max_retries=0)
-
-    texts = [c.text for c in chunks]
-    metadatas = [
-        {
-            "chunk_id": c.chunk_id,
-            "paper_source": c.paper_source,
-            "md_path": c.md_path,
-            "start_line": c.span.start_line,
-            "end_line": c.span.end_line,
-            "section": c.section,
-            "kind": c.kind,
-        }
-        for c in chunks
-    ]
-
-    # ── Phase 2.5: Dual-stage embed parallelization ──
-    # Stage 1: Parallel embedding computation
-    # Stage 2: Serial FAISS index construction (not thread-safe)
 
     batch_size = 64
     max_batch_retries = 5
-    base_retry_delay = 5  # seconds (exponential backoff: 5, 10, 20, 40, 80)
+    base_retry_delay = 5
     total_batches = (len(texts) + batch_size - 1) // batch_size
 
     def _embed_one_batch(batch_idx: int) -> tuple[int, list[list[float]]]:
-        """Embed a single batch with retry logic. Returns (batch_idx, vectors)."""
         start = batch_idx * batch_size
         end = min(start + batch_size, len(texts))
         batch_texts = texts[start:end]
@@ -227,14 +192,11 @@ def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
                         f"Error: {error_msg}. Please check embedding API configuration and try again."
                     ) from exc
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        raise AssertionError("unreachable")
 
-    # Stage 1: Parallel embedding
     from concurrent.futures import ThreadPoolExecutor
 
-    embed_workers = min(settings.faiss_embed_max_workers, total_batches)
-    embed_workers = max(1, embed_workers)
-
+    embed_workers = max(1, min(settings.faiss_embed_max_workers, total_batches))
     all_vectors: list[tuple[int, list[list[float]]]] = []
     if embed_workers == 1 or total_batches <= 1:
         for bi in range(total_batches):
@@ -244,15 +206,12 @@ def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
         with ThreadPoolExecutor(max_workers=embed_workers) as executor:
             futures = {executor.submit(_embed_one_batch, bi): bi for bi in range(total_batches)}
             for future in futures:
-                bi = futures[future]
-                idx, vectors = future.result()  # propagate exceptions
+                idx, vectors = future.result()
                 all_vectors.append((idx, vectors))
                 print(f"Embed batch {idx + 1}/{total_batches} completed")
 
-    # Sort by batch index for deterministic ordering
     all_vectors.sort(key=lambda x: x[0])
 
-    # Stage 2: Serial FAISS index construction
     store = None
     for batch_idx, vectors in all_vectors:
         start = batch_idx * batch_size
@@ -260,7 +219,6 @@ def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
         batch_texts = texts[start:end]
         batch_metadatas = metadatas[start:end]
         text_embeddings = list(zip(batch_texts, vectors))
-
         if store is None:
             store = FAISS.from_embeddings(
                 text_embeddings=text_embeddings,
@@ -273,10 +231,66 @@ def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
     if store is None:
         raise RuntimeError("FAISS index build failed: no embeddings produced")
     store.save_local(str(out))
-    return {"chunks_indexed": len(chunks), "dir": str(out)}
+
+
+def build_faiss_for_rows(
+    rows: list[dict[str, Any]],
+    out_dir: str,
+    *,
+    text_key: str,
+    metadata_keys: list[str],
+) -> dict[str, Any]:
+    texts: list[str] = []
+    metadatas: list[dict[str, Any]] = []
+    count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get(text_key) or "").strip()
+        if not text:
+            continue
+        texts.append(text)
+        metadatas.append({key: row.get(key) for key in metadata_keys if key in row})
+        count += 1
+
+    _build_faiss_from_texts(texts=texts, metadatas=metadatas, out_dir=out_dir)
+    return {"rows_indexed": count, "dir": str(Path(out_dir))}
+
+
+def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
+    rows = [
+        {
+            "text": c.text,
+            "chunk_id": c.chunk_id,
+            "paper_source": c.paper_source,
+            "md_path": c.md_path,
+            "start_line": c.span.start_line,
+            "end_line": c.span.end_line,
+            "section": c.section,
+            "kind": c.kind,
+        }
+        for c in chunks
+    ]
+    res = build_faiss_for_rows(
+        rows,
+        out_dir,
+        text_key="text",
+        metadata_keys=[
+            "chunk_id",
+            "paper_source",
+            "md_path",
+            "start_line",
+            "end_line",
+            "section",
+            "kind",
+        ],
+    )
+    return {"chunks_indexed": res["rows_indexed"], "dir": res["dir"]}
 
 
 def load_faiss(out_dir: str) -> FAISS:
-    # Keep default retries (max_retries=None → 2 internal retries) for online query resilience.
+    target_dir = Path(out_dir)
+    if target_dir.is_dir() and (target_dir / "chunks").is_dir() and not (target_dir / "index.faiss").exists():
+        target_dir = target_dir / "chunks"
     embeddings = _create_provider_compatible_embeddings()
-    return FAISS.load_local(out_dir, embeddings, allow_dangerous_deserialization=True)
+    return FAISS.load_local(str(target_dir), embeddings, allow_dangerous_deserialization=True)

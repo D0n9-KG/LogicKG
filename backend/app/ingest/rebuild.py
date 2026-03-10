@@ -20,7 +20,7 @@ from app.llm.citation_purpose import classify_citation_purposes_batch
 from app.llm.reference_recovery import recover_references_with_agent
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
-from app.vector.faiss_store import build_faiss_for_chunks
+from app.vector.faiss_store import build_faiss_for_chunks, build_faiss_for_rows
 
 
 ProgressFn = Callable[[str, float, str | None], None]
@@ -649,6 +649,51 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
     notify("rebuild:faiss_load", 0.10, "Loading chunks from Neo4j")
     with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
         rows = client.list_chunks_for_faiss(limit=200000)
+        structured_corpora = {
+            "logic_steps": (
+                client.list_logic_step_structured_rows(limit=50000),
+                [
+                    "kind",
+                    "source_id",
+                    "paper_id",
+                    "paper_source",
+                    "step_type",
+                    "evidence_chunk_ids",
+                    "evidence_quote",
+                ],
+            ),
+            "claims": (
+                client.list_claim_structured_rows(limit=50000),
+                [
+                    "kind",
+                    "source_id",
+                    "paper_id",
+                    "paper_source",
+                    "step_type",
+                    "confidence",
+                    "proposition_id",
+                    "evidence_chunk_ids",
+                    "evidence_quote",
+                ],
+            ),
+            "propositions": (
+                client.list_proposition_structured_rows(limit=50000),
+                [
+                    "kind",
+                    "source_id",
+                    "proposition_id",
+                    "paper_id",
+                    "paper_source",
+                    "source_kind",
+                    "source_ref_id",
+                    "textbook_id",
+                    "chapter_id",
+                    "evidence_quote",
+                    "evidence_event_id",
+                    "evidence_event_type",
+                ],
+            ),
+        }
 
     chunks: list[Chunk] = []
     for r in rows:
@@ -670,7 +715,19 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
 
     notify("rebuild:faiss_build", 0.55, f"Building FAISS over {len(chunks)} chunks")
     out_dir = _storage_dir() / "faiss"
-    res = build_faiss_for_chunks(chunks, out_dir=str(out_dir))
+    res = {
+        "chunks": build_faiss_for_chunks(chunks, out_dir=str(out_dir / "chunks")),
+        "corpora": {},
+    }
+    for corpus, (corpus_rows, metadata_keys) in structured_corpora.items():
+        if not corpus_rows:
+            continue
+        res["corpora"][corpus] = build_faiss_for_rows(
+            corpus_rows,
+            out_dir=str(out_dir / corpus),
+            text_key="text",
+            metadata_keys=metadata_keys,
+        )
     write_log(f"built global FAISS in {out_dir}")
     notify("rebuild:faiss_done", 1.0, "FAISS rebuild done")
     return {"faiss": res, "dir": str(out_dir)}

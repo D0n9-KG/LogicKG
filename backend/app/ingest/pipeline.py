@@ -23,7 +23,7 @@ from app.llm.citation_purpose import classify_citation_purposes_batch
 from app.llm.reference_recovery import recover_references_with_agent
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
-from app.vector.faiss_store import build_faiss_for_chunks
+from app.vector.faiss_store import build_faiss_for_chunks, build_faiss_for_rows
 
 
 ProgressFn = Callable[[str, float, str | None], None]
@@ -646,9 +646,65 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
     faiss_error = None
     faiss_dir = str(run_dir / "faiss")
     try:
-        # Build one index over all chunks across all ingested papers.
+        faiss_root = Path(faiss_dir)
         all_chunks = [c for d in parsed for c in d.chunks if c.kind != "heading"]
-        build_faiss_for_chunks(all_chunks, out_dir=faiss_dir)
+        build_faiss_for_chunks(all_chunks, out_dir=str(faiss_root / "chunks"))
+        if neo4j_written:
+            with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+                structured_corpora = {
+                    "logic_steps": (
+                        client.list_logic_step_structured_rows(limit=50000),
+                        [
+                            "kind",
+                            "source_id",
+                            "paper_id",
+                            "paper_source",
+                            "step_type",
+                            "evidence_chunk_ids",
+                            "evidence_quote",
+                        ],
+                    ),
+                    "claims": (
+                        client.list_claim_structured_rows(limit=50000),
+                        [
+                            "kind",
+                            "source_id",
+                            "paper_id",
+                            "paper_source",
+                            "step_type",
+                            "confidence",
+                            "proposition_id",
+                            "evidence_chunk_ids",
+                            "evidence_quote",
+                        ],
+                    ),
+                    "propositions": (
+                        client.list_proposition_structured_rows(limit=50000),
+                        [
+                            "kind",
+                            "source_id",
+                            "proposition_id",
+                            "paper_id",
+                            "paper_source",
+                            "source_kind",
+                            "source_ref_id",
+                            "textbook_id",
+                            "chapter_id",
+                            "evidence_quote",
+                            "evidence_event_id",
+                            "evidence_event_type",
+                        ],
+                    ),
+                }
+            for corpus, (rows, metadata_keys) in structured_corpora.items():
+                if not rows:
+                    continue
+                build_faiss_for_rows(
+                    rows,
+                    out_dir=str(faiss_root / corpus),
+                    text_key="text",
+                    metadata_keys=metadata_keys,
+                )
         faiss_built = True
     except Exception as exc:  # noqa: BLE001
         faiss_error = str(exc)

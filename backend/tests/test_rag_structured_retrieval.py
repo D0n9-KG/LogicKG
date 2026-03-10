@@ -135,3 +135,105 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
     assert rows[1]["source_kind"] == "textbook_entity"
     assert rows[1]["chapter_id"] == "tb:1:ch001"
     assert rows[1]["evidence_event_id"] == "ev-2"
+
+
+def test_retrieve_propositions_prefers_faiss_hits_and_preserves_provenance_fields(monkeypatch) -> None:
+    structured = _structured_module()
+
+    class _Doc:
+        def __init__(self) -> None:
+            self.page_content = "Finite element discretization stabilizes PDE solving."
+            self.metadata = {
+                "kind": "proposition",
+                "source_id": "pr-1",
+                "proposition_id": "pr-1",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/example",
+                "source_kind": "claim",
+                "source_ref_id": "cl-1",
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+                "evidence_event_id": "ev-9",
+                "evidence_event_type": "SUPPORTS",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, query, k=0):
+            return [(_Doc(), 0.23)]
+
+    monkeypatch.setattr(structured, "_corpus_faiss_dir", lambda corpus: f"fake/{corpus}", raising=False)
+    monkeypatch.setattr(structured, "load_faiss", lambda path: _FakeStore(), raising=False)
+    monkeypatch.setattr(
+        structured,
+        "_load_corpus_rows",
+        lambda corpus: (_ for _ in ()).throw(AssertionError("lexical fallback should not run when FAISS is available")),
+        raising=False,
+    )
+
+    hits = structured.retrieve_propositions("finite element method", k=2)
+
+    assert hits == [
+        {
+            "kind": "proposition",
+            "source_id": "pr-1",
+            "proposition_id": "pr-1",
+            "id": "pr-1",
+            "text": "Finite element discretization stabilizes PDE solving.",
+            "score": 0.23,
+            "paper_source": "paper-A",
+            "paper_id": "doi:10.1000/example",
+            "source_kind": "claim",
+            "source_ref_id": "cl-1",
+            "textbook_id": "tb:1",
+            "chapter_id": "tb:1:ch001",
+            "evidence_event_id": "ev-9",
+            "evidence_event_type": "SUPPORTS",
+        }
+    ]
+
+
+def test_retrieve_claims_calls_faiss_then_falls_back_to_lexical_rows(monkeypatch) -> None:
+    structured = _structured_module()
+    attempts = {"faiss": 0}
+
+    def _missing_faiss(path: str):
+        attempts["faiss"] += 1
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(structured, "_corpus_faiss_dir", lambda corpus: f"fake/{corpus}", raising=False)
+    monkeypatch.setattr(structured, "load_faiss", _missing_faiss, raising=False)
+    monkeypatch.setattr(
+        structured,
+        "_load_corpus_rows",
+        lambda corpus: [
+            {
+                "kind": "claim",
+                "source_id": "cl-1",
+                "text": "FEM improves stability.",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/example",
+                "proposition_id": "pr-1",
+                "evidence_quote": "Finite element method discretizes the domain.",
+            }
+        ]
+        if corpus == "claims"
+        else [],
+        raising=False,
+    )
+
+    hits = structured.retrieve_claims("finite element stability", k=2)
+
+    assert attempts["faiss"] == 1
+    assert hits == [
+        {
+            "kind": "claim",
+            "source_id": "cl-1",
+            "id": "cl-1",
+            "text": "FEM improves stability.",
+            "paper_source": "paper-A",
+            "paper_id": "doi:10.1000/example",
+            "proposition_id": "pr-1",
+            "evidence_quote": "Finite element method discretizes the domain.",
+            "score": 0.6666666666666666,
+        }
+    ]

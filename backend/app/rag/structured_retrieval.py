@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
+from app.vector.faiss_store import load_faiss
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_:+./-]+|[\u4e00-\u9fff]+")
+_CORPUS_KIND = {
+    "logic_steps": "logic_step",
+    "claims": "claim",
+    "propositions": "proposition",
+}
 
 
 def _tokens(text: str) -> list[str]:
@@ -22,6 +29,15 @@ def _score_text(query: str, text: str) -> float:
     text_set = set(text_tokens)
     overlap = sum(1 for token in query_tokens if token in text_set)
     return overlap / max(len(set(query_tokens)), 1)
+
+
+def _score_row(query: str, row: dict[str, Any]) -> float:
+    candidates = [
+        str(row.get("text") or ""),
+        str(row.get("quote") or ""),
+        str(row.get("evidence_quote") or ""),
+    ]
+    return max((_score_text(query, candidate) for candidate in candidates), default=0.0)
 
 
 def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -49,6 +65,8 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
             normalized["source_ref_id"] = str(row.get("source_id") or "").strip() or None
         if "quote" in row:
             normalized["quote"] = str(row.get("quote") or "").strip() or None
+        if "evidence_quote" in row:
+            normalized["evidence_quote"] = str(row.get("evidence_quote") or "").strip() or None
         if "paper_source" in row:
             normalized["paper_source"] = str(row.get("paper_source") or "").strip() or None
         if "paper_id" in row:
@@ -63,6 +81,8 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
             normalized["evidence_event_id"] = str(row.get("evidence_event_id") or "").strip() or None
         if "evidence_event_type" in row:
             normalized["evidence_event_type"] = str(row.get("evidence_event_type") or "").strip() or None
+        if "proposition_id" in row and kind != "proposition":
+            normalized["proposition_id"] = str(row.get("proposition_id") or "").strip() or None
         if "start_line" in row:
             normalized["start_line"] = row.get("start_line")
         if "end_line" in row:
@@ -90,28 +110,60 @@ def _load_corpus_rows(corpus: str) -> list[dict[str, Any]]:
     return []
 
 
+def _corpus_faiss_dir(corpus: str) -> str:
+    return str(Path(__file__).resolve().parents[2] / settings.storage_dir / "faiss" / corpus)
+
+
+def _normalize_faiss_hit(corpus: str, doc: Any, score: float) -> dict[str, Any]:
+    metadata = dict(getattr(doc, "metadata", {}) or {})
+    row = dict(metadata)
+    row["kind"] = str(metadata.get("kind") or _CORPUS_KIND.get(corpus) or "structured")
+    row["source_id"] = str(metadata.get("source_id") or metadata.get("id") or "").strip()
+    row["id"] = str(metadata.get("id") or row["source_id"]).strip() or row["source_id"]
+    row["text"] = str(getattr(doc, "page_content", "") or metadata.get("text") or "").strip()
+    row["score"] = float(score)
+    return row
+
+
+def _search_via_faiss(corpus: str, query: str, k: int) -> list[dict[str, Any]]:
+    store = load_faiss(_corpus_faiss_dir(corpus))
+    docs_and_scores = store.similarity_search_with_score(query, k=max(1, int(k)))
+    return [
+        _normalize_faiss_hit(corpus, doc, float(score))
+        for doc, score in docs_and_scores
+    ]
+
+
+def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            str(item.get("paper_source") or ""),
+            str(item.get("source_id") or item.get("id") or ""),
+        ),
+    )
+
+
 def _search_corpus(corpus: str, query: str, k: int, allowed_sources=None) -> list[dict[str, Any]]:
     allowed = {str(x).strip() for x in (allowed_sources or set()) if str(x).strip()} if allowed_sources else None
-    rows = normalize_structured_rows(_load_corpus_rows(corpus))
+    try:
+        rows = normalize_structured_rows(_search_via_faiss(corpus, query, k))
+    except Exception:
+        rows = normalize_structured_rows(_load_corpus_rows(corpus))
+        for row in rows:
+            base_score = row.get("score")
+            if not isinstance(base_score, (int, float)):
+                row["score"] = _score_row(query, row)
+
     ranked: list[dict[str, Any]] = []
     for row in rows:
         paper_source = str(row.get("paper_source") or "").strip()
         if allowed is not None and paper_source not in allowed:
             continue
-        current = dict(row)
-        base_score = row.get("score")
-        if not isinstance(base_score, (int, float)):
-            current["score"] = _score_text(query, str(row.get("text") or ""))
-        ranked.append(current)
-    ranked.sort(
-        key=lambda item: (
-            float(item.get("score") or 0.0),
-            str(item.get("paper_source") or ""),
-            str(item.get("source_id") or item.get("id") or ""),
-        ),
-        reverse=True,
-    )
-    return ranked[: max(1, int(k))]
+        ranked.append(dict(row))
+
+    return _sort_rows(ranked)[: max(1, int(k))]
 
 
 def retrieve_logic_steps(query: str, k: int, allowed_sources: set[str] | None = None) -> list[dict[str, Any]]:
@@ -137,16 +189,7 @@ def _hit_key(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def _sorted_hits(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    normalized = normalize_structured_rows(rows)
-    normalized.sort(
-        key=lambda item: (
-            float(item.get("score") or 0.0),
-            str(item.get("paper_source") or ""),
-            str(item.get("text") or ""),
-        ),
-        reverse=True,
-    )
-    return normalized
+    return _sort_rows(normalize_structured_rows(rows))
 
 
 def fuse_retrieval_channels(
