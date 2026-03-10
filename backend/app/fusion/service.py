@@ -62,29 +62,94 @@ def _sanitize_graph_payload(
     node_limit = max(1, int(limit_nodes))
     edge_limit = max(1, int(limit_edges))
 
-    nodes: list[dict[str, Any]] = []
-    node_ids: set[str] = set()
-    for raw in list(nodes_raw or [])[:node_limit]:
+    all_nodes: list[dict[str, Any]] = []
+    node_map: dict[str, dict[str, Any]] = {}
+    node_order: list[str] = []
+    for raw in list(nodes_raw or []):
         node = dict(raw or {})
         node_id = str(node.get("id") or "").strip()
-        if not node_id or node_id in node_ids:
+        if not node_id or node_id in node_map:
             continue
         node["id"] = node_id
-        nodes.append(node)
-        node_ids.add(node_id)
+        all_nodes.append(node)
+        node_map[node_id] = node
+        node_order.append(node_id)
 
-    edges: list[dict[str, Any]] = []
-    for raw in list(edges_raw or [])[:edge_limit]:
+    all_edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    degree: dict[str, int] = {}
+    for raw in list(edges_raw or []):
         edge = dict(raw or {})
         source = str(edge.get("source") or "").strip()
         target = str(edge.get("target") or "").strip()
         if not source or not target:
             continue
-        if source not in node_ids or target not in node_ids:
+        if source not in node_map or target not in node_map:
             continue
+        edge_type = str(edge.get("type") or "").strip()
+        edge_key = (source, target, edge_type)
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
         edge["source"] = source
         edge["target"] = target
-        edges.append(edge)
+        all_edges.append(edge)
+        degree[source] = degree.get(source, 0) + 1
+        degree[target] = degree.get(target, 0) + 1
+
+    if len(node_map) <= node_limit and len(all_edges) <= edge_limit:
+        return all_nodes, all_edges
+
+    def edge_score(edge: dict[str, Any]) -> tuple[float, int]:
+        edge_type = str(edge.get("type") or "").strip()
+        type_bonus = {
+            "EXPLAINS": 5,
+            "RELATES_TO": 4,
+            "HAS_CLAIM": 3,
+            "IN_COMMUNITY": 2,
+            "HAS_KEYWORD": 1,
+        }.get(edge_type, 0)
+        weight = float(edge.get("weight") or 0.0)
+        return (type_bonus + weight, max(degree.get(str(edge.get("source") or ""), 0), degree.get(str(edge.get("target") or ""), 0)))
+
+    ranked_edges = sorted(all_edges, key=edge_score, reverse=True)
+    selected_node_ids: set[str] = set()
+    selected_edges: list[dict[str, Any]] = []
+
+    for edge in ranked_edges:
+        if len(selected_edges) >= edge_limit:
+            break
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        extra_nodes = int(source not in selected_node_ids) + int(target not in selected_node_ids)
+        if len(selected_node_ids) + extra_nodes > node_limit:
+            continue
+        selected_edges.append(edge)
+        selected_node_ids.add(source)
+        selected_node_ids.add(target)
+
+    if not selected_node_ids:
+        ranked_node_ids = sorted(
+            node_order,
+            key=lambda node_id: (degree.get(node_id, 0), -node_order.index(node_id)),
+            reverse=True,
+        )
+        selected_node_ids.update(ranked_node_ids[:node_limit])
+    elif len(selected_node_ids) < node_limit:
+        for node_id in node_order:
+            if node_id in selected_node_ids:
+                continue
+            selected_node_ids.add(node_id)
+            if len(selected_node_ids) >= node_limit:
+                break
+
+    nodes = [node_map[node_id] for node_id in node_order if node_id in selected_node_ids][:node_limit]
+    selected_lookup = {node["id"] for node in nodes}
+    edges = [
+        edge
+        for edge in ranked_edges
+        if str(edge.get("source") or "") in selected_lookup and str(edge.get("target") or "") in selected_lookup
+    ][:edge_limit]
 
     return nodes, edges
 

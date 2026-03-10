@@ -41,7 +41,7 @@ export default function TextbooksPanel() {
       .then(([chapterRows, els]) => {
         if (selectReqRef.current !== textbookId) return
         setChapters(chapterRows)
-        dispatch({ type: 'SET_GRAPH', elements: els, layout: 'breadthfirst' })
+        dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
       })
       .catch(() => {})
       .finally(() => {
@@ -61,7 +61,7 @@ export default function TextbooksPanel() {
     loadTextbookEntityGraph(textbooks.selectedTextbookId, chapterId)
       .then((els) => {
         if (selectReqRef.current !== reqKey) return
-        dispatch({ type: 'SET_GRAPH', elements: els, layout: 'breadthfirst' })
+        dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
       })
       .catch(() => {})
       .finally(() => {

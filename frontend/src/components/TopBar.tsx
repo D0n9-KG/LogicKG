@@ -20,10 +20,9 @@ type ModuleNavItem = {
 
 const MODULES: ModuleNavItem[] = [
   { id: 'overview', moduleId: 'overview', label: { zh: '总览', en: 'Overview' }, note: { zh: '全局知识图谱', en: 'Global KG' } },
-  { id: 'papers', moduleId: 'papers', label: { zh: '论文', en: 'Papers' }, note: { zh: '引用网络', en: 'Citation Net' } },
+  { id: 'papers', moduleId: 'papers', label: { zh: '论文', en: 'Papers' }, note: { zh: '引文网络', en: 'Citation Net' } },
   { id: 'ask', moduleId: 'ask', label: { zh: '问答', en: 'Ask' }, note: { zh: '图谱增强问答', en: 'GraphRAG' } },
   { id: 'textbooks', moduleId: 'textbooks', label: { zh: '教材', en: 'Textbooks' }, note: { zh: '知识结构', en: 'Knowledge Base' } },
-  { id: 'fusion', label: { zh: '融合', en: 'Fusion' }, note: { zh: '跨源关联', en: 'Cross-source' }, href: '/fusion' },
   { id: 'discovery', label: { zh: '发现', en: 'Discovery' }, note: { zh: '问题挖掘', en: 'Question Mining' }, href: '/discovery' },
   { id: 'ops', label: { zh: '运维', en: 'Ops' }, note: { zh: '任务与配置', en: 'Tasks & Config' }, href: '/ops' },
 ]

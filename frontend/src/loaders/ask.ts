@@ -41,9 +41,34 @@ export type StructuredKnowledge = {
   claims?: StructuredClaimRow[]
 }
 
+export type FusionEvidenceRow = {
+  paper_source?: string
+  paper_id?: string
+  logic_step_id?: string
+  step_type?: string
+  entity_id?: string
+  entity_name?: string
+  entity_type?: string
+  description?: string
+  score?: number
+  rank_score?: number
+  reasons?: string[]
+  evidence_chunk_ids?: string[]
+  source_chunk_id?: string
+  evidence_quote?: string
+  source_chapter_id?: string
+  textbook_id?: string
+  textbook_title?: string
+  chapter_id?: string
+  chapter_num?: number
+  chapter_title?: string
+}
+
 export type AskApiResponse = {
   answer?: string
   evidence?: EvidenceRow[]
+  fusion_evidence?: FusionEvidenceRow[]
+  dual_evidence_coverage?: boolean
   graph_context?: GraphContextRow[]
   structured_knowledge?: StructuredKnowledge | null
   retrieval_mode?: string
@@ -70,6 +95,28 @@ function sourceFromMdPath(mdPath: string | null | undefined): string {
   const last = parts[parts.length - 1]
   if (/\.md$/i.test(last) && parts.length >= 2) return parts[parts.length - 2]
   return last
+}
+
+function textbookNodeId(textbookId: string): string {
+  return `textbook:${textbookId}`
+}
+
+function chapterNodeId(chapterId: string): string {
+  return `chapter:${chapterId}`
+}
+
+function entityNodeId(entityId: string): string {
+  return `entity:${entityId}`
+}
+
+function chapterLabel(row: FusionEvidenceRow): string {
+  const title = norm(row.chapter_title)
+  const chapterId = norm(row.chapter_id || row.source_chapter_id)
+  const chapterNum = Number(row.chapter_num)
+  if (Number.isFinite(chapterNum)) {
+    return title ? `Ch.${Math.round(chapterNum)} ${title}` : `Ch.${Math.round(chapterNum)}`
+  }
+  return title || chapterId || 'chapter'
 }
 
 function lineNumber(value: unknown): number | null {
@@ -281,6 +328,103 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
         target: claimNodeId,
         kind: 'supports',
         weight: 0.5,
+      })
+    }
+  }
+
+  for (const fusion of res.fusion_evidence ?? []) {
+    const paperSource = norm(fusion.paper_source)
+    const paperId = norm(fusion.paper_id)
+    const paperNodeId =
+      (paperSource ? sourceToPaperNodeId.get(paperSource) : undefined)
+      || (paperId ? `paper:${paperId}` : '')
+      || (paperSource ? `paper_source:${paperSource}` : '')
+
+    if (paperNodeId) {
+      const title = sourceToPaperTitle.get(paperSource) || paperSource || paperId || 'paper'
+      upsertPaperNode(paperNodeId, {
+        label: title,
+        description: title,
+        priority: sourceToPaperTitle.has(paperSource) ? 4 : 3,
+        paperId: paperId || undefined,
+      })
+      if (paperSource) sourceToPaperNodeId.set(paperSource, paperNodeId)
+    }
+
+    const textbookId = norm(fusion.textbook_id)
+    const textbookTitle = norm(fusion.textbook_title)
+    const chapterId = norm(fusion.chapter_id || fusion.source_chapter_id)
+    const entityId = norm(fusion.entity_id)
+
+    if (textbookId) {
+      nodeMap.set(textbookNodeId(textbookId), {
+        id: textbookNodeId(textbookId),
+        label: textbookTitle || textbookId,
+        kind: 'textbook',
+        description: textbookTitle || textbookId,
+        textbookId,
+        clusterKey: textbookNodeId(textbookId),
+      })
+    }
+
+    if (chapterId) {
+      nodeMap.set(chapterNodeId(chapterId), {
+        id: chapterNodeId(chapterId),
+        label: chapterLabel(fusion),
+        kind: 'chapter',
+        description: [textbookTitle, norm(fusion.chapter_title), chapterId].filter(Boolean).join(' | '),
+        textbookId: textbookId || undefined,
+        chapterId,
+        clusterKey: textbookId ? textbookNodeId(textbookId) : chapterNodeId(chapterId),
+      })
+      if (textbookId) {
+        edgeMap.set(`${textbookNodeId(textbookId)}->${chapterNodeId(chapterId)}`, {
+          id: `${textbookNodeId(textbookId)}->${chapterNodeId(chapterId)}`,
+          source: textbookNodeId(textbookId),
+          target: chapterNodeId(chapterId),
+          kind: 'contains',
+          weight: 0.82,
+        })
+      }
+    }
+
+    if (entityId) {
+      nodeMap.set(entityNodeId(entityId), {
+        id: entityNodeId(entityId),
+        label: norm(fusion.entity_name) || entityId,
+        kind: 'entity',
+        description: [norm(fusion.entity_type), norm(fusion.description), norm(fusion.evidence_quote)].filter(Boolean).join(' | ') || undefined,
+        textbookId: textbookId || undefined,
+        chapterId: chapterId || undefined,
+        clusterKey: chapterId ? chapterNodeId(chapterId) : textbookId ? textbookNodeId(textbookId) : undefined,
+      })
+      if (chapterId) {
+        edgeMap.set(`${chapterNodeId(chapterId)}->${entityNodeId(entityId)}`, {
+          id: `${chapterNodeId(chapterId)}->${entityNodeId(entityId)}`,
+          source: chapterNodeId(chapterId),
+          target: entityNodeId(entityId),
+          kind: 'contains',
+          weight: 0.76,
+        })
+      }
+    }
+
+    const logicNodeId = paperSource ? logicByPaperAndType.get(`${paperSource}:${fusion.step_type ?? ''}`) : undefined
+    if (entityId && logicNodeId) {
+      edgeMap.set(`${logicNodeId}->${entityNodeId(entityId)}`, {
+        id: `${logicNodeId}->${entityNodeId(entityId)}`,
+        source: logicNodeId,
+        target: entityNodeId(entityId),
+        kind: 'maps_to',
+        weight: Number.isFinite(Number(fusion.score)) ? Math.max(0.35, Math.min(1, Number(fusion.score))) : 0.56,
+      })
+    } else if (entityId && paperNodeId) {
+      edgeMap.set(`${paperNodeId}->${entityNodeId(entityId)}`, {
+        id: `${paperNodeId}->${entityNodeId(entityId)}`,
+        source: paperNodeId,
+        target: entityNodeId(entityId),
+        kind: 'maps_to',
+        weight: Number.isFinite(Number(fusion.score)) ? Math.max(0.35, Math.min(1, Number(fusion.score))) : 0.5,
       })
     }
   }

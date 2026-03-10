@@ -10,7 +10,6 @@ import { resolveOverview3DPanelState, type OverviewMode } from './components/ove
 import PaperDetailPage from './pages/PaperDetailPage'
 import TextbookDetailPage from './pages/TextbookDetailPage'
 import PageWorkbench from './components/PageWorkbench'
-import FusionPage from './pages/FusionPage'
 import OpsWorkbench from './pages/OpsWorkbench'
 import IngestPage from './pages/IngestPage'
 import DiscoveryPage from './pages/DiscoveryPage'
@@ -270,19 +269,9 @@ function AppRoutes() {
   const { t } = useI18n()
   return (
     <Routes>
-      <Route
-        path="/ask"
-        element={<ShellRoute module="ask" />}
-      />
+      <Route path="/ask" element={<ShellRoute module="ask" />} />
       <Route path="/ask/workbench" element={<Navigate to="/ask" replace />} />
-      <Route
-        path="/fusion"
-        element={
-          <PageWorkbench title={t('跨源融合', 'Cross-source Fusion')}>
-            <FusionPage />
-          </PageWorkbench>
-        }
-      />
+      <Route path="/fusion" element={<Navigate to="/ask" replace />} />
       <Route
         path="/ops"
         element={
@@ -351,4 +340,3 @@ export default function App() {
     </BrowserRouter>
   )
 }
-

@@ -12,7 +12,6 @@ const PANEL_ICONS: Record<string, string> = {
   papers: 'P',
   ask: 'Q',
   textbooks: 'T',
-  fusion: 'F',
   ops: 'S',
 }
 
@@ -46,7 +45,7 @@ export default function LeftPanel({ collapsed, floating = false, onToggle }: Pro
   if (collapsed) {
     return (
       <aside className="kgPanel kgPanel--left">
-        <div className="kgPanelIcon" onClick={onToggle} title={t('展开左侧面板', 'Expand Left Panel')}>
+        <div className="kgPanelIcon" onClick={onToggle} title={t('灞曞紑宸︿晶闈㈡澘', 'Expand Left Panel')}>
           <button className="kgPanelIconBtn" type="button">
             O
           </button>
@@ -68,15 +67,6 @@ export default function LeftPanel({ collapsed, floating = false, onToggle }: Pro
     if (activeModule === 'papers') return <PapersPanel />
     if (activeModule === 'ask') return <AskPanel />
     if (activeModule === 'textbooks') return <TextbooksPanel />
-    if (activeModule === 'fusion') {
-      return (
-        <div className="kgPanelBody">
-          <p className="text-muted" style={{ fontSize: 11 }}>
-            {t('融合模块控制面板（第二阶段）', 'Fusion Module Panel (Phase 2)')}
-          </p>
-        </div>
-      )
-    }
     if (activeModule === 'ops') return <OpsPanel />
     return null
   }
@@ -91,7 +81,7 @@ export default function LeftPanel({ collapsed, floating = false, onToggle }: Pro
         <span className="kgPanelTitle">
           {PANEL_ICONS[activeModule]} {activeModule.toUpperCase()}
         </span>
-        <button className="kgPanelCollapseBtn" type="button" onClick={onToggle} title={t('收起', 'Collapse')}>
+        <button className="kgPanelCollapseBtn" type="button" onClick={onToggle} title={t('鏀惰捣', 'Collapse')}>
           {'<'}
         </button>
       </div>

@@ -1,8 +1,6 @@
 // frontend/src/components/StatusBar.tsx
 import { useI18n } from '../i18n'
 import { useGlobalState } from '../state/store'
-// apiBaseUrl is a function that returns the currently resolved API URL (may change after probing).
-// We don't display it in the status bar since it resolves asynchronously and can be misleading.
 
 const MODULE_LABELS: Record<string, { zh: string; en: string }> = {
   overview: { zh: '全局总览', en: 'Global Overview' },
@@ -10,7 +8,6 @@ const MODULE_LABELS: Record<string, { zh: string; en: string }> = {
   ask: { zh: '图谱增强问答', en: 'GraphRAG QA' },
   evolution: { zh: '命题演化', en: 'Proposition Evolution' },
   textbooks: { zh: '教材知识图谱', en: 'Textbook Knowledge Graph' },
-  fusion: { zh: '跨源融合', en: 'Cross-source Fusion' },
   ops: { zh: '运维工作台', en: 'Ops Workbench' },
 }
 

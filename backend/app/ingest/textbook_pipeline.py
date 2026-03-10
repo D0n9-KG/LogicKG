@@ -63,6 +63,15 @@ def _textbook_storage_name(textbook_id: str) -> str:
     return safe or "tb_unknown"
 
 
+def _autoyoutu_dataset_name(chapter_md_path: Path, output_dir: Path) -> str:
+    """Generate a chapter-scoped dataset name for autoyoutu/GraphRAG."""
+    stem = _INVALID_FS_CHARS_RE.sub("_", chapter_md_path.stem).strip(" .") or "chapter"
+    suffix = hashlib.sha256(
+        str(output_dir.resolve()).encode("utf-8", errors="ignore")
+    ).hexdigest()[:8]
+    return f"{stem}_{suffix}"
+
+
 def _run_autoyoutu_pipeline(
     chapter_md_path: Path,
     output_dir: Path,
@@ -106,6 +115,7 @@ def _run_autoyoutu_pipeline(
     graph_download_dir.mkdir(parents=True, exist_ok=True)
     child_env["LOCAL_TEMP_DIR"] = str(graph_download_dir)
     child_env["CLEANUP_TEMP_FILES"] = "false"
+    child_env["DATASET_NAME"] = _autoyoutu_dataset_name(chapter_md_path, output_dir)
 
     cmd = [
         sys.executable,

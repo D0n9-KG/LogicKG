@@ -61,6 +61,7 @@ class FusionEvidenceItem(BaseModel):
     textbook_id: str | None = None
     textbook_title: str | None = None
     chapter_id: str | None = None
+    chapter_num: int | None = None
     chapter_title: str | None = None
 
 

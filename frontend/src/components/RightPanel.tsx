@@ -5,7 +5,13 @@ import type { AskItem, GraphEdgeData, GraphNodeData } from '../state/types'
 import { apiGet } from '../api'
 import { buildEvidenceNodeId } from '../loaders/ask'
 import { buildNodeAskQuestion } from '../nodeAskPrompt'
-import { buildGenericNodeContext, buildNodeContentState, filterEvidenceRows, rankRelationRows } from './rightPanelModel'
+import {
+  buildFusionEvidenceStats,
+  buildGenericNodeContext,
+  buildNodeContentState,
+  filterEvidenceRows,
+  rankRelationRows,
+} from './rightPanelModel'
 import { paperRefForAskScope } from '../paperRefs'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
@@ -34,6 +40,9 @@ function pickText(locale: UILocale, text: LocalizedText): string {
 }
 
 const KIND_LABELS: Record<string, LocalizedText> = {
+  textbook: { zh: '教材', en: 'Textbook' },
+  chapter: { zh: '章节', en: 'Chapter' },
+  community: { zh: '社区', en: 'Community' },
   paper: { zh: '论文', en: 'Paper' },
   logic: { zh: '逻辑步骤', en: 'Logic Step' },
   claim: { zh: '论断', en: 'Claim' },
@@ -213,14 +222,22 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
 
     const counts = {
       paper: 0,
+      textbook: 0,
+      chapter: 0,
+      community: 0,
       logic: 0,
       claim: 0,
+      entity: 0,
       citation: 0,
     }
     for (const node of nodes) {
       if (node.kind === 'paper') counts.paper += 1
+      else if (node.kind === 'textbook') counts.textbook += 1
+      else if (node.kind === 'chapter') counts.chapter += 1
+      else if (node.kind === 'community') counts.community += 1
       else if (node.kind === 'logic') counts.logic += 1
       else if (node.kind === 'claim') counts.claim += 1
+      else if (node.kind === 'entity') counts.entity += 1
       else if (node.kind === 'citation') counts.citation += 1
     }
 
@@ -240,6 +257,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
   }, [activeModule, askCurrent?.evidence, graphElements, selectedNode])
 
   const askEvidenceStats = useMemo(() => buildEvidenceStats(askCurrent?.evidence ?? []), [askCurrent?.evidence])
+  const askFusionStats = useMemo(() => buildFusionEvidenceStats(askCurrent?.fusionEvidence ?? []), [askCurrent?.fusionEvidence])
   const askFilteredEvidence = useMemo(
     () => filterEvidenceRows(askCurrent?.evidence ?? [], evidenceQuery, 24),
     [askCurrent?.evidence, evidenceQuery],
@@ -378,6 +396,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
         description: node.description,
         paperId: node.paperId,
         textbookId: node.textbookId,
+        chapterId: node.chapterId,
         propId: node.propId,
       },
     })
@@ -469,7 +488,16 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
   if (activeModule === 'ask') {
     const current = askCurrent
     const evidence = askContext?.evidence ?? []
-    const counts = askContext?.counts ?? { paper: 0, logic: 0, claim: 0, citation: 0 }
+    const counts = askContext?.counts ?? {
+      paper: 0,
+      textbook: 0,
+      chapter: 0,
+      community: 0,
+      logic: 0,
+      claim: 0,
+      entity: 0,
+      citation: 0,
+    }
     const selected = askContext?.selectedData ?? null
     const selectedRelations = askContext?.selectedRelations ?? []
     const graphNodeCount = askContext?.nodes.length ?? 0
@@ -546,6 +574,10 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                       <div className="kgInfoHeroMeta">
                         <span className="kgTag">{t('状态', 'Status')}: {current.status}</span>
                         <span className="kgTag">k={current.k}</span>
+                        <span className="kgTag">{t('教材锚点', 'Textbook Anchors')}: {askFusionStats.total}</span>
+                        <span className="kgTag">
+                          {t('双证据', 'Dual Evidence')}: {current.dualEvidenceCoverage ? t('已覆盖', 'Covered') : t('未覆盖', 'Missing')}
+                        </span>
                         {current.retrievalMode && <span className="kgTag">{t('检索模式', 'Mode')}: {current.retrievalMode}</span>}
                         <span className="kgTag">{t('证据', 'Evidence')}: {evidence.length}</span>
                         <span className="kgTag">
@@ -612,7 +644,70 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                         <div className="kgInfoMetricLabel">{t('行号覆盖', 'Line Coverage')}</div>
                         <div className="kgInfoMetricValue">{lineCoverage}</div>
                       </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('教材节点', 'Textbook Nodes')}</div>
+                        <div className="kgInfoMetricValue">{counts.textbook}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('章节节点', 'Chapter Nodes')}</div>
+                        <div className="kgInfoMetricValue">{counts.chapter}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('融合实体', 'Fused Entities')}</div>
+                        <div className="kgInfoMetricValue">{counts.entity}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('锚定章节', 'Anchored Chapters')}</div>
+                        <div className="kgInfoMetricValue">{askFusionStats.chapterCount}</div>
+                      </div>
                     </div>
+
+                    <div className="kgSectionTitle">{t('教材锚点覆盖', 'Textbook Anchor Coverage')}</div>
+                    <div className="kgInfoMetricGrid kgAskMetricGrid">
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('锚点条目', 'Anchor Rows')}</div>
+                        <div className="kgInfoMetricValue">{askFusionStats.total}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('教材数', 'Textbooks')}</div>
+                        <div className="kgInfoMetricValue">{askFusionStats.textbookCount}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('关联论文数', 'Paper Sources')}</div>
+                        <div className="kgInfoMetricValue">{askFusionStats.paperSourceCount}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('锚点平均分', 'Anchor Avg Score')}</div>
+                        <div className="kgInfoMetricValue">{formatMetric(askFusionStats.avgScore, 3)}</div>
+                      </div>
+                    </div>
+
+                    {askFusionStats.topChapters.length > 0 && (
+                      <>
+                        <div className="kgSectionTitle">{t('重点锚定章节', 'Top Anchored Chapters')}</div>
+                        <div className="kgInfoSection kgAskBarList">
+                          {askFusionStats.topChapters.map((row) => (
+                            <div key={`ask-anchor-${row.chapterId}`} className="kgAskBarRow">
+                              <span className="kgAskBarLabel" title={row.textbookTitle || row.chapterId}>
+                                {row.label}
+                              </span>
+                              <div className="kgAskBarTrack">
+                                <div
+                                  className="kgAskBarFill"
+                                  style={{
+                                    width: `${Math.max(
+                                      8,
+                                      (row.count / Math.max(askFusionStats.topChapters[0]?.count ?? 1, 1)) * 100,
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                              <span className="kgAskBarValue">{row.count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
 
                     <div className="kgSectionTitle">{t('关系分布', 'Relation Distribution')}</div>
                     <div className="kgInfoSection kgAskBarList">
@@ -679,6 +774,14 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                           <div className="kgInfoLine">
                             <span>paperId</span>
                             <b>{prettyValue(selected?.paperId ?? selectedNode.paperId)}</b>
+                          </div>
+                          <div className="kgInfoLine">
+                            <span>textbookId</span>
+                            <b>{prettyValue(selected?.textbookId ?? selectedNode.textbookId)}</b>
+                          </div>
+                          <div className="kgInfoLine">
+                            <span>chapterId</span>
+                            <b>{prettyValue(selected?.chapterId ?? selectedNode.chapterId)}</b>
                           </div>
                           <div className="kgInfoLine">
                             <span>year</span>

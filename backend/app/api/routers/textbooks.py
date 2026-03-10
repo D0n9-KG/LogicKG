@@ -94,6 +94,30 @@ def get_chapter_entities(textbook_id: str, chapter_id: str, limit: int = 500):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/{textbook_id}/chapters/{chapter_id}/graph")
+def get_chapter_graph(textbook_id: str, chapter_id: str, entity_limit: int = 220, edge_limit: int = 420):
+    """Get a chapter graph snapshot with entities, relations, and communities."""
+    try:
+        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+            return client.get_chapter_graph_snapshot(chapter_id, entity_limit=entity_limit, edge_limit=edge_limit)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Chapter not found: {chapter_id}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{textbook_id}/graph")
+def get_textbook_graph(textbook_id: str, entity_limit: int = 260, edge_limit: int = 520):
+    """Get a textbook graph snapshot with chapters, entities, relations, and communities."""
+    try:
+        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+            return client.get_textbook_graph_snapshot(textbook_id, entity_limit=entity_limit, edge_limit=edge_limit)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Textbook not found: {textbook_id}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{textbook_id}/entities")
 def get_textbook_entities(textbook_id: str, limit: int = 2000):
     """Get all entities across the textbook."""

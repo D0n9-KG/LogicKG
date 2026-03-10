@@ -9,6 +9,7 @@ from pathlib import Path
 
 from neo4j import GraphDatabase
 
+from app.graph.textbook_graph import build_community_rows, sample_connected_graph_rows
 from app.ingest.models import DocumentIR
 from app.settings import settings
 
@@ -3909,6 +3910,8 @@ LIMIT $limit
         cypher = """
 MATCH (p:Paper)-[:HAS_LOGIC_STEP]->(ls:LogicStep)-[ex:EXPLAINS]->(ke:KnowledgeEntity)
 WHERE p.paper_source IN $paper_sources
+OPTIONAL MATCH (tc:TextbookChapter {chapter_id: coalesce(ex.source_chapter_id, ke.source_chapter_id)})
+OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
 RETURN p.paper_source AS paper_source,
        p.paper_id AS paper_id,
        ls.logic_step_id AS logic_step_id,
@@ -3922,7 +3925,12 @@ RETURN p.paper_source AS paper_source,
        ex.evidence_chunk_ids AS evidence_chunk_ids,
        ex.source_chunk_id AS source_chunk_id,
        ex.evidence_quote AS evidence_quote,
-       ex.source_chapter_id AS source_chapter_id
+       ex.source_chapter_id AS source_chapter_id,
+       tb.textbook_id AS textbook_id,
+       tb.title AS textbook_title,
+       tc.chapter_id AS chapter_id,
+       tc.chapter_num AS chapter_num,
+       tc.title AS chapter_title
 ORDER BY coalesce(ex.score, 0.0) DESC
 LIMIT $limit
 """
@@ -4012,6 +4020,174 @@ RETURN e1.entity_id AS source_id,
             entities = [dict(r) for r in session.run(cypher_ents, chapter_id=str(chapter_id), limit=int(limit))]
             relations = [dict(r) for r in session.run(cypher_rels, chapter_id=str(chapter_id))]
         return {"entities": entities, "relations": relations}
+
+    def get_textbook_graph_snapshot(self, textbook_id: str, entity_limit: int = 260, edge_limit: int = 520) -> dict:
+        detail = self.get_textbook_detail(textbook_id)
+        cypher_counts = """
+MATCH (t:Textbook {textbook_id: $textbook_id})-[:HAS_CHAPTER]->(:TextbookChapter)-[:HAS_ENTITY]->(e:KnowledgeEntity)
+RETURN count(DISTINCT e) AS entity_total
+"""
+        cypher_relation_count = """
+MATCH (t:Textbook {textbook_id: $textbook_id})-[:HAS_CHAPTER]->(:TextbookChapter)-[:HAS_ENTITY]->(a:KnowledgeEntity)
+MATCH (a)-[r:RELATES_TO]->(b:KnowledgeEntity)
+RETURN count(DISTINCT r) AS relation_total
+"""
+        cypher_relations = """
+MATCH (t:Textbook {textbook_id: $textbook_id})-[:HAS_CHAPTER]->(:TextbookChapter)-[:HAS_ENTITY]->(a:KnowledgeEntity)
+MATCH (a)-[r:RELATES_TO]->(b:KnowledgeEntity)
+MATCH (t)-[:HAS_CHAPTER]->(:TextbookChapter)-[:HAS_ENTITY]->(b)
+RETURN DISTINCT a.entity_id AS source_id,
+       b.entity_id AS target_id,
+       r.rel_type AS rel_type
+LIMIT $edge_limit
+"""
+        cypher_entities_by_ids = """
+MATCH (e:KnowledgeEntity)
+WHERE e.entity_id IN $entity_ids
+OPTIONAL MATCH (c:TextbookChapter {chapter_id: e.source_chapter_id})
+RETURN e.entity_id AS entity_id,
+       e.name AS name,
+       e.entity_type AS entity_type,
+       e.description AS description,
+       e.attributes AS attributes,
+       coalesce(e.source_chapter_id, c.chapter_id) AS source_chapter_id
+"""
+        with self._driver.session() as session:
+            entity_total_row = session.run(cypher_counts, textbook_id=str(textbook_id)).single()
+            relation_total_row = session.run(cypher_relation_count, textbook_id=str(textbook_id)).single()
+
+        entity_total = int(entity_total_row["entity_total"]) if entity_total_row else 0
+        relation_total = int(relation_total_row["relation_total"]) if relation_total_row else 0
+        raw_edge_limit = max(int(edge_limit) * 10, min(relation_total, 6000))
+        with self._driver.session() as session:
+            raw_relations = [dict(r) for r in session.run(cypher_relations, textbook_id=str(textbook_id), edge_limit=raw_edge_limit)]
+            relation_entity_ids = sorted(
+                {
+                    str(rel.get("source_id") or "").strip()
+                    for rel in raw_relations
+                    if str(rel.get("source_id") or "").strip()
+                }
+                | {
+                    str(rel.get("target_id") or "").strip()
+                    for rel in raw_relations
+                    if str(rel.get("target_id") or "").strip()
+                }
+            )
+            raw_entities = (
+                [dict(r) for r in session.run(cypher_entities_by_ids, entity_ids=relation_entity_ids)]
+                if relation_entity_ids
+                else []
+            )
+        if not raw_entities:
+            raw_entity_limit = max(int(entity_limit) * 10, min(entity_total or int(entity_limit) * 10, 1600))
+            raw_entities = self.list_textbook_entities_for_fusion(textbook_id=textbook_id, limit=raw_entity_limit)
+            raw_relations = self.list_textbook_relations_for_fusion(textbook_id=textbook_id, limit=raw_edge_limit)
+        entities, relations = sample_connected_graph_rows(
+            raw_entities,
+            raw_relations,
+            entity_limit=entity_limit,
+            edge_limit=edge_limit,
+        )
+        communities = build_community_rows(entities, relations)
+        return {
+            "scope": "textbook",
+            "textbook": {
+                "textbook_id": detail.get("textbook_id"),
+                "title": detail.get("title"),
+            },
+            "chapters": detail.get("chapters") or [],
+            "entities": entities,
+            "relations": relations,
+            "communities": communities,
+            "stats": {
+                "entity_total": entity_total,
+                "relation_total": relation_total,
+                "community_total": len(communities),
+                "truncated": entity_total > len(entities) or relation_total > len(relations),
+            },
+        }
+
+    def get_chapter_graph_snapshot(self, chapter_id: str, entity_limit: int = 220, edge_limit: int = 420) -> dict:
+        cypher_chapter = """
+MATCH (c:TextbookChapter {chapter_id: $chapter_id})
+OPTIONAL MATCH (t:Textbook)-[:HAS_CHAPTER]->(c)
+RETURN c.chapter_id AS chapter_id,
+       c.chapter_num AS chapter_num,
+       c.title AS title,
+       t.textbook_id AS textbook_id,
+       t.title AS textbook_title
+"""
+        cypher_entities = """
+MATCH (c:TextbookChapter {chapter_id: $chapter_id})-[:HAS_ENTITY]->(e:KnowledgeEntity)
+OPTIONAL MATCH (e)-[r:RELATES_TO]-(:KnowledgeEntity)
+WITH c, e, count(r) AS degree
+RETURN e.entity_id AS entity_id,
+       e.name AS name,
+       e.entity_type AS entity_type,
+       e.description AS description,
+       e.attributes AS attributes,
+       coalesce(e.source_chapter_id, c.chapter_id) AS source_chapter_id,
+       degree AS degree
+ORDER BY degree DESC, e.name ASC
+LIMIT $entity_limit
+"""
+        cypher_relations = """
+MATCH (a:KnowledgeEntity)-[r:RELATES_TO]->(b:KnowledgeEntity)
+WHERE a.entity_id IN $entity_ids AND b.entity_id IN $entity_ids
+RETURN a.entity_id AS source_id,
+       b.entity_id AS target_id,
+       r.rel_type AS rel_type
+ORDER BY source_id ASC, target_id ASC, rel_type ASC
+LIMIT $edge_limit
+"""
+        cypher_counts = """
+MATCH (c:TextbookChapter {chapter_id: $chapter_id})-[:HAS_ENTITY]->(e:KnowledgeEntity)
+RETURN count(DISTINCT e) AS entity_total
+"""
+        cypher_relation_count = """
+MATCH (c:TextbookChapter {chapter_id: $chapter_id})-[:HAS_ENTITY]->(a:KnowledgeEntity)
+MATCH (a)-[r:RELATES_TO]->(b:KnowledgeEntity)<-[:HAS_ENTITY]-(c)
+RETURN count(DISTINCT r) AS relation_total
+"""
+        with self._driver.session() as session:
+            chapter_row = session.run(cypher_chapter, chapter_id=str(chapter_id)).single()
+            if not chapter_row:
+                raise KeyError(f"Chapter not found: {chapter_id}")
+            entities = [dict(r) for r in session.run(cypher_entities, chapter_id=str(chapter_id), entity_limit=int(entity_limit))]
+            entity_ids = [str(item.get("entity_id") or "").strip() for item in entities if str(item.get("entity_id") or "").strip()]
+            relations = (
+                [dict(r) for r in session.run(cypher_relations, entity_ids=entity_ids, edge_limit=int(edge_limit))]
+                if entity_ids
+                else []
+            )
+            entity_total_row = session.run(cypher_counts, chapter_id=str(chapter_id)).single()
+            relation_total_row = session.run(cypher_relation_count, chapter_id=str(chapter_id)).single()
+
+        chapter = dict(chapter_row)
+        communities = build_community_rows(entities, relations)
+        entity_total = int(entity_total_row["entity_total"]) if entity_total_row else len(entities)
+        relation_total = int(relation_total_row["relation_total"]) if relation_total_row else len(relations)
+        return {
+            "scope": "chapter",
+            "textbook": {
+                "textbook_id": chapter.get("textbook_id"),
+                "title": chapter.get("textbook_title"),
+            },
+            "chapter": {
+                "chapter_id": chapter.get("chapter_id"),
+                "chapter_num": chapter.get("chapter_num"),
+                "title": chapter.get("title"),
+            },
+            "entities": entities,
+            "relations": relations,
+            "communities": communities,
+            "stats": {
+                "entity_total": entity_total,
+                "relation_total": relation_total,
+                "community_total": len(communities),
+                "truncated": entity_total > len(entities) or relation_total > len(relations),
+            },
+        }
 
     def get_textbook_entities(self, textbook_id: str, limit: int = 2000) -> list[dict]:
         cypher = """

@@ -15,9 +15,11 @@ type FGNode = {
   id: string
   label: string
   kind: string
+  clusterKey?: string
   qualityTier?: string
   ingested?: boolean
   paperId?: string
+  textbookId?: string
   val: number
   color: string
   x?: number
@@ -76,6 +78,9 @@ function nodeColor(kind: string, tier?: string, ingested?: boolean): string {
     if (tier === 'C') return '#0369a1'
     return '#0ea5e9'
   }
+  if (kind === 'textbook') return '#f59e0b'
+  if (kind === 'chapter') return '#22c55e'
+  if (kind === 'community') return '#fb7185'
   if (kind === 'logic') return '#34d399'
   if (kind === 'claim') return '#fb923c'
   if (kind === 'prop') return '#facc15'
@@ -86,6 +91,9 @@ function nodeColor(kind: string, tier?: string, ingested?: boolean): string {
 
 function nodeSize(kind: string, degree?: number, ingested?: boolean): number {
   const d = clamp(Number(degree ?? 0), 0, 20)
+  if (kind === 'textbook') return 10.5 + d * 0.32
+  if (kind === 'chapter') return 7.2 + d * 0.24
+  if (kind === 'community') return 6.4 + d * 0.24
   if (kind === 'paper') return ingested === false ? 3.8 + d * 0.2 : 5.8 + d * 0.34
   if (kind === 'group') return 6.2 + d * 0.28
   if (kind === 'logic' || kind === 'claim') return 4.8 + d * 0.24
@@ -94,6 +102,7 @@ function nodeSize(kind: string, degree?: number, ingested?: boolean): number {
 }
 
 function linkColor(kind: string): string {
+  if (kind === 'contains') return 'rgba(251, 191, 36, 0.42)'
   if (kind === 'cites') return 'rgba(125, 211, 252, 0.5)'
   if (kind === 'supports') return 'rgba(74, 222, 128, 0.55)'
   if (kind === 'challenges') return 'rgba(248, 113, 113, 0.6)'
@@ -104,6 +113,7 @@ function linkColor(kind: string): string {
 }
 
 function particleColor(kind: string): string {
+  if (kind === 'contains') return '#fde68a'
   if (kind === 'supports') return '#86efac'
   if (kind === 'challenges') return '#fca5a5'
   if (kind === 'supersedes') return '#fde047'
@@ -190,6 +200,79 @@ function applyNavHint(container: HTMLDivElement | null, hint: string) {
   navInfo.textContent = hint
 }
 
+function hashString(value: string): number {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash)
+}
+
+function seededLocalOffset(kind: string, index: number, total: number, seed: number) {
+  const angle = ((index + (seed % 17) / 17) / Math.max(total, 1)) * Math.PI * 2
+  const wobble = ((seed % 29) / 29 - 0.5) * 18
+  if (kind === 'textbook') return { x: 0, y: 0, z: wobble * 0.5 }
+  if (kind === 'chapter') return { x: Math.cos(angle) * 82, y: Math.sin(angle) * 64, z: wobble }
+  if (kind === 'community') return { x: Math.cos(angle) * 142, y: Math.sin(angle) * 112, z: wobble * 1.5 }
+  if (kind === 'entity') return { x: Math.cos(angle) * 220, y: Math.sin(angle) * 172, z: wobble * 2.1 }
+  return { x: Math.cos(angle) * 268, y: Math.sin(angle) * 196, z: wobble * 2.4 }
+}
+
+function seedClusteredPositions(nodes: FGNode[]) {
+  const hasTextbookStructures = nodes.some((node) => node.kind === 'textbook' || node.kind === 'chapter' || node.kind === 'community')
+  if (!hasTextbookStructures) return
+
+  const groups = new Map<string, FGNode[]>()
+  const freeNodes: FGNode[] = []
+  for (const node of nodes) {
+    if (!node.clusterKey) {
+      freeNodes.push(node)
+      continue
+    }
+    const bucket = groups.get(node.clusterKey) ?? []
+    bucket.push(node)
+    groups.set(node.clusterKey, bucket)
+  }
+
+  const clusterKeys = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b))
+  const clusterOrbit = clusterKeys.length <= 1 ? 0 : Math.max(420, clusterKeys.length * 140)
+
+  clusterKeys.forEach((key, clusterIndex) => {
+    const members = groups.get(key) ?? []
+    const angle = clusterKeys.length <= 1 ? 0 : (clusterIndex / clusterKeys.length) * Math.PI * 2
+    const centerX = clusterKeys.length <= 1 ? -180 : Math.cos(angle) * clusterOrbit
+    const centerY = clusterKeys.length <= 1 ? 40 : Math.sin(angle) * clusterOrbit * 0.62
+    const centerZ = clusterKeys.length <= 1 ? 0 : Math.sin(angle * 1.7) * 180
+    const ordered = [...members].sort((a, b) => {
+      const kindRank = (kind: string) => {
+        if (kind === 'textbook') return 0
+        if (kind === 'chapter') return 1
+        if (kind === 'community') return 2
+        if (kind === 'entity') return 3
+        return 4
+      }
+      return kindRank(a.kind) - kindRank(b.kind) || a.id.localeCompare(b.id)
+    })
+
+    ordered.forEach((node, index) => {
+      const local = seededLocalOffset(node.kind, index, ordered.length, hashString(node.id))
+      node.x = centerX + local.x
+      node.y = centerY + local.y
+      node.z = centerZ + local.z
+    })
+  })
+
+  const paperNodes = freeNodes.filter((node) => node.kind === 'paper' || node.kind === 'citation')
+  const outerRadius = Math.max(clusterOrbit + 520, 860)
+  paperNodes.forEach((node, index) => {
+    const angle = (index / Math.max(1, paperNodes.length)) * Math.PI * 2
+    const seed = hashString(node.id)
+    node.x = Math.cos(angle) * outerRadius
+    node.y = Math.sin(angle) * outerRadius * 0.58
+    node.z = ((seed % 41) - 20) * 14
+  })
+}
+
 export default function Graph3D({ elements, onSelectNode, transitioning }: Props) {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -222,9 +305,11 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         id: e.data.id,
         label: e.data.label,
         kind: e.data.kind,
+        clusterKey: e.data.clusterKey,
         qualityTier: e.data.qualityTier,
         ingested: e.data.ingested,
         paperId: e.data.paperId,
+        textbookId: e.data.textbookId,
         val: nodeSize(e.data.kind, degreeMap.get(e.data.id), e.data.ingested),
         color: nodeColor(e.data.kind, e.data.qualityTier, e.data.ingested),
       }))
@@ -238,6 +323,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         weight: clamp(Number((e.data as { weight?: number }).weight ?? 0.5), 0.1, 1),
       }))
 
+    seedClusteredPositions(nextNodes)
     return { nodes: nextNodes, links: nextLinks }
   }, [elements])
 
@@ -382,6 +468,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
           kind: node.kind,
           label: node.label,
           paperId: node.paperId,
+          textbookId: node.textbookId,
         })
       })
       .onNodeHover((n) => {
@@ -419,7 +506,13 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
     const chargeForce = fg.d3Force('charge') as { strength?: (value: number) => void } | undefined
     chargeForce?.strength?.(-120)
     const linkForce = fg.d3Force('link') as { distance?: (fn: (l: FGLink) => number) => void; strength?: (v: number) => void } | undefined
-    linkForce?.distance?.((l) => 95 + (1 - l.weight) * 50)
+    linkForce?.distance?.((l) => {
+      if (l.kind === 'contains') return 58 + (1 - l.weight) * 28
+      if (l.kind === 'relates_to') return 82 + (1 - l.weight) * 32
+      if (l.kind === 'maps_to') return 108 + (1 - l.weight) * 36
+      if (l.kind === 'cites') return 150 + (1 - l.weight) * 60
+      return 95 + (1 - l.weight) * 50
+    })
     linkForce?.strength?.(0.22)
 
     const scene = fg.scene()

@@ -88,6 +88,9 @@ function pickText(locale: UILocale, text: LocalizedText): string {
 }
 
 const KIND_LABELS: Record<string, LocalizedText> = {
+  textbook: { zh: '\u6559\u6750', en: 'Textbook' },
+  chapter: { zh: '\u7ae0\u8282', en: 'Chapter' },
+  community: { zh: '\u793e\u533a', en: 'Community' },
   paper: { zh: '论文', en: 'Paper' },
   logic: { zh: '逻辑', en: 'Logic' },
   claim: { zh: '论断', en: 'Claim' },
@@ -98,13 +101,16 @@ const KIND_LABELS: Record<string, LocalizedText> = {
 }
 
 const KIND_PRIORITY: Record<string, number> = {
-  paper: 1,
-  logic: 2,
-  claim: 3,
-  prop: 4,
-  group: 5,
-  entity: 6,
-  citation: 7,
+  textbook: 1,
+  chapter: 2,
+  community: 3,
+  paper: 4,
+  logic: 5,
+  claim: 6,
+  prop: 7,
+  group: 8,
+  entity: 9,
+  citation: 10,
 }
 
 const PLACEMENT_MODE_LABELS: Record<PlacementMode, LocalizedText> = {
@@ -169,6 +175,30 @@ function kindOrder(kind: string) {
 
 function nodeVisual(data: GraphNodeData, degree: number): NodeVisual {
   const weightedDegree = clamp(Math.round(degree), 0, 24)
+  if (data.kind === 'textbook') {
+    return {
+      color: 'rgba(34, 211, 238, 0.94)',
+      borderColor: 'rgba(207, 250, 254, 0.96)',
+      shape: 'round-rectangle',
+      size: 24 + Math.min(30, weightedDegree * 1.15),
+    }
+  }
+  if (data.kind === 'chapter') {
+    return {
+      color: 'rgba(251, 191, 36, 0.92)',
+      borderColor: 'rgba(254, 243, 199, 0.94)',
+      shape: 'hexagon',
+      size: 20 + Math.min(22, weightedDegree * 0.9),
+    }
+  }
+  if (data.kind === 'community') {
+    return {
+      color: 'rgba(45, 212, 191, 0.92)',
+      borderColor: 'rgba(204, 251, 241, 0.92)',
+      shape: 'round-rectangle',
+      size: 18 + Math.min(22, weightedDegree * 0.9),
+    }
+  }
   if (data.kind === 'paper') {
     const imported = data.ingested !== false
     if (!imported) {
@@ -1674,6 +1704,7 @@ export default function GraphCanvas({
         description: data.description,
         paperId: data.paperId,
         textbookId: data.textbookId,
+        chapterId: data.chapterId,
         propId: data.propId,
       })
     })

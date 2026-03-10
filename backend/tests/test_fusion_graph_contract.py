@@ -68,3 +68,33 @@ def test_get_fusion_graph_filters_edges_outside_node_set_on_snapshot(monkeypatch
     assert len(out["edges"]) == 1
     assert out["edges"][0]["source"] == "s1"
     assert out["edges"][0]["target"] == "k1"
+
+
+def test_get_fusion_graph_keeps_connected_backbone_when_node_limit_is_small(monkeypatch, tmp_path: Path) -> None:
+    snapshot = tmp_path / "latest_graph.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-03-10T00:00:00Z",
+                "nodes": [
+                    {"id": "isolated-a", "label": "KnowledgeEntity", "text": "alpha"},
+                    {"id": "isolated-b", "label": "KnowledgeEntity", "text": "beta"},
+                    {"id": "logic-1", "label": "LogicStep", "text": "method"},
+                    {"id": "entity-1", "label": "KnowledgeEntity", "text": "drag coefficient"},
+                ],
+                "edges": [
+                    {"source": "logic-1", "target": "entity-1", "type": "EXPLAINS", "weight": 0.96},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fusion_service, "_snapshot_file", lambda: snapshot)
+
+    out = fusion_service.get_fusion_graph(limit_nodes=2, limit_edges=10)
+
+    assert out["source"] == "snapshot"
+    assert {node["id"] for node in out["nodes"]} == {"logic-1", "entity-1"}
+    assert len(out["edges"]) == 1
+    assert out["edges"][0]["source"] == "logic-1"
+    assert out["edges"][0]["target"] == "entity-1"

@@ -23,6 +23,49 @@ export type EvidenceRow = {
   snippet?: string
 }
 
+export type FusionEvidenceRow = {
+  paper_source?: string
+  paper_id?: string
+  logic_step_id?: string
+  step_type?: string
+  entity_id?: string
+  entity_name?: string
+  entity_type?: string
+  description?: string
+  score?: number
+  rank_score?: number
+  reasons?: string[]
+  evidence_chunk_ids?: string[]
+  source_chunk_id?: string
+  evidence_quote?: string
+  source_chapter_id?: string
+  textbook_id?: string
+  textbook_title?: string
+  chapter_id?: string
+  chapter_num?: number
+  chapter_title?: string
+}
+
+export type FusionChapterSummary = {
+  chapterId: string
+  label: string
+  textbookTitle: string
+  entityCount: number
+  count: number
+  avgScore: number | null
+}
+
+export type FusionEvidenceStats = {
+  total: number
+  scored: number
+  avgScore: number | null
+  textbookCount: number
+  chapterCount: number
+  entityCount: number
+  paperSourceCount: number
+  topChapters: FusionChapterSummary[]
+}
+
 export type NeighborRow = {
   id: string
   label: string
@@ -75,6 +118,40 @@ function normalizeText(value: unknown): string {
   return String(value ?? '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function sortByScoreThenLabel<T extends { score?: unknown; rank_score?: unknown }>(rows: T[], labelOf: (row: T) => string): T[] {
+  return [...rows].sort((a, b) => {
+    const rankA = Number(a.rank_score)
+    const rankB = Number(b.rank_score)
+    const safeRankA = Number.isFinite(rankA) ? rankA : -Infinity
+    const safeRankB = Number.isFinite(rankB) ? rankB : -Infinity
+    if (safeRankA !== safeRankB) return safeRankB - safeRankA
+
+    const scoreA = Number(a.score)
+    const scoreB = Number(b.score)
+    const safeScoreA = Number.isFinite(scoreA) ? scoreA : -Infinity
+    const safeScoreB = Number.isFinite(scoreB) ? scoreB : -Infinity
+    if (safeScoreA !== safeScoreB) return safeScoreB - safeScoreA
+
+    return labelOf(a).localeCompare(labelOf(b))
+  })
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return n
+}
+
+function chapterLabel(row: FusionEvidenceRow): string {
+  const title = normalizeText(row.chapter_title)
+  const chapterId = normalizeText(row.chapter_id || row.source_chapter_id)
+  const chapterNum = Number(row.chapter_num)
+  if (Number.isFinite(chapterNum)) {
+    return title ? `Ch.${Math.round(chapterNum)} ${title}` : `Ch.${Math.round(chapterNum)}`
+  }
+  return title || chapterId || 'chapter'
 }
 
 function safeMaxChars(value: unknown): number {
@@ -153,6 +230,116 @@ export function filterEvidenceRows(rows: EvidenceRow[], query: string, limit = 1
       return keyA.localeCompare(keyB)
     })
     .slice(0, cap)
+}
+
+export function filterFusionEvidenceRows(rows: FusionEvidenceRow[], query: string, limit = 16): FusionEvidenceRow[] {
+  const cap = Math.max(1, Math.min(200, Math.round(limit)))
+  const normalizedQuery = normalizeText(query).toLowerCase()
+  const filtered = normalizedQuery
+    ? rows.filter((row) =>
+        [
+          row.paper_source,
+          row.paper_id,
+          row.step_type,
+          row.entity_name,
+          row.entity_type,
+          row.description,
+          row.evidence_quote,
+          row.textbook_title,
+          row.chapter_title,
+          row.chapter_id,
+          row.source_chapter_id,
+        ]
+          .map((field) => normalizeText(field).toLowerCase())
+          .some((field) => field.includes(normalizedQuery)),
+      )
+    : rows
+
+  return sortByScoreThenLabel(filtered, (row) =>
+    normalizeText(row.entity_name) || normalizeText(row.chapter_title) || normalizeText(row.textbook_title) || 'fusion',
+  ).slice(0, cap)
+}
+
+export function buildFusionEvidenceStats(rows: FusionEvidenceRow[]): FusionEvidenceStats {
+  const textbookIds = new Set<string>()
+  const chapterIds = new Set<string>()
+  const entityIds = new Set<string>()
+  const paperSources = new Set<string>()
+  const scoredValues: number[] = []
+  const chapterMap = new Map<
+    string,
+    {
+      chapterId: string
+      label: string
+      textbookTitle: string
+      entityIds: Set<string>
+      count: number
+      scores: number[]
+    }
+  >()
+
+  for (const row of rows) {
+    const textbookId = normalizeText(row.textbook_id)
+    const chapterId = normalizeText(row.chapter_id || row.source_chapter_id)
+    const entityId = normalizeText(row.entity_id)
+    const paperSource = normalizeText(row.paper_source || row.paper_id)
+    const textbookTitle = normalizeText(row.textbook_title)
+
+    if (textbookId) textbookIds.add(textbookId)
+    if (chapterId) chapterIds.add(chapterId)
+    if (entityId) entityIds.add(entityId)
+    if (paperSource) paperSources.add(paperSource)
+
+    const score = toPositiveNumber(row.score)
+    if (score !== null) scoredValues.push(score)
+
+    if (!chapterId) continue
+    const chapterRow =
+      chapterMap.get(chapterId) ??
+      ({
+        chapterId,
+        label: chapterLabel(row),
+        textbookTitle,
+        entityIds: new Set<string>(),
+        count: 0,
+        scores: [],
+      } satisfies {
+        chapterId: string
+        label: string
+        textbookTitle: string
+        entityIds: Set<string>
+        count: number
+        scores: number[]
+      })
+    chapterRow.count += 1
+    if (entityId) chapterRow.entityIds.add(entityId)
+    if (score !== null) chapterRow.scores.push(score)
+    if (!chapterRow.textbookTitle && textbookTitle) chapterRow.textbookTitle = textbookTitle
+    chapterMap.set(chapterId, chapterRow)
+  }
+
+  const topChapters = Array.from(chapterMap.values())
+    .map((row) => ({
+      chapterId: row.chapterId,
+      label: row.label,
+      textbookTitle: row.textbookTitle,
+      entityCount: row.entityIds.size,
+      count: row.count,
+      avgScore: row.scores.length ? row.scores.reduce((sum, value) => sum + value, 0) / row.scores.length : null,
+    }))
+    .sort((a, b) => b.count - a.count || (b.avgScore ?? -1) - (a.avgScore ?? -1) || a.label.localeCompare(b.label))
+    .slice(0, 8)
+
+  return {
+    total: rows.length,
+    scored: scoredValues.length,
+    avgScore: scoredValues.length ? scoredValues.reduce((sum, value) => sum + value, 0) / scoredValues.length : null,
+    textbookCount: textbookIds.size,
+    chapterCount: chapterIds.size,
+    entityCount: entityIds.size,
+    paperSourceCount: paperSources.size,
+    topChapters,
+  }
 }
 
 export function buildGenericNodeContext(args: {

@@ -6,7 +6,6 @@ export type ModuleId =
   | 'ask'
   | 'evolution'
   | 'textbooks'
-  | 'fusion'
   | 'ops'
 
 // ── Graph data ──────────────────────────────────────────────
@@ -25,6 +24,9 @@ export type GraphNodeData = {
   state?: string         // proposition state: 'stable' | 'challenged' | 'superseded'
   paperId?: string
   textbookId?: string
+  chapterId?: string
+  communityId?: string
+  clusterKey?: string
   propId?: string
   // Display
   degree?: number
@@ -46,7 +48,7 @@ export type GraphElement =
   | { group: 'edges'; data: GraphEdgeData }
 
 export type LayoutName =
-  | 'cose'      // force-directed (overview, papers, fusion)
+  | 'cose'      // force-directed (overview, papers)
   | 'dagre'     // hierarchical (ask)
   | 'breadthfirst'  // tree (textbooks)
   | 'concentric'    // focal (paper neighborhood)
@@ -62,6 +64,7 @@ export type SelectedNode = {
   description?: string
   paperId?: string
   textbookId?: string
+  chapterId?: string
   propId?: string
   route?: string
 }
@@ -89,6 +92,29 @@ export type AskItem = {
     score?: number
     snippet?: string
   }>
+  fusionEvidence?: Array<{
+    paper_source?: string
+    paper_id?: string
+    logic_step_id?: string
+    step_type?: string
+    entity_id?: string
+    entity_name?: string
+    entity_type?: string
+    description?: string
+    score?: number
+    rank_score?: number
+    reasons?: string[]
+    evidence_chunk_ids?: string[]
+    source_chunk_id?: string
+    evidence_quote?: string
+    source_chapter_id?: string
+    textbook_id?: string
+    textbook_title?: string
+    chapter_id?: string
+    chapter_num?: number
+    chapter_title?: string
+  }>
+  dualEvidenceCoverage?: boolean
   graphContext?: Array<{
     paper_source?: string
     cited_doi?: string

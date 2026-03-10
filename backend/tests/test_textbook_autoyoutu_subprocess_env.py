@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,5 +42,7 @@ def test_run_autoyoutu_pipeline_sets_utf8_env(monkeypatch, tmp_path: Path) -> No
     assert captured_env.get("MD_OUTPUT_DIR") == str(output_dir / "converted_json")
     assert captured_env.get("LOCAL_TEMP_DIR") == str(output_dir / "graph_data")
     assert captured_env.get("CLEANUP_TEMP_FILES") == "false"
+    dataset_name = captured_env.get("DATASET_NAME") or ""
+    assert re.fullmatch(r"chapter_001_[0-9a-f]{8}", dataset_name)
     assert captured_kwargs.get("encoding") == "utf-8"
     assert captured_kwargs.get("errors") == "replace"
