@@ -2429,6 +2429,7 @@ WHERE ($paper_id = '' OR p.paper_id = $paper_id)
 OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
 OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
 OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+OPTIONAL MATCH (ev:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
 RETURN 'proposition' AS kind,
        pr.prop_id AS source_id,
        pr.prop_id AS proposition_id,
@@ -2443,7 +2444,9 @@ RETURN 'proposition' AS kind,
        coalesce(cl.claim_id, ke.entity_id, pr.prop_id) AS source_ref_id,
        tb.textbook_id AS textbook_id,
        tc.chapter_id AS chapter_id,
-       coalesce(cl.evidence_quote, ke.description, pr.canonical_text) AS evidence_quote
+       coalesce(cl.evidence_quote, ke.description, pr.canonical_text) AS evidence_quote,
+       ev.event_id AS evidence_event_id,
+       ev.event_type AS evidence_event_type
 LIMIT $limit
 """
         with self._driver.session() as session:
@@ -2468,6 +2471,8 @@ LIMIT $limit
                 "textbook_id": str(row.get("textbook_id") or "").strip() or None,
                 "chapter_id": str(row.get("chapter_id") or "").strip() or None,
                 "evidence_quote": str(row.get("evidence_quote") or "").strip() or None,
+                "evidence_event_id": str(row.get("evidence_event_id") or "").strip() or None,
+                "evidence_event_type": str(row.get("evidence_event_type") or "").strip() or None,
             }
             existing = merged.get(source_id)
             if not existing:
@@ -2478,7 +2483,7 @@ LIMIT $limit
                 existing["source_ref_id"] = current["source_ref_id"]
                 if current.get("evidence_quote"):
                     existing["evidence_quote"] = current["evidence_quote"]
-            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id"):
+            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id", "evidence_event_id", "evidence_event_type"):
                 if not existing.get(key) and current.get(key):
                     existing[key] = current[key]
         return list(merged.values())[:limit]
@@ -2507,6 +2512,7 @@ LIMIT $limit
 UNWIND $claim_ids AS claim_id
 MATCH (cl:Claim {claim_id: claim_id})
 OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
+OPTIONAL MATCH (cl)-[:TRIGGERS_EVENT]->(ev:EvidenceEvent)
 RETURN 'claim' AS source_kind,
        cl.claim_id AS source_id,
        coalesce(cl.evidence_quote, ch.text, cl.text) AS quote,
@@ -2515,7 +2521,9 @@ RETURN 'claim' AS source_kind,
        ch.start_line AS start_line,
        ch.end_line AS end_line,
        NULL AS textbook_id,
-       NULL AS chapter_id
+       NULL AS chapter_id,
+       ev.event_id AS evidence_event_id,
+       ev.event_type AS evidence_event_type
 LIMIT $limit
 """
                 rows.extend(dict(r) for r in session.run(claim_cypher, claim_ids=claim_ids[:limit], limit=limit))
@@ -2533,7 +2541,9 @@ RETURN 'logic_step' AS source_kind,
        ch.start_line AS start_line,
        ch.end_line AS end_line,
        NULL AS textbook_id,
-       NULL AS chapter_id
+       NULL AS chapter_id,
+       NULL AS evidence_event_id,
+       NULL AS evidence_event_type
 LIMIT $limit
 """
                 rows.extend(
@@ -2554,6 +2564,7 @@ OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
 OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
 OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
 OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+OPTIONAL MATCH (ev:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
 RETURN 'proposition' AS source_kind,
        pr.prop_id AS source_id,
        coalesce(cl.evidence_quote, ch.text, ke.description, pr.canonical_text) AS quote,
@@ -2562,7 +2573,9 @@ RETURN 'proposition' AS source_kind,
        ch.start_line AS start_line,
        ch.end_line AS end_line,
        tb.textbook_id AS textbook_id,
-       tc.chapter_id AS chapter_id
+       tc.chapter_id AS chapter_id,
+       ev.event_id AS evidence_event_id,
+       ev.event_type AS evidence_event_type
 LIMIT $limit
 """
                 rows.extend(
@@ -2590,6 +2603,8 @@ LIMIT $limit
                 "end_line": row.get("end_line"),
                 "textbook_id": str(row.get("textbook_id") or "").strip() or None,
                 "chapter_id": str(row.get("chapter_id") or "").strip() or None,
+                "evidence_event_id": str(row.get("evidence_event_id") or "").strip() or None,
+                "evidence_event_type": str(row.get("evidence_event_type") or "").strip() or None,
             }
             key = (
                 normalized["source_kind"],

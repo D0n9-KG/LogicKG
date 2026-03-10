@@ -81,6 +81,8 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
                 "chunk_id": "c1",
                 "start_line": 12,
                 "end_line": 14,
+                "evidence_event_id": "ev-1",
+                "evidence_event_type": "SUPPORTS",
             },
             {
                 "kind": "proposition",
@@ -91,6 +93,8 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
                 "source_id": "ent-7",
                 "quote": "The element basis interpolates the field variable.",
                 "chapter_id": "tb:1:ch001",
+                "evidence_event_id": "ev-2",
+                "evidence_event_type": "SUPPORTS",
             },
         ]
     )
@@ -101,5 +105,8 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
     assert rows[0]["chunk_id"] == "c1"
     assert rows[0]["start_line"] == 12
     assert rows[0]["end_line"] == 14
+    assert rows[0]["evidence_event_id"] == "ev-1"
+    assert rows[0]["evidence_event_type"] == "SUPPORTS"
     assert rows[1]["source_kind"] == "textbook_entity"
     assert rows[1]["chapter_id"] == "tb:1:ch001"
+    assert rows[1]["evidence_event_id"] == "ev-2"

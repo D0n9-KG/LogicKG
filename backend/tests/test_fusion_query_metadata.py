@@ -120,6 +120,8 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
                         "end_line": 12,
                         "textbook_id": None,
                         "chapter_id": None,
+                        "evidence_event_id": "ev-1",
+                        "evidence_event_type": "SUPPORTS",
                     }
                 ]
             if "UNWIND $proposition_ids AS prop_id" in self.last_query:
@@ -134,6 +136,8 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
                         "end_line": None,
                         "textbook_id": "tb:1",
                         "chapter_id": "tb:1:ch001",
+                        "evidence_event_id": "ev-2",
+                        "evidence_event_type": "SUPPORTS",
                     }
                 ]
             return []
@@ -153,5 +157,57 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
     assert rows[0]["quote"] == "Finite element method discretizes the domain."
     assert rows[0]["chunk_id"] == "c1"
     assert rows[0]["start_line"] == 11
+    assert rows[0]["evidence_event_id"] == "ev-1"
     assert rows[1]["textbook_id"] == "tb:1"
+    assert rows[1]["chapter_id"] == "tb:1:ch001"
+    assert rows[1]["evidence_event_type"] == "SUPPORTS"
+
+
+def test_list_proposition_structured_rows_preserves_evidence_event_provenance() -> None:
+    class _PropStructuredSession(_FakeSession):
+        def run(self, query: str, **params):
+            self.last_query = str(query)
+            self.last_params = dict(params)
+            return [
+                {
+                    "kind": "proposition",
+                    "source_id": "pr-1",
+                    "proposition_id": "pr-1",
+                    "paper_id": "doi:10.1000/example",
+                    "paper_source": "paper-A",
+                    "text": "Finite element discretization stabilizes PDE solving.",
+                    "source_kind": "claim",
+                    "source_ref_id": "cl-1",
+                    "textbook_id": None,
+                    "chapter_id": None,
+                    "evidence_quote": "Finite element method discretizes the domain.",
+                    "evidence_event_id": "ev-1",
+                    "evidence_event_type": "SUPPORTS",
+                },
+                {
+                    "kind": "proposition",
+                    "source_id": "pr-2",
+                    "proposition_id": "pr-2",
+                    "paper_id": "",
+                    "paper_source": "",
+                    "text": "The finite element basis interpolates the field variable.",
+                    "source_kind": "textbook_entity",
+                    "source_ref_id": "ent-7",
+                    "textbook_id": "tb:1",
+                    "chapter_id": "tb:1:ch001",
+                    "evidence_quote": "The element basis interpolates the field variable.",
+                    "evidence_event_id": "ev-2",
+                    "evidence_event_type": "SUPPORTS",
+                },
+            ]
+
+    fake_session = _PropStructuredSession()
+    client = object.__new__(Neo4jClient)
+    client._driver = _FakeDriver(fake_session)
+
+    rows = client.list_proposition_structured_rows(limit=5)
+
+    assert rows[0]["evidence_event_id"] == "ev-1"
+    assert rows[0]["evidence_event_type"] == "SUPPORTS"
+    assert rows[1]["evidence_event_id"] == "ev-2"
     assert rows[1]["chapter_id"] == "tb:1:ch001"
