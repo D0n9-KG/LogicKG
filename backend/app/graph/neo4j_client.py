@@ -2307,6 +2307,304 @@ LIMIT $limit
             out.append({"node_id": step_id, "paper_id": p_id, "text": effective})
         return out
 
+    def list_proposition_similarity_rows(self, paper_id: str | None = None, limit: int = 200000) -> list[dict]:
+        """
+        Return proposition texts with claim/textbook provenance for similarity indexing.
+
+        Notes:
+        - Prefers claim provenance when a proposition is linked to both a claim and a textbook entity.
+        - Deduplicates by proposition id so callers get a stable single row per proposition.
+        """
+        pid = (paper_id or "").strip()
+        limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (pr:Proposition)
+OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (p:Paper)-[:HAS_CLAIM]->(cl)
+WHERE ($paper_id = '' OR p.paper_id = $paper_id)
+OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
+OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+RETURN pr.prop_id AS node_id,
+       coalesce(p.paper_id, '') AS paper_id,
+       coalesce(p.paper_source, '') AS paper_source,
+       coalesce(pr.canonical_text, '') AS text,
+       CASE
+         WHEN cl IS NOT NULL THEN 'claim'
+         WHEN ke IS NOT NULL THEN 'textbook_entity'
+         ELSE 'proposition'
+       END AS source_kind,
+       coalesce(cl.claim_id, ke.entity_id, pr.prop_id) AS source_id,
+       tb.textbook_id AS textbook_id,
+       tc.chapter_id AS chapter_id
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            rows = [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
+
+        priority = {"claim": 3, "textbook_entity": 2, "proposition": 1}
+        merged: dict[str, dict] = {}
+        for row in rows:
+            node_id = str(row.get("node_id") or "").strip()
+            text = str(row.get("text") or "").strip()
+            if not node_id or not text:
+                continue
+            normalized = {
+                "node_id": node_id,
+                "paper_id": str(row.get("paper_id") or "").strip(),
+                "paper_source": str(row.get("paper_source") or "").strip(),
+                "text": text,
+                "source_kind": str(row.get("source_kind") or "proposition").strip() or "proposition",
+                "source_id": str(row.get("source_id") or node_id).strip() or node_id,
+                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+                "chapter_id": str(row.get("chapter_id") or "").strip() or None,
+            }
+            existing = merged.get(node_id)
+            if not existing:
+                merged[node_id] = normalized
+                continue
+            if priority.get(normalized["source_kind"], 0) > priority.get(existing.get("source_kind", ""), 0):
+                existing["source_kind"] = normalized["source_kind"]
+                existing["source_id"] = normalized["source_id"]
+            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id"):
+                if not existing.get(key) and normalized.get(key):
+                    existing[key] = normalized[key]
+        return list(merged.values())[:limit]
+
+    def list_logic_step_structured_rows(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
+        pid = (paper_id or "").strip()
+        limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (p:Paper)-[:HAS_LOGIC_STEP]->(ls:LogicStep)
+WHERE ($paper_id = '' OR p.paper_id = $paper_id)
+OPTIONAL MATCH (ls)-[:EVIDENCED_BY]->(ch:Chunk)
+WITH p, ls, collect(DISTINCT ch)[0..12] AS chunks
+RETURN 'logic_step' AS kind,
+       ls.logic_step_id AS source_id,
+       p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       ls.step_type AS step_type,
+       ls.summary AS text,
+       [ch IN chunks WHERE ch.chunk_id IS NOT NULL | ch.chunk_id] AS evidence_chunk_ids,
+       coalesce(head([ch IN chunks WHERE trim(coalesce(ch.text, '')) <> '' | ch.text]), '') AS evidence_quote
+ORDER BY p.paper_id ASC, coalesce(ls.order, 999) ASC, ls.logic_step_id ASC
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
+
+    def list_claim_structured_rows(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
+        pid = (paper_id or "").strip()
+        limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (p:Paper)-[:HAS_CLAIM]->(cl:Claim)
+WHERE ($paper_id = '' OR p.paper_id = $paper_id)
+OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
+WITH p, cl, collect(DISTINCT ch)[0..12] AS chunks
+OPTIONAL MATCH (cl)-[:MAPS_TO]->(pr:Proposition)
+RETURN 'claim' AS kind,
+       cl.claim_id AS source_id,
+       p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       cl.step_type AS step_type,
+       cl.text AS text,
+       cl.confidence AS confidence,
+       pr.prop_id AS proposition_id,
+       [ch IN chunks WHERE ch.chunk_id IS NOT NULL | ch.chunk_id] AS evidence_chunk_ids,
+       coalesce(cl.evidence_quote, head([ch IN chunks WHERE trim(coalesce(ch.text, '')) <> '' | ch.text]), '') AS evidence_quote
+ORDER BY p.paper_id ASC, cl.claim_id ASC
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
+
+    def list_proposition_structured_rows(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
+        pid = (paper_id or "").strip()
+        limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (pr:Proposition)
+OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (p:Paper)-[:HAS_CLAIM]->(cl)
+WHERE ($paper_id = '' OR p.paper_id = $paper_id)
+OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
+OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+RETURN 'proposition' AS kind,
+       pr.prop_id AS source_id,
+       pr.prop_id AS proposition_id,
+       p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       pr.canonical_text AS text,
+       CASE
+         WHEN cl IS NOT NULL THEN 'claim'
+         WHEN ke IS NOT NULL THEN 'textbook_entity'
+         ELSE 'proposition'
+       END AS source_kind,
+       coalesce(cl.claim_id, ke.entity_id, pr.prop_id) AS source_ref_id,
+       tb.textbook_id AS textbook_id,
+       tc.chapter_id AS chapter_id,
+       coalesce(cl.evidence_quote, ke.description, pr.canonical_text) AS evidence_quote
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            rows = [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
+
+        merged: dict[str, dict] = {}
+        priority = {"claim": 3, "textbook_entity": 2, "proposition": 1}
+        for row in rows:
+            source_id = str(row.get("source_id") or "").strip()
+            text = str(row.get("text") or "").strip()
+            if not source_id or not text:
+                continue
+            current = {
+                "kind": "proposition",
+                "source_id": source_id,
+                "proposition_id": str(row.get("proposition_id") or source_id).strip() or source_id,
+                "paper_id": str(row.get("paper_id") or "").strip() or None,
+                "paper_source": str(row.get("paper_source") or "").strip() or None,
+                "text": text,
+                "source_kind": str(row.get("source_kind") or "proposition").strip() or "proposition",
+                "source_ref_id": str(row.get("source_ref_id") or source_id).strip() or source_id,
+                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+                "chapter_id": str(row.get("chapter_id") or "").strip() or None,
+                "evidence_quote": str(row.get("evidence_quote") or "").strip() or None,
+            }
+            existing = merged.get(source_id)
+            if not existing:
+                merged[source_id] = current
+                continue
+            if priority.get(current["source_kind"], 0) > priority.get(existing.get("source_kind", ""), 0):
+                existing["source_kind"] = current["source_kind"]
+                existing["source_ref_id"] = current["source_ref_id"]
+                if current.get("evidence_quote"):
+                    existing["evidence_quote"] = current["evidence_quote"]
+            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id"):
+                if not existing.get(key) and current.get(key):
+                    existing[key] = current[key]
+        return list(merged.values())[:limit]
+
+    def get_grounding_rows_for_structured_ids(self, ids: list[dict], limit: int = 200) -> list[dict]:
+        limit = max(1, min(500, int(limit)))
+        claim_ids: list[str] = []
+        logic_ids: list[str] = []
+        proposition_ids: list[str] = []
+        for item in ids or []:
+            kind = str(item.get("kind") or item.get("source_kind") or "").strip().lower()
+            ident = str(item.get("id") or item.get("source_id") or "").strip()
+            if not ident:
+                continue
+            if kind == "claim":
+                claim_ids.append(ident)
+            elif kind in {"logic_step", "logic"}:
+                logic_ids.append(ident)
+            elif kind == "proposition":
+                proposition_ids.append(ident)
+
+        rows: list[dict] = []
+        with self._driver.session() as session:
+            if claim_ids:
+                claim_cypher = """
+UNWIND $claim_ids AS claim_id
+MATCH (cl:Claim {claim_id: claim_id})
+OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
+RETURN 'claim' AS source_kind,
+       cl.claim_id AS source_id,
+       coalesce(cl.evidence_quote, ch.text, cl.text) AS quote,
+       ch.chunk_id AS chunk_id,
+       ch.md_path AS md_path,
+       ch.start_line AS start_line,
+       ch.end_line AS end_line,
+       NULL AS textbook_id,
+       NULL AS chapter_id
+LIMIT $limit
+"""
+                rows.extend(dict(r) for r in session.run(claim_cypher, claim_ids=claim_ids[:limit], limit=limit))
+
+            if logic_ids and len(rows) < limit:
+                logic_cypher = """
+UNWIND $logic_ids AS logic_step_id
+MATCH (ls:LogicStep {logic_step_id: logic_step_id})
+OPTIONAL MATCH (ls)-[:EVIDENCED_BY]->(ch:Chunk)
+RETURN 'logic_step' AS source_kind,
+       ls.logic_step_id AS source_id,
+       coalesce(ch.text, ls.summary) AS quote,
+       ch.chunk_id AS chunk_id,
+       ch.md_path AS md_path,
+       ch.start_line AS start_line,
+       ch.end_line AS end_line,
+       NULL AS textbook_id,
+       NULL AS chapter_id
+LIMIT $limit
+"""
+                rows.extend(
+                    dict(r)
+                    for r in session.run(
+                        logic_cypher,
+                        logic_ids=logic_ids[: max(1, limit - len(rows))],
+                        limit=max(1, limit - len(rows)),
+                    )
+                )
+
+            if proposition_ids and len(rows) < limit:
+                proposition_cypher = """
+UNWIND $proposition_ids AS prop_id
+MATCH (pr:Proposition {prop_id: prop_id})
+OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
+OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
+OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
+OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
+RETURN 'proposition' AS source_kind,
+       pr.prop_id AS source_id,
+       coalesce(cl.evidence_quote, ch.text, ke.description, pr.canonical_text) AS quote,
+       ch.chunk_id AS chunk_id,
+       ch.md_path AS md_path,
+       ch.start_line AS start_line,
+       ch.end_line AS end_line,
+       tb.textbook_id AS textbook_id,
+       tc.chapter_id AS chapter_id
+LIMIT $limit
+"""
+                rows.extend(
+                    dict(r)
+                    for r in session.run(
+                        proposition_cypher,
+                        proposition_ids=proposition_ids[: max(1, limit - len(rows))],
+                        limit=max(1, limit - len(rows)),
+                    )
+                )
+
+        deduped: list[dict] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for row in rows:
+            quote = str(row.get("quote") or "").strip()
+            if not quote:
+                continue
+            normalized = {
+                "source_kind": str(row.get("source_kind") or "").strip(),
+                "source_id": str(row.get("source_id") or "").strip(),
+                "quote": quote,
+                "chunk_id": str(row.get("chunk_id") or "").strip() or None,
+                "md_path": str(row.get("md_path") or "").strip() or None,
+                "start_line": row.get("start_line"),
+                "end_line": row.get("end_line"),
+                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+                "chapter_id": str(row.get("chapter_id") or "").strip() or None,
+            }
+            key = (
+                normalized["source_kind"],
+                normalized["source_id"],
+                normalized["chunk_id"] or normalized["chapter_id"] or "",
+                normalized["quote"],
+            )
+            if key in seen or not normalized["source_id"]:
+                continue
+            seen.add(key)
+            deduped.append(normalized)
+            if len(deduped) >= limit:
+                break
+        return deduped
+
     def list_claim_rows_for_evolution(self, paper_id: str | None = None, limit: int = 500000) -> list[dict]:
         pid = (paper_id or "").strip()
         limit = max(1, min(500000, int(limit)))
