@@ -697,7 +697,8 @@ def _prepare_ask_v2_context(
     plan_name = str(getattr(query_plan.retrieval_plan, "value", query_plan.retrieval_plan) or "").strip()
     paper_query = _plan_text(query_plan, "paper_query", fallback=query_plan.main_query)
     textbook_query = _plan_text(query_plan, "textbook_query", fallback=query_plan.main_query)
-    retrieval_query = _build_retrieval_query(paper_query, scope_paper, locale=normalized_locale)
+    seed_query = textbook_query if plan_name == "textbook_first_then_paper" else paper_query
+    retrieval_query = _build_retrieval_query(seed_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
     if plan_name == "claim_first":
@@ -921,18 +922,28 @@ def _prepare_ask_v2_context(
     graph_block = _format_graph_context(graph_context)
     knowledge_block = _format_structured_knowledge(structured_knowledge)
     structured_block = _format_structured_evidence(structured_evidence)
-    user_parts = [f"Question:\n{question}", "Evidence:\n" + "\n\n".join(context_lines)]
+    evidence_block = "Evidence:\n" + "\n\n".join(context_lines)
+    textbook_block = format_fusion_evidence_block(fusion_evidence) if fusion_evidence else ""
+    user_parts = [f"Question:\n{question}"]
     scope_paper_block = _format_scope_paper_context(scope_paper)
     if scope_paper_block:
         user_parts.insert(1, scope_paper_block)
+    if plan_name == "textbook_first_then_paper":
+        if structured_block:
+            user_parts.append(structured_block)
+        if textbook_block:
+            user_parts.append(textbook_block)
+        user_parts.append(evidence_block)
+    else:
+        user_parts.append(evidence_block)
+        if structured_block:
+            user_parts.append(structured_block)
+        if textbook_block:
+            user_parts.append(textbook_block)
     if knowledge_block:
         user_parts.append(knowledge_block)
-    if structured_block:
-        user_parts.append(structured_block)
     if graph_block:
         user_parts.append(graph_block)
-    if fusion_evidence:
-        user_parts.append(format_fusion_evidence_block(fusion_evidence))
     user = "\n\n".join(user_parts)
 
     bundle = EvidenceBundle(
