@@ -96,7 +96,7 @@ def _search_corpus(corpus: str, query: str, k: int, allowed_sources=None) -> lis
     ranked: list[dict[str, Any]] = []
     for row in rows:
         paper_source = str(row.get("paper_source") or "").strip()
-        if allowed is not None and paper_source and paper_source not in allowed:
+        if allowed is not None and paper_source not in allowed:
             continue
         current = dict(row)
         base_score = row.get("score")

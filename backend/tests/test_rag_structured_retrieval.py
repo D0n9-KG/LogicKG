@@ -30,6 +30,31 @@ def test_direct_structured_retrievers_return_logic_claim_and_proposition_hits(mo
     assert proposition_hits[0]["kind"] == "proposition"
 
 
+def test_paper_scoped_proposition_retrieval_excludes_blank_and_non_matching_sources(monkeypatch) -> None:
+    structured = _structured_module()
+
+    monkeypatch.setattr(
+        structured,
+        "_load_corpus_rows",
+        lambda corpus: [
+            {"kind": "proposition", "id": "pr-blank", "text": "Blank source textbook proposition."},
+            {"kind": "proposition", "id": "pr-other", "text": "Other paper proposition.", "paper_source": "paper-B"},
+            {"kind": "proposition", "id": "pr-allowed", "text": "Allowed paper proposition.", "paper_source": "paper-A"},
+        ]
+        if corpus == "propositions"
+        else [],
+        raising=False,
+    )
+
+    proposition_hits = structured.retrieve_propositions(
+        "finite element method",
+        k=4,
+        allowed_sources={"paper-A"},
+    )
+
+    assert [row["id"] for row in proposition_hits] == ["pr-allowed"]
+
+
 def test_foundational_plan_prefers_textbook_and_proposition_hits_before_chunks() -> None:
     structured = _structured_module()
 
