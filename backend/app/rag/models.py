@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,32 @@ class AskV2Request(BaseModel):
         default=None,
         description="Custom domain context for the system prompt.",
     )
+
+
+class AskIntent(str, Enum):
+    paper_detail = "paper_detail"
+    foundational = "foundational"
+    hybrid_explanation = "hybrid_explanation"
+    comparison = "comparison"
+
+
+class RetrievalPlan(str, Enum):
+    paper_first_then_textbook = "paper_first_then_textbook"
+    textbook_first_then_paper = "textbook_first_then_paper"
+    hybrid_parallel = "hybrid_parallel"
+    claim_first = "claim_first"
+    proposition_first = "proposition_first"
+
+
+class AskQueryPlan(BaseModel):
+    intent: AskIntent
+    retrieval_plan: RetrievalPlan
+    main_query: str = Field(min_length=1)
+    paper_query: str | None = None
+    textbook_query: str | None = None
+    proposition_query: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason: str | None = None
 
 
 class EvidenceItem(BaseModel):
@@ -65,9 +92,40 @@ class FusionEvidenceItem(BaseModel):
     chapter_title: str | None = None
 
 
+class StructuredEvidenceItem(BaseModel):
+    kind: str
+    source_id: str
+    text: str
+    score: float | None = None
+    paper_source: str | None = None
+    paper_id: str | None = None
+    proposition_id: str | None = None
+    source_kind: str | None = None
+    source_ref_id: str | None = None
+    textbook_id: str | None = None
+    chapter_id: str | None = None
+    evidence_event_id: str | None = None
+    evidence_event_type: str | None = None
+
+
+class GroundingItem(BaseModel):
+    source_kind: str
+    source_id: str
+    quote: str
+    chunk_id: str | None = None
+    md_path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    textbook_id: str | None = None
+    chapter_id: str | None = None
+
+
 class EvidenceBundle(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     fusion_evidence: list[FusionEvidenceItem] = Field(default_factory=list)
+    query_plan: AskQueryPlan | None = None
+    structured_evidence: list[StructuredEvidenceItem] = Field(default_factory=list)
+    grounding: list[GroundingItem] = Field(default_factory=list)
     dual_evidence_coverage: bool = False
     retrieval_mode: str = "faiss"
     graph_context: list[dict[str, Any]] | None = None
@@ -80,6 +138,9 @@ class AskV2Response(BaseModel):
     answer: str
     evidence: list[EvidenceItem] = Field(default_factory=list)
     fusion_evidence: list[FusionEvidenceItem] = Field(default_factory=list)
+    query_plan: AskQueryPlan | None = None
+    structured_evidence: list[StructuredEvidenceItem] = Field(default_factory=list)
+    grounding: list[GroundingItem] = Field(default_factory=list)
     dual_evidence_coverage: bool = False
     retrieval_mode: str = "faiss"
     graph_context: list[dict[str, Any]] | None = None

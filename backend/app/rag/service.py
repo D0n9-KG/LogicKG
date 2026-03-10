@@ -11,12 +11,13 @@ from langchain_openai import ChatOpenAI
 from app.graph.neo4j_client import Neo4jClient
 from app.ingest.paper_meta import load_canonical_meta
 from app.rag.evidence_orchestrator import _rrf_fuse, merge_evidence
-from app.rag.models import EvidenceBundle
+from app.rag.models import AskQueryPlan, EvidenceBundle
 from app.rag.fusion_retrieval import (
     format_fusion_evidence_block,
     has_dual_evidence,
     rank_fusion_basics,
 )
+from app.rag.planner import plan_ask_query
 from app.rag.retrieval import latest_run_dir, load_chunks_from_run, lexical_retrieve
 from app.rag.tree_router import route_query
 from app.retrieval.pageindex_adapter import PageIndexAdapter
@@ -522,6 +523,32 @@ def _stream_chunk_text(chunk: Any) -> str:
     return str(content or "")
 
 
+def _format_structured_evidence(items: list[dict[str, Any]] | None) -> str:
+    if not items:
+        return ""
+    lines: list[str] = []
+    for item in items[:20]:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "structured").strip()
+        source_id = str(item.get("source_id") or item.get("id") or "").strip()
+        text = str(item.get("text") or "").strip()
+        if not source_id or not text:
+            continue
+        lines.append(f"  [{kind}:{source_id}] {text}")
+    if not lines:
+        return ""
+    return "Structured Evidence:\n" + "\n".join(lines)
+
+
+def retrieve_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
+    return []
+
+
+def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
+    return []
+
+
 def _prepare_ask_v2_context(
     question: str,
     k: int = 8,
@@ -538,7 +565,13 @@ def _prepare_ask_v2_context(
 
     allowed_sources = _allowed_paper_sources(scope)
     scope_paper = _single_scope_paper_context(scope)
-    retrieval_query = _build_retrieval_query(question, scope_paper, locale=normalized_locale)
+    raw_query_plan = plan_ask_query(question, scope=scope, locale=normalized_locale)
+    query_plan = (
+        raw_query_plan
+        if isinstance(raw_query_plan, AskQueryPlan)
+        else AskQueryPlan.model_validate(raw_query_plan)
+    )
+    retrieval_query = _build_retrieval_query(query_plan.main_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
     route = route_query(
@@ -677,6 +710,9 @@ def _prepare_ask_v2_context(
     if allowed_sources is not None and len(evidence) < min(2, want):
         bundle = EvidenceBundle(
             evidence=evidence,
+            query_plan=query_plan,
+            structured_evidence=[],
+            grounding=[],
             retrieval_mode=retrieval_mode,
             graph_context=None,
             structured_knowledge=None,
@@ -693,6 +729,8 @@ def _prepare_ask_v2_context(
     graph_context = None
     structured_knowledge = None
     fusion_evidence: list[dict[str, Any]] = []
+    structured_evidence: list[dict[str, Any]] = []
+    grounding: list[dict[str, Any]] = []
     if evidence:
         paper_sources = list({e["paper_source"] for e in evidence if e.get("paper_source")})
         if paper_sources:
@@ -715,16 +753,43 @@ def _prepare_ask_v2_context(
                 graph_context = None
                 structured_knowledge = None
                 fusion_evidence = []
+        try:
+            structured_evidence = list(
+                retrieve_structured_evidence(
+                    question=question,
+                    query_plan=query_plan.model_dump(),
+                    evidence=evidence,
+                    allowed_sources=allowed_sources,
+                    k=want,
+                )
+                or []
+            )
+        except Exception:
+            structured_evidence = []
+        try:
+            grounding = list(
+                ground_structured_evidence(
+                    structured_evidence=structured_evidence,
+                    evidence=evidence,
+                    k=want,
+                )
+                or []
+            )
+        except Exception:
+            grounding = []
 
     system = _build_system_prompt(domain_prompt, locale=normalized_locale)
     graph_block = _format_graph_context(graph_context)
     knowledge_block = _format_structured_knowledge(structured_knowledge)
+    structured_block = _format_structured_evidence(structured_evidence)
     user_parts = [f"Question:\n{question}", "Evidence:\n" + "\n\n".join(context_lines)]
     scope_paper_block = _format_scope_paper_context(scope_paper)
     if scope_paper_block:
         user_parts.insert(1, scope_paper_block)
     if knowledge_block:
         user_parts.append(knowledge_block)
+    if structured_block:
+        user_parts.append(structured_block)
     if graph_block:
         user_parts.append(graph_block)
     if fusion_evidence:
@@ -734,6 +799,9 @@ def _prepare_ask_v2_context(
     bundle = EvidenceBundle(
         evidence=evidence,
         fusion_evidence=fusion_evidence,
+        query_plan=query_plan,
+        structured_evidence=structured_evidence,
+        grounding=grounding,
         dual_evidence_coverage=has_dual_evidence(
             paper_evidence_count=len(evidence),
             textbook_evidence_count=len(fusion_evidence),
