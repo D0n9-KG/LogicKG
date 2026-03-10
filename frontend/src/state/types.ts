@@ -136,6 +136,45 @@ export type AskItem = {
       confidence?: number
     }>
   } | null
+  structuredEvidence?: Array<{
+    kind?: string
+    source_id?: string
+    proposition_id?: string
+    text?: string
+    score?: number
+    paper_source?: string
+    paper_id?: string
+    source_kind?: string
+    source_ref_id?: string
+    entity_id?: string
+    textbook_id?: string
+    chapter_id?: string
+    evidence_event_id?: string
+    evidence_event_type?: string
+  }>
+  grounding?: Array<{
+    source_kind?: string
+    source_id?: string
+    quote?: string
+    paper_source?: string
+    chunk_id?: string
+    textbook_id?: string
+    chapter_id?: string
+    start_line?: number
+    end_line?: number
+  }>
+  intent?: string
+  retrievalPlan?: string
+  queryPlan?: {
+    intent?: string
+    retrieval_plan?: string
+    main_query?: string
+    paper_query?: string
+    textbook_query?: string
+    proposition_query?: string
+    confidence?: number
+    reason?: string
+  } | null
   retrievalMode?: string
   notice?: string
   insufficientScopeEvidence?: boolean

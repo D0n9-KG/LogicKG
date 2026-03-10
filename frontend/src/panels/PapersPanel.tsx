@@ -58,7 +58,7 @@ export default function PapersPanel() {
   useEffect(() => {
     let cancelled = false
     dispatch({ type: 'SET_TRANSITIONING', value: true })
-    loadOverviewGraph()
+    loadOverviewGraph(200, 600, { includeTextbooks: false })
       .then((els) => { if (!cancelled) dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' }) })
       .catch(() => {})
       .finally(() => { if (!cancelled) dispatch({ type: 'SET_TRANSITIONING', value: false }) })

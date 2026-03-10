@@ -153,6 +153,55 @@ function addEdge(edgeMap: Map<string, GraphElement>, data: GraphEdgeData) {
   })
 }
 
+export function buildTextbookChapterOverviewGraph(
+  textbook: TextbookSnapshot | null | undefined,
+  chapters: ChapterSnapshot[] | null | undefined,
+): GraphElement[] {
+  const nodeMap = new Map<string, GraphElement>()
+  const edgeMap = new Map<string, GraphElement>()
+
+  const textbookId = cleanText(textbook?.textbook_id)
+  const textbookTitle = cleanText(textbook?.title) || textbookId || 'Textbook'
+  const chapterRows = [...(chapters ?? [])]
+    .filter((chapter) => cleanText(chapter.chapter_id))
+    .sort(sortChapters)
+
+  if (textbookId) {
+    addNode(nodeMap, {
+      id: textbookNodeId(textbookId),
+      label: textbookTitle,
+      kind: 'textbook',
+      description: textbookSummary(chapterRows.length, undefined),
+      textbookId,
+      clusterKey: `textbook:${textbookId}`,
+    })
+  }
+
+  for (const chapter of chapterRows) {
+    const chapterId = cleanText(chapter.chapter_id)
+    addNode(nodeMap, {
+      id: chapterNodeId(chapterId),
+      label: chapterLabel(chapter),
+      kind: 'chapter',
+      description: chapterSummary(chapter, undefined, false),
+      textbookId: textbookId || undefined,
+      chapterId,
+      clusterKey: textbookId ? `textbook:${textbookId}` : `chapter:${chapterId}`,
+    })
+    if (textbookId) {
+      addEdge(edgeMap, {
+        id: `contains:${textbookNodeId(textbookId)}->${chapterNodeId(chapterId)}`,
+        source: textbookNodeId(textbookId),
+        target: chapterNodeId(chapterId),
+        kind: 'contains',
+        weight: 0.92,
+      })
+    }
+  }
+
+  return [...nodeMap.values(), ...edgeMap.values()]
+}
+
 export async function loadTextbookEntityGraph(textbookId: string, chapterId?: string): Promise<GraphElement[]> {
   const url = chapterId
     ? `/textbooks/${encodeURIComponent(textbookId)}/chapters/${encodeURIComponent(chapterId)}/graph?entity_limit=${CHAPTER_ENTITY_LIMIT}&edge_limit=${CHAPTER_EDGE_LIMIT}`

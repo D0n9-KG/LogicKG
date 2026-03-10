@@ -12,6 +12,7 @@ from app.rag.service import (
     _format_graph_context,
     _format_structured_knowledge,
     _stringify_graph_value,
+    ground_structured_evidence,
     retrieve_structured_evidence,
 )
 
@@ -708,7 +709,10 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
             {
                 "source_kind": "proposition",
                 "source_id": "pr-1",
-                "quote": "Finite element method discretizes the domain.",
+                "quote": (
+                    "Finite element method discretizes the domain. "
+                    "Additional implementation details should stay out of the prompt-level grounding block."
+                ),
                 "chunk_id": "c1",
                 "start_line": 1,
                 "end_line": 2,
@@ -745,6 +749,9 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
     assert bundle_dump["structured_evidence"][0]["kind"] == "proposition"
     assert bundle_dump["grounding"][0]["source_id"] == "pr-1"
     assert "Structured Evidence" in ctx["user"]
+    assert "Grounding" in ctx["user"]
+    assert "Finite element method discretizes the domain." in ctx["user"]
+    assert "Additional implementation details should stay out of the prompt-level grounding block." not in ctx["user"]
 
 
 def test_prepare_ask_v2_context_textbook_first_uses_textbook_seed_and_prompt_order(monkeypatch):
@@ -1028,6 +1035,83 @@ def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(mo
     )
 
     assert [row["kind"] for row in rows[:2]] == ["textbook", "proposition"]
+
+
+def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(monkeypatch):
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_grounding_rows_for_structured_ids(self, ids, limit=200):
+            assert ids == [{"kind": "proposition", "source_id": "pr-1"}]
+            return [
+                {
+                    "source_kind": "proposition",
+                    "source_id": "pr-1",
+                    "quote": (
+                        "Finite element method discretizes the domain. "
+                        "This chunk also includes a long implementation discussion that should not be echoed wholesale."
+                    ),
+                    "chunk_id": "c1",
+                    "md_path": "runs/paper-A/content.md",
+                    "start_line": 11,
+                    "end_line": 13,
+                    "textbook_id": None,
+                    "chapter_id": None,
+                    "evidence_event_id": "ev-1",
+                    "evidence_event_type": "SUPPORTS",
+                }
+            ]
+
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+        ),
+    )
+
+    rows = ground_structured_evidence(
+        structured_evidence=[
+            {
+                "kind": "proposition",
+                "source_id": "pr-1",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/in",
+            },
+            {
+                "kind": "textbook",
+                "source_id": "ent-1",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/in",
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+                "evidence_quote": "Finite element chapter defines discretization over mesh elements.",
+            },
+        ],
+        evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/in"}],
+        k=4,
+    )
+
+    assert len(rows) == 2
+    assert rows[0]["source_id"] == "pr-1"
+    assert rows[0]["quote"] == "Finite element method discretizes the domain."
+    assert rows[0]["chunk_id"] == "c1"
+    assert rows[0]["paper_source"] == "paper-A"
+    assert rows[0]["paper_id"] == "doi:10.1000/in"
+    assert rows[0]["evidence_event_id"] == "ev-1"
+    assert rows[1]["source_kind"] == "textbook"
+    assert rows[1]["source_id"] == "ent-1"
+    assert rows[1]["chapter_id"] == "tb:1:ch001"
+    assert rows[1]["quote"] == "Finite element chapter defines discretization over mesh elements."
 
 
 def test_retrieve_structured_evidence_scoped_proposition_first_keeps_textbook_origin(monkeypatch):

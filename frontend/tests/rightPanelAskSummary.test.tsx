@@ -116,7 +116,10 @@ describe('RightPanel ask summary fusion coverage', () => {
                 source_kind: 'proposition',
                 source_id: 'pr-1',
                 quote: 'Finite element method discretizes the domain.',
+                chunk_id: 'c1',
                 chapter_id: 'tb:1:ch001',
+                start_line: 11,
+                end_line: 13,
               },
             ],
             intent: 'foundational',
@@ -147,5 +150,7 @@ describe('RightPanel ask summary fusion coverage', () => {
     expect(html).toContain('textbook_first_then_paper')
     expect(html).toContain('Structured Evidence')
     expect(html).toContain('Finite element method discretizes the domain.')
+    expect(html).toContain('c1')
+    expect(html).toContain('Lines 11-13')
   })
 })

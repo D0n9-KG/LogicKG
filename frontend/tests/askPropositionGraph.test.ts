@@ -53,6 +53,12 @@ describe('ask proposition graph builder', () => {
           textbook_id: 'tb:1',
           chapter_id: 'tb:1:ch001',
         },
+        {
+          kind: 'logic_step',
+          source_id: 'ls-no-prop',
+          text: 'A logic step without mapped proposition should stay a logic row only.',
+          paper_source: 'paper-A',
+        },
       ],
       grounding: [
         {
@@ -71,6 +77,7 @@ describe('ask proposition graph builder', () => {
     const edges = graph.filter((item) => item.group === 'edges').map((item) => item.data)
 
     expect(nodes.some((node) => node.id === 'proposition:pr-1' && node.kind === 'proposition')).toBe(true)
+    expect(nodes.some((node) => node.id === 'proposition:ls-no-prop')).toBe(false)
     expect(edges.some((edge) => edge.source === 'claim:cl-1' && edge.target === 'proposition:pr-1' && edge.kind === 'supports')).toBe(true)
     expect(edges.some((edge) => edge.source.startsWith('logic:') && edge.target === 'proposition:pr-1' && edge.kind === 'supports')).toBe(true)
     expect(edges.some((edge) => edge.source === 'proposition:pr-1' && edge.target === 'entity:ent-1' && edge.kind === 'maps_to')).toBe(true)

@@ -71,7 +71,8 @@ function normalizeText(value: unknown): string {
 }
 
 function kindLabel(kind: string, locale: UILocale) {
-  const key = String(kind ?? '')
+  const raw = String(kind ?? '')
+  const key = raw === 'proposition' ? 'prop' : raw
   const label = KIND_LABELS[key]
   return label ? pickText(locale, label) : key || 'unknown'
 }
@@ -80,6 +81,16 @@ function relationLabel(kind: string, locale: UILocale) {
   const key = String(kind ?? '')
   const label = RELATION_LABELS[key]
   return label ? pickText(locale, label) : key || 'unknown'
+}
+
+function formatIntentLabel(intent: string, locale: UILocale) {
+  const key = normalizeText(intent)
+  if (!key) return ''
+  if (key === 'foundational') return locale === 'zh-CN' ? '基础知识' : 'Foundational'
+  if (key === 'paper_detail') return locale === 'zh-CN' ? '论文细节' : 'Paper Detail'
+  if (key === 'hybrid_explanation') return locale === 'zh-CN' ? '混合解释' : 'Hybrid Explanation'
+  if (key === 'comparison') return locale === 'zh-CN' ? '比较问题' : 'Comparison'
+  return key
 }
 
 function prettyValue(value: unknown): string {
@@ -102,6 +113,25 @@ function shortText(value: unknown, max = 120): string {
   return `${text.slice(0, Math.max(1, max - 3))}...`
 }
 
+export function groundingLocationLabel(
+  row: NonNullable<AskItem['grounding']>[number] | undefined,
+  locale: UILocale,
+): string {
+  if (!row) return ''
+  const parts: string[] = []
+  const chunkId = normalizeText(row.chunk_id)
+  const chapterId = normalizeText(row.chapter_id)
+  const textbookId = normalizeText(row.textbook_id)
+  const startLine = Number.isFinite(Number(row.start_line)) ? Number(row.start_line) : null
+  const endLine = Number.isFinite(Number(row.end_line)) ? Number(row.end_line) : null
+  if (chunkId) parts.push(chunkId)
+  else if (chapterId) parts.push(chapterId)
+  else if (textbookId) parts.push(textbookId)
+  if (startLine !== null && endLine !== null) parts.push(`${locale === 'zh-CN' ? '行' : 'Lines'} ${startLine}-${endLine}`)
+  else if (startLine !== null) parts.push(`${locale === 'zh-CN' ? '行' : 'Line'} ${startLine}`)
+  return parts.join(' | ')
+}
+
 function sourceFromMdPath(mdPath: unknown): string {
   const raw = normalizeText(mdPath)
   if (!raw) return ''
@@ -110,6 +140,25 @@ function sourceFromMdPath(mdPath: unknown): string {
   const last = parts[parts.length - 1]
   if (/\.md$/i.test(last) && parts.length >= 2) return normalizeText(parts[parts.length - 2])
   return normalizeText(last)
+}
+
+function betterGroundingLocationLabel(
+  row: NonNullable<AskItem['grounding']>[number] | undefined,
+  locale: UILocale,
+): string {
+  if (!row) return ''
+  const parts: string[] = []
+  const chunkId = normalizeText(row.chunk_id)
+  const chapterId = normalizeText(row.chapter_id)
+  const textbookId = normalizeText(row.textbook_id)
+  const startLine = Number.isFinite(Number(row.start_line)) && Number(row.start_line) > 0 ? Number(row.start_line) : null
+  const endLine = Number.isFinite(Number(row.end_line)) && Number(row.end_line) > 0 ? Number(row.end_line) : null
+  if (chunkId) parts.push(chunkId)
+  else if (chapterId) parts.push(chapterId)
+  else if (textbookId) parts.push(textbookId)
+  if (startLine !== null && endLine !== null) parts.push(`${locale === 'zh-CN' ? '\u884c' : 'Lines'} ${startLine}-${endLine}`)
+  else if (startLine !== null) parts.push(`${locale === 'zh-CN' ? '\u884c' : 'Line'} ${startLine}`)
+  return parts.join(' | ')
 }
 
 function summarizeAskTurn(item: AskItem, locale: UILocale): string {
@@ -227,6 +276,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       community: 0,
       logic: 0,
       claim: 0,
+      proposition: 0,
       entity: 0,
       citation: 0,
     }
@@ -237,6 +287,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       else if (node.kind === 'community') counts.community += 1
       else if (node.kind === 'logic') counts.logic += 1
       else if (node.kind === 'claim') counts.claim += 1
+      else if (node.kind === 'proposition' || node.kind === 'prop') counts.proposition += 1
       else if (node.kind === 'entity') counts.entity += 1
       else if (node.kind === 'citation') counts.citation += 1
     }
@@ -495,6 +546,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       community: 0,
       logic: 0,
       claim: 0,
+      proposition: 0,
       entity: 0,
       citation: 0,
     }
@@ -510,6 +562,34 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       askEvidenceStats.lineStart !== null && askEvidenceStats.lineEnd !== null
         ? `${askEvidenceStats.lineStart}-${askEvidenceStats.lineEnd}`
         : '-'
+    const currentRecord = (current ?? {}) as Record<string, unknown>
+    const queryPlanRecord =
+      currentRecord.queryPlan && typeof currentRecord.queryPlan === 'object'
+        ? (currentRecord.queryPlan as Record<string, unknown>)
+        : {}
+    const askIntent = formatIntentLabel(
+      normalizeText(currentRecord.intent) || normalizeText(queryPlanRecord.intent),
+      locale,
+    )
+    const askRetrievalPlan = normalizeText(currentRecord.retrievalPlan) || normalizeText(queryPlanRecord.retrieval_plan)
+    const structuredEvidence = Array.isArray(current?.structuredEvidence) ? current.structuredEvidence : []
+    const grounding = Array.isArray(current?.grounding) ? current.grounding : []
+    const groundingBySourceId = new Map<string, NonNullable<AskItem['grounding']>[number][]>()
+    for (const row of grounding) {
+      const sourceId = normalizeText(row.source_id)
+      if (!sourceId) continue
+      const rows = groundingBySourceId.get(sourceId) ?? []
+      const quote = normalizeText(row.quote)
+      const existingIndex = rows.findIndex((item) => normalizeText(item.quote) === quote)
+      if (existingIndex >= 0) {
+        const currentLocation = betterGroundingLocationLabel(rows[existingIndex], locale)
+        const nextLocation = betterGroundingLocationLabel(row, locale)
+        if (!currentLocation && nextLocation) rows[existingIndex] = row
+      } else {
+        rows.push(row)
+      }
+      groundingBySourceId.set(sourceId, rows)
+    }
 
     const selectedRecord = (selected ?? {}) as Record<string, unknown>
     const selectedNodeRecord = (selectedNode ?? {}) as Record<string, unknown>
@@ -574,6 +654,8 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                       <div className="kgInfoHeroMeta">
                         <span className="kgTag">{t('状态', 'Status')}: {current.status}</span>
                         <span className="kgTag">k={current.k}</span>
+                        {askIntent && <span className="kgTag">{askIntent}</span>}
+                        {askRetrievalPlan && <span className="kgTag">{askRetrievalPlan}</span>}
                         <span className="kgTag">{t('教材锚点', 'Textbook Anchors')}: {askFusionStats.total}</span>
                         <span className="kgTag">
                           {t('双证据', 'Dual Evidence')}: {current.dualEvidenceCoverage ? t('已覆盖', 'Covered') : t('未覆盖', 'Missing')}
@@ -623,6 +705,10 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                       <div className="kgInfoMetricCard">
                         <div className="kgInfoMetricLabel">{t('论断节点', 'Claim Nodes')}</div>
                         <div className="kgInfoMetricValue">{counts.claim}</div>
+                      </div>
+                      <div className="kgInfoMetricCard">
+                        <div className="kgInfoMetricLabel">{t('命题节点', 'Proposition Nodes')}</div>
+                        <div className="kgInfoMetricValue">{counts.proposition}</div>
                       </div>
                       <div className="kgInfoMetricCard">
                         <div className="kgInfoMetricLabel">{t('引用节点', 'Citation Nodes')}</div>
@@ -725,6 +811,46 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                       ))}
                       {askSubgraphRelationRows.length === 0 && <div className="text-faint">{t('暂无子图关系数据。', 'No relation data in subgraph yet.')}</div>}
                     </div>
+
+                    {(structuredEvidence.length > 0 || grounding.length > 0) && (
+                      <>
+                        <div className="kgSectionTitle">{t('结构化证据', 'Structured Evidence')}</div>
+                        <div className="kgInfoSection kgStack" style={{ gap: 8 }}>
+                          {structuredEvidence.slice(0, 6).map((row, index) => {
+                            const sourceId = normalizeText(row.source_id || row.proposition_id)
+                            const title = normalizeText(row.text || row.source_id || row.proposition_id || row.kind || `structured-${index + 1}`)
+                            const groundingRows = sourceId ? groundingBySourceId.get(sourceId) ?? [] : []
+                            return (
+                              <div key={`structured-${sourceId || index}`} className="kgInfoNeighborCard">
+                                <div className="kgInfoNeighborTitle">{title}</div>
+                                <div className="kgInfoNeighborMeta">
+                                  {normalizeText(row.kind || 'structured')}
+                                  {row.paper_source ? ` | ${row.paper_source}` : ''}
+                                  {row.chapter_id ? ` | ${row.chapter_id}` : ''}
+                                </div>
+                                {groundingRows.slice(0, 2).map((groundingRow, groundingIndex) => (
+                                  <div key={`grounding-${sourceId || index}-${groundingIndex}`} className="kgStack" style={{ gap: 2 }}>
+                                    <div className="kgInfoNeighborMeta">{normalizeText(groundingRow.quote)}</div>
+                                    {betterGroundingLocationLabel(groundingRow, locale) && (
+                                      <div className="kgInfoNeighborMeta">{betterGroundingLocationLabel(groundingRow, locale)}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          })}
+                          {structuredEvidence.length === 0 &&
+                            grounding.slice(0, 4).map((row, index) => (
+                              <div key={`grounding-only-${index}`} className="kgStack" style={{ gap: 2 }}>
+                                <div className="kgInfoNeighborMeta">{normalizeText(row.quote)}</div>
+                                {betterGroundingLocationLabel(row, locale) && (
+                                  <div className="kgInfoNeighborMeta">{betterGroundingLocationLabel(row, locale)}</div>
+                                )}
+                              </div>
+                            ))}
+                        </div>
+                      </>
+                    )}
 
                     {askTurns.length > 0 && (
                       <>

@@ -8,7 +8,7 @@ vi.mock('../src/api', () => ({
   apiGet: apiGetMock,
 }))
 
-import { loadTextbookEntityGraph } from '../src/loaders/textbooks'
+import { buildTextbookChapterOverviewGraph, loadTextbookEntityGraph } from '../src/loaders/textbooks'
 
 describe('textbook graph loader', () => {
   beforeEach(() => {
@@ -72,5 +72,23 @@ describe('textbook graph loader', () => {
     expect(nodeIds).toContain('community:community:1')
     expect(edgeIds).toContain('contains:textbook:tb-1->chapter:ch-1')
     expect(edgeIds).toContain('contains:chapter:ch-1->community:community:1')
+  })
+
+  test('builds a chapter-first textbook overview without entity or community nodes', () => {
+    const elements = buildTextbookChapterOverviewGraph(
+      { textbook_id: 'tb-1', title: 'Textbook 1' },
+      [
+        { chapter_id: 'ch-1', chapter_num: 1, title: 'Chapter 1', entity_count: 12, relation_count: 18 },
+        { chapter_id: 'ch-2', chapter_num: 2, title: 'Chapter 2', entity_count: 9, relation_count: 11 },
+      ],
+    )
+
+    const nodes = elements.filter((el) => el.group === 'nodes').map((el) => el.data)
+    const edges = elements.filter((el) => el.group === 'edges').map((el) => el.data)
+
+    expect(nodes.some((node) => node.id === 'textbook:tb-1' && node.kind === 'textbook')).toBe(true)
+    expect(nodes.some((node) => node.id === 'chapter:ch-1' && node.kind === 'chapter')).toBe(true)
+    expect(nodes.some((node) => node.kind === 'entity' || node.kind === 'community')).toBe(false)
+    expect(edges.some((edge) => edge.id === 'contains:textbook:tb-1->chapter:ch-1' && edge.kind === 'contains')).toBe(true)
   })
 })

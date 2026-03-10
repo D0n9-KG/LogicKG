@@ -6,6 +6,7 @@ import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNo
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import Graph3D from './Graph3D'
+import { resolveGraphCanvasViewState } from './graphCanvasViewState'
 import { resolveGraphRenderPlan } from './graphRenderPlan'
 
 type Props = {
@@ -95,6 +96,7 @@ const KIND_LABELS: Record<string, LocalizedText> = {
   logic: { zh: '逻辑', en: 'Logic' },
   claim: { zh: '论断', en: 'Claim' },
   prop: { zh: '命题', en: 'Proposition' },
+  proposition: { zh: '命题', en: 'Proposition' },
   group: { zh: '分组', en: 'Group' },
   entity: { zh: '实体', en: 'Entity' },
   citation: { zh: '引文', en: 'Citation' },
@@ -108,6 +110,7 @@ const KIND_PRIORITY: Record<string, number> = {
   logic: 5,
   claim: 6,
   prop: 7,
+  proposition: 7,
   group: 8,
   entity: 9,
   citation: 10,
@@ -245,7 +248,7 @@ function nodeVisual(data: GraphNodeData, degree: number): NodeVisual {
       size: 14 + Math.min(18, weightedDegree * 0.7),
     }
   }
-  if (data.kind === 'prop') {
+  if (data.kind === 'prop' || data.kind === 'proposition') {
     if (data.state === 'challenged') {
       return {
         color: 'rgba(248, 113, 113, 0.92)',
@@ -1473,14 +1476,14 @@ export default function GraphCanvas({
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (activeModule !== 'overview') {
-        if (overviewMode !== '2d') onOverviewModeChange('2d')
-        setPlacementMode('raw')
-        setShowGraphDetails(true)
-      } else {
-        setPlacementMode('timeline')
-        setShowGraphDetails(false)
-      }
+      const viewState = resolveGraphCanvasViewState({
+        activeModule,
+        overviewMode,
+        placementMode,
+        showGraphDetails,
+      })
+      setPlacementMode(viewState.placementMode)
+      setShowGraphDetails(viewState.showGraphDetails)
       setHiddenKinds([])
     }, 0)
     return () => window.clearTimeout(timer)
@@ -1792,8 +1795,12 @@ export default function GraphCanvas({
     node.select()
   }, [selectedNodeId, preparedGraph.renderedEdgeCount])
 
-  const show3D = activeModule === 'overview' && overviewMode === '3d'
-  const show2D = activeModule !== 'overview' || overviewMode === '2d'
+  const { show3D, show2D } = resolveGraphCanvasViewState({
+    activeModule,
+    overviewMode,
+    placementMode,
+    showGraphDetails,
+  })
   const visibleNodeCount = filteredElements.filter((el) => el.group === 'nodes').length
 
   useEffect(() => {

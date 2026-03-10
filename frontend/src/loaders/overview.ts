@@ -41,9 +41,10 @@ export function invalidateOverviewGraphCache() {
 export async function loadOverviewGraph(
   limitPapers = 200,
   limitEdges = 600,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; includeTextbooks?: boolean } = {},
 ): Promise<GraphElement[]> {
-  const cacheKey = `${limitPapers}:${limitEdges}`
+  const includeTextbooks = options.includeTextbooks !== false
+  const cacheKey = `${limitPapers}:${limitEdges}:${includeTextbooks ? 'with-textbooks' : 'papers-only'}`
   if (options.force) {
     overviewGraphCache.delete(cacheKey)
     overviewGraphPending.delete(cacheKey)
@@ -95,29 +96,31 @@ export async function loadOverviewGraph(
         })
       }
 
-      try {
-        const textbooks = await apiGet<TextbookListResponse>(`/textbooks?limit=${OVERVIEW_TEXTBOOK_LIMIT}`)
-        const textbookIds = (textbooks.textbooks ?? [])
-          .map((row) => String(row.textbook_id ?? '').trim())
-          .filter(Boolean)
-          .slice(0, OVERVIEW_TEXTBOOK_LIMIT)
-        const textbookSnapshots = await Promise.allSettled(
-          textbookIds.map((textbookId) =>
-            apiGet(
-              `/textbooks/${encodeURIComponent(textbookId)}/graph?entity_limit=120&edge_limit=180`,
-            ).then((snapshot) => ({ textbookId, snapshot })),
-          ),
-        )
-        for (const result of textbookSnapshots) {
-          if (result.status !== 'fulfilled') continue
-          const textbookElements = buildTextbookSnapshotGraph(result.value.snapshot as GraphSnapshotResponse, result.value.textbookId)
-          for (const element of textbookElements) {
-            if (element.group === 'nodes') nodeMap.set(element.data.id, element)
-            else edgeMap.set(element.data.id, element)
+      if (includeTextbooks) {
+        try {
+          const textbooks = await apiGet<TextbookListResponse>(`/textbooks?limit=${OVERVIEW_TEXTBOOK_LIMIT}`)
+          const textbookIds = (textbooks.textbooks ?? [])
+            .map((row) => String(row.textbook_id ?? '').trim())
+            .filter(Boolean)
+            .slice(0, OVERVIEW_TEXTBOOK_LIMIT)
+          const textbookSnapshots = await Promise.allSettled(
+            textbookIds.map((textbookId) =>
+              apiGet(
+                `/textbooks/${encodeURIComponent(textbookId)}/graph?entity_limit=120&edge_limit=180`,
+              ).then((snapshot) => ({ textbookId, snapshot })),
+            ),
+          )
+          for (const result of textbookSnapshots) {
+            if (result.status !== 'fulfilled') continue
+            const textbookElements = buildTextbookSnapshotGraph(result.value.snapshot as GraphSnapshotResponse, result.value.textbookId)
+            for (const element of textbookElements) {
+              if (element.group === 'nodes') nodeMap.set(element.data.id, element)
+              else edgeMap.set(element.data.id, element)
+            }
           }
+        } catch {
+          // keep the overview usable if textbook graph loading is unavailable
         }
-      } catch {
-        // keep the overview usable if textbook graph loading is unavailable
       }
 
       const elements = [...nodeMap.values(), ...edgeMap.values()]

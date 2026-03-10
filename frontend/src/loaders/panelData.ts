@@ -36,6 +36,8 @@ export type ChapterRow = {
   chapter_id: string
   chapter_num: number
   title: string
+  entity_count?: number
+  relation_count?: number
 }
 
 const responseCache = new Map<string, unknown>()

@@ -8,7 +8,7 @@ import {
   type TextbookRow,
 } from '../loaders/panelData'
 import { useGlobalState } from '../state/store'
-import { loadTextbookEntityGraph } from '../loaders/textbooks'
+import { buildTextbookChapterOverviewGraph, loadTextbookEntityGraph } from '../loaders/textbooks'
 
 export default function TextbooksPanel() {
   const { state, dispatch } = useGlobalState()
@@ -34,13 +34,18 @@ export default function TextbooksPanel() {
     dispatch({ type: 'SET_TRANSITIONING', value: true })
     setLoading(true)
     selectReqRef.current = textbookId
-    Promise.all([
-      loadTextbookChapters(textbookId),
-      loadTextbookEntityGraph(textbookId),
-    ])
-      .then(([chapterRows, els]) => {
+    loadTextbookChapters(textbookId)
+      .then((chapterRows) => {
         if (selectReqRef.current !== textbookId) return
         setChapters(chapterRows)
+        const textbook = allTextbooks.find((row) => row.textbook_id === textbookId)
+        const els = buildTextbookChapterOverviewGraph(
+          {
+            textbook_id: textbookId,
+            title: textbook?.title ?? textbookId,
+          },
+          chapterRows,
+        )
         dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
       })
       .catch(() => {})

@@ -135,4 +135,37 @@ describe('overviewLoader', () => {
     expect(edges.some((edge) => edge.source === 'textbook:tb:1' && edge.target === 'chapter:tb:1:ch001' && edge.kind === 'contains')).toBe(true)
     expect(edges.some((edge) => edge.source === 'community:cluster-1' && edge.target === 'entity:ent-1' && edge.kind === 'contains')).toBe(true)
   })
+
+  test('can load a paper-only overview graph without textbook nodes', async () => {
+    apiGetMock.mockImplementation(async (url: string) => {
+      if (String(url).startsWith('/graph/network')) {
+        return {
+          nodes: [
+            {
+              id: 'paper-1',
+              paper_source: '14_1485',
+              title: 'Paper-only graph',
+              year: 2006,
+              ingested: true,
+              in_scope: true,
+              phase1_quality_tier: 'A1',
+            },
+          ],
+          edges: [],
+        }
+      }
+      if (String(url).startsWith('/textbooks?')) {
+        throw new Error('textbook endpoints should not be called for paper-only graph')
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+
+    const graph = await loadOverviewGraph(20, 0, { force: true, includeTextbooks: false })
+    const nodes = graph.filter((item) => item.group === 'nodes').map((item) => item.data)
+
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0]?.kind).toBe('paper')
+    expect(nodes.some((node) => node.kind === 'textbook' || node.kind === 'chapter' || node.kind === 'community')).toBe(false)
+    expect(apiGetMock).toHaveBeenCalledTimes(1)
+  })
 })

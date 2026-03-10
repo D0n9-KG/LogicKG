@@ -149,12 +149,6 @@ function Shell() {
   }, [activeModule, workspacePreset])
 
   useEffect(() => {
-    if (activeModule !== 'overview' && overviewGraphMode !== '2d') {
-      setOverviewGraphMode('2d')
-    }
-  }, [activeModule, overviewGraphMode])
-
-  useEffect(() => {
     if (floatingPanelMode) return
     if (leftDrawerOpen) setLeftDrawerOpen(false)
     if (rightDrawerOpen) setRightDrawerOpen(false)

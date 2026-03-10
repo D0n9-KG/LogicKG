@@ -41,6 +41,46 @@ export type StructuredKnowledge = {
   claims?: StructuredClaimRow[]
 }
 
+export type QueryPlanRow = {
+  intent?: string
+  retrieval_plan?: string
+  main_query?: string
+  paper_query?: string
+  textbook_query?: string
+  proposition_query?: string
+  confidence?: number
+  reason?: string
+}
+
+export type StructuredEvidenceRow = {
+  kind?: string
+  source_id?: string
+  proposition_id?: string
+  text?: string
+  score?: number
+  paper_source?: string
+  paper_id?: string
+  source_kind?: string
+  source_ref_id?: string
+  entity_id?: string
+  textbook_id?: string
+  chapter_id?: string
+  evidence_event_id?: string
+  evidence_event_type?: string
+}
+
+export type GroundingRow = {
+  source_kind?: string
+  source_id?: string
+  quote?: string
+  paper_source?: string
+  chunk_id?: string
+  textbook_id?: string
+  chapter_id?: string
+  start_line?: number
+  end_line?: number
+}
+
 export type FusionEvidenceRow = {
   paper_source?: string
   paper_id?: string
@@ -71,6 +111,9 @@ export type AskApiResponse = {
   dual_evidence_coverage?: boolean
   graph_context?: GraphContextRow[]
   structured_knowledge?: StructuredKnowledge | null
+  query_plan?: QueryPlanRow | null
+  structured_evidence?: StructuredEvidenceRow[]
+  grounding?: GroundingRow[]
   retrieval_mode?: string
   message?: string
   insufficient_scope_evidence?: boolean
@@ -107,6 +150,10 @@ function chapterNodeId(chapterId: string): string {
 
 function entityNodeId(entityId: string): string {
   return `entity:${entityId}`
+}
+
+function propositionNodeId(propositionId: string): string {
+  return `proposition:${propositionId}`
 }
 
 function chapterLabel(row: FusionEvidenceRow): string {
@@ -156,6 +203,9 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
   const sourceToPaperNodeId = new Map<string, string>()
   const sourceToPaperTitle = new Map<string, string>()
   const paperNodePriority = new Map<string, number>()
+  const claimNodeById = new Map<string, string>()
+  const claimToLogicNodeId = new Map<string, string>()
+  const propositionNodeById = new Map<string, string>()
 
   const upsertPaperNode = (
     nodeId: string,
@@ -312,6 +362,7 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
       description: claimText,
       confidence: claim.confidence,
     })
+    if (claim.claim_id) claimNodeById.set(norm(claim.claim_id), claimNodeId)
     edgeMap.set(`${sourceNodeId}->${claimNodeId}`, {
       id: `${sourceNodeId}->${claimNodeId}`,
       source: sourceNodeId,
@@ -322,6 +373,7 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
 
     const logicNodeId = logicByPaperAndType.get(`${source}:${claim.step_type ?? ''}`)
     if (logicNodeId) {
+      if (claim.claim_id) claimToLogicNodeId.set(norm(claim.claim_id), logicNodeId)
       edgeMap.set(`${logicNodeId}->${claimNodeId}`, {
         id: `${logicNodeId}->${claimNodeId}`,
         source: logicNodeId,
@@ -330,6 +382,81 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
         weight: 0.5,
       })
     }
+  }
+
+  for (const row of res.structured_evidence ?? []) {
+    const kind = norm(row.kind)
+    const propositionId = norm(row.proposition_id || (kind === 'proposition' ? row.source_id : ''))
+    if (!propositionId) continue
+
+    const nodeId = propositionNodeId(propositionId)
+    propositionNodeById.set(propositionId, nodeId)
+
+    const propositionText = norm(row.text || row.proposition_id || row.source_id || 'proposition')
+    nodeMap.set(nodeId, {
+      id: nodeId,
+      label: short(propositionText, 38),
+      kind: 'proposition',
+      propId: propositionId,
+      description: propositionText,
+      paperId: norm(row.paper_id) || undefined,
+      textbookId: norm(row.textbook_id) || undefined,
+      chapterId: norm(row.chapter_id) || undefined,
+    })
+
+    const claimRef =
+      kind === 'claim'
+        ? norm(row.source_id)
+        : norm(row.source_kind) === 'claim'
+          ? norm(row.source_ref_id)
+          : ''
+    const claimNodeId = claimRef ? claimNodeById.get(claimRef) : undefined
+    if (claimNodeId) {
+      edgeMap.set(`${claimNodeId}->${nodeId}`, {
+        id: `${claimNodeId}->${nodeId}`,
+        source: claimNodeId,
+        target: nodeId,
+        kind: 'supports',
+        weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.55,
+      })
+    }
+
+    const logicNodeId = claimRef ? claimToLogicNodeId.get(claimRef) : undefined
+    if (logicNodeId) {
+      edgeMap.set(`${logicNodeId}->${nodeId}`, {
+        id: `${logicNodeId}->${nodeId}`,
+        source: logicNodeId,
+        target: nodeId,
+        kind: 'supports',
+        weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.5,
+      })
+    }
+
+    const entityId = norm(row.entity_id)
+    if (entityId) {
+      edgeMap.set(`${nodeId}->${entityNodeId(entityId)}`, {
+        id: `${nodeId}->${entityNodeId(entityId)}`,
+        source: nodeId,
+        target: entityNodeId(entityId),
+        kind: 'maps_to',
+        weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.48,
+      })
+    }
+  }
+
+  for (const row of res.grounding ?? []) {
+    const propositionId = norm(row.source_kind) === 'proposition' ? norm(row.source_id) : ''
+    if (!propositionId) continue
+    const nodeId = propositionNodeById.get(propositionId)
+    if (!nodeId) continue
+    const existing = nodeId ? nodeMap.get(nodeId) : undefined
+    if (!existing) continue
+    const quote = norm(row.quote)
+    if (!quote) continue
+    nodeMap.set(nodeId, {
+      ...existing,
+      description: existing.description ? `${existing.description} | ${quote}` : quote,
+    })
   }
 
   for (const fusion of res.fusion_evidence ?? []) {

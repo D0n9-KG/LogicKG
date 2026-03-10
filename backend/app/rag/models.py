@@ -112,12 +112,16 @@ class GroundingItem(BaseModel):
     source_kind: str
     source_id: str
     quote: str
+    paper_source: str | None = None
+    paper_id: str | None = None
     chunk_id: str | None = None
     md_path: str | None = None
     start_line: int | None = None
     end_line: int | None = None
     textbook_id: str | None = None
     chapter_id: str | None = None
+    evidence_event_id: str | None = None
+    evidence_event_type: str | None = None
 
 
 class EvidenceBundle(BaseModel):

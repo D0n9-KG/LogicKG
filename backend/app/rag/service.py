@@ -34,6 +34,7 @@ from app.vector.faiss_store import load_faiss
 log = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_:+./-]*|\d[\d_./-]*")
+_GROUNDING_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？;；])\s+|\n+")
 _ZH_RETRIEVAL_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("方法", "做法", "算法", "模型", "框架", "技术路线"), "method methodology approach framework model algorithm pipeline"),
     (("结论", "发现", "结果"), "results findings conclusion key findings"),
@@ -548,6 +549,91 @@ def _format_structured_evidence(items: list[dict[str, Any]] | None) -> str:
     return "Structured Evidence:\n" + "\n".join(lines)
 
 
+def _compact_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _truncate_for_grounding(text: str, max_chars: int = 220) -> str:
+    compact = _compact_whitespace(text)
+    if len(compact) <= max_chars:
+        return compact
+    window = compact[:max_chars]
+    for punct in (".", "!", "?", "。", "！", "？", ";", "；"):
+        pos = window.rfind(punct)
+        if pos >= max_chars // 2:
+            return window[: pos + 1].strip()
+    return window.rstrip(" ,;:") + "..."
+
+
+def _sentence_candidates(text: str) -> list[str]:
+    compact = _compact_whitespace(text)
+    if not compact:
+        return []
+    parts = [_compact_whitespace(part) for part in _GROUNDING_SENTENCE_SPLIT_RE.split(compact) if _compact_whitespace(part)]
+    return parts or [compact]
+
+
+def _tokenize_for_overlap(text: str) -> set[str]:
+    compact = _compact_whitespace(text)
+    if not compact:
+        return set()
+    if _CJK_RE.search(compact):
+        return {char for char in compact if _CJK_RE.match(char)}
+    return {match.group(0).lower() for match in _ASCII_TOKEN_RE.finditer(compact)}
+
+
+def _sentence_overlap_score(candidate: str, anchor: str) -> tuple[int, int]:
+    candidate_tokens = _tokenize_for_overlap(candidate)
+    anchor_tokens = _tokenize_for_overlap(anchor)
+    if candidate_tokens and anchor_tokens:
+        return (len(candidate_tokens & anchor_tokens), -len(candidate))
+    if anchor:
+        anchor_norm = _compact_whitespace(anchor).lower()
+        candidate_norm = _compact_whitespace(candidate).lower()
+        if anchor_norm and anchor_norm in candidate_norm:
+            return (len(anchor_norm), -len(candidate))
+    return (0, -len(candidate))
+
+
+def _sentence_grounding_quote(quote: str, anchor: str = "", max_chars: int = 220) -> str:
+    candidates = _sentence_candidates(quote)
+    if not candidates:
+        return ""
+    if len(candidates) == 1:
+        return _truncate_for_grounding(candidates[0], max_chars=max_chars)
+    ranked = sorted(
+        enumerate(candidates),
+        key=lambda item: (_sentence_overlap_score(item[1], anchor), -item[0]),
+        reverse=True,
+    )
+    best = ranked[0][1] if ranked else candidates[0]
+    return _truncate_for_grounding(best, max_chars=max_chars)
+
+
+def _format_grounding(items: list[dict[str, Any]] | None) -> str:
+    if not items:
+        return ""
+    lines: list[str] = []
+    for item in items[:24]:
+        if not isinstance(item, dict):
+            continue
+        source_kind = str(item.get("source_kind") or "structured").strip()
+        source_id = str(item.get("source_id") or "").strip()
+        quote = _sentence_grounding_quote(str(item.get("quote") or "").strip(), str(item.get("anchor_text") or "").strip())
+        if not source_id or not quote:
+            continue
+        location = (
+            str(item.get("chunk_id") or "").strip()
+            or str(item.get("chapter_id") or "").strip()
+            or str(item.get("paper_source") or "").strip()
+            or "unknown"
+        )
+        lines.append(f"  [{source_kind}:{source_id}] @{location} {quote}")
+    if not lines:
+        return ""
+    return "Grounding:\n" + "\n".join(lines)
+
+
 def _query_plan_value(question: str, query_plan: AskQueryPlan | dict[str, Any] | None) -> AskQueryPlan:
     if isinstance(query_plan, AskQueryPlan):
         return query_plan
@@ -661,6 +747,148 @@ def _normalize_structured_rows_preserving_extras(rows: list[dict[str, Any]] | No
     return out
 
 
+def _structured_row_by_source_id(rows: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        source_id = str(row.get("source_id") or "").strip()
+        if source_id and source_id not in out:
+            out[source_id] = row
+    return out
+
+
+def _paper_identity_by_source(evidence: list[dict[str, Any]] | None) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for row in evidence or []:
+        if not isinstance(row, dict):
+            continue
+        paper_source = str(row.get("paper_source") or "").strip()
+        paper_id = str(row.get("paper_id") or "").strip()
+        if not paper_source:
+            continue
+        item = out.setdefault(paper_source, {})
+        if paper_id and not item.get("paper_id"):
+            item["paper_id"] = paper_id
+    return out
+
+
+def _hydrate_grounding_row(
+    row: dict[str, Any],
+    structured_row: dict[str, Any] | None,
+    paper_identity: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    item = dict(row)
+    structured_row = structured_row or {}
+    paper_source = str(item.get("paper_source") or structured_row.get("paper_source") or "").strip()
+    if not paper_source:
+        paper_source = str(structured_row.get("paper_source") or "").strip()
+    if paper_source:
+        item["paper_source"] = paper_source
+        paper_meta = paper_identity.get(paper_source) or {}
+        paper_id = str(item.get("paper_id") or structured_row.get("paper_id") or paper_meta.get("paper_id") or "").strip()
+        if paper_id:
+            item["paper_id"] = paper_id
+    elif structured_row.get("paper_id"):
+        item["paper_id"] = structured_row.get("paper_id")
+
+    for key in (
+        "chunk_id",
+        "md_path",
+        "start_line",
+        "end_line",
+        "textbook_id",
+        "chapter_id",
+        "evidence_event_id",
+        "evidence_event_type",
+    ):
+        if item.get(key) in (None, "", []):
+            value = structured_row.get(key)
+            if value not in (None, "", []):
+                item[key] = value
+    anchor_text = str(structured_row.get("text") or structured_row.get("summary") or structured_row.get("evidence_quote") or "").strip()
+    if anchor_text:
+        item["anchor_text"] = anchor_text
+    item["quote"] = _sentence_grounding_quote(str(item.get("quote") or "").strip(), anchor_text)
+    return item
+
+
+def _fallback_grounding_rows(
+    structured_rows: list[dict[str, Any]] | None,
+    paper_identity: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in structured_rows or []:
+        if not isinstance(row, dict):
+            continue
+        source_id = str(row.get("source_id") or "").strip()
+        quote = str(row.get("evidence_quote") or "").strip()
+        if not source_id or not quote:
+            continue
+        source_kind = str(row.get("kind") or row.get("source_kind") or "").strip() or "structured"
+        item = {
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "quote": _sentence_grounding_quote(quote, str(row.get("text") or "").strip()),
+            "paper_source": str(row.get("paper_source") or "").strip() or None,
+            "paper_id": str(row.get("paper_id") or "").strip() or None,
+            "chunk_id": str(row.get("source_chunk_id") or "").strip() or None,
+            "md_path": None,
+            "start_line": None,
+            "end_line": None,
+            "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+            "chapter_id": str(row.get("chapter_id") or row.get("source_chapter_id") or "").strip() or None,
+            "evidence_event_id": str(row.get("evidence_event_id") or "").strip() or None,
+            "evidence_event_type": str(row.get("evidence_event_type") or "").strip() or None,
+            "anchor_text": str(row.get("text") or "").strip() or None,
+        }
+        if item["paper_source"]:
+            meta = paper_identity.get(str(item["paper_source"])) or {}
+            if meta.get("paper_id") and not item["paper_id"]:
+                item["paper_id"] = meta["paper_id"]
+        out.append(item)
+    return out
+
+
+def _dedupe_grounding_rows(rows: list[dict[str, Any]] | None, limit: int) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        source_kind = str(row.get("source_kind") or "").strip()
+        source_id = str(row.get("source_id") or "").strip()
+        quote = str(row.get("quote") or "").strip()
+        if not source_kind or not source_id or not quote:
+            continue
+        key = (source_kind, source_id, quote)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _normalize_grounding_seed_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        source_id = str(row.get("source_id") or row.get("id") or "").strip()
+        kind = str(row.get("kind") or row.get("source_kind") or "").strip() or "structured"
+        if not source_id:
+            continue
+        item = dict(row)
+        item["source_id"] = source_id
+        item["kind"] = kind
+        item["id"] = str(row.get("id") or source_id).strip() or source_id
+        item["text"] = str(row.get("text") or row.get("summary") or row.get("evidence_quote") or "").strip()
+        out.append(item)
+    return out
+
+
 def retrieve_structured_evidence(
     *,
     question: str,
@@ -721,7 +949,35 @@ def retrieve_structured_evidence(
 
 
 def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
-    return []
+    structured_rows = _normalize_grounding_seed_rows(kwargs.get("structured_evidence") or [])
+    if not structured_rows:
+        return []
+
+    limit = max(1, min(200, int(kwargs.get("k") or len(structured_rows) or 1) * 3))
+    structured_index = _structured_row_by_source_id(structured_rows)
+    paper_identity = _paper_identity_by_source(kwargs.get("evidence") or [])
+
+    graph_rows: list[dict[str, Any]] = []
+    graph_targets = [
+        {"kind": str(row.get("kind") or "").strip(), "source_id": str(row.get("source_id") or "").strip()}
+        for row in structured_rows
+        if str(row.get("kind") or "").strip() in {"claim", "logic_step", "proposition"}
+        and str(row.get("source_id") or "").strip()
+    ]
+    if graph_targets:
+        try:
+            with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+                graph_rows = list(client.get_grounding_rows_for_structured_ids(graph_targets, limit=limit) or [])
+        except Exception:
+            log.debug("Structured grounding lookup failed; using fallback-only grounding", exc_info=True)
+            graph_rows = []
+
+    hydrated = [
+        _hydrate_grounding_row(row, structured_index.get(str(row.get("source_id") or "").strip()), paper_identity)
+        for row in graph_rows
+    ]
+    fallback_rows = _fallback_grounding_rows(structured_rows, paper_identity)
+    return _dedupe_grounding_rows([*hydrated, *fallback_rows], limit=limit)
 
 
 def _prepare_ask_v2_context(
@@ -974,6 +1230,7 @@ def _prepare_ask_v2_context(
     graph_block = _format_graph_context(graph_context)
     knowledge_block = _format_structured_knowledge(structured_knowledge)
     structured_block = _format_structured_evidence(structured_evidence)
+    grounding_block = _format_grounding(grounding)
     evidence_block = "Evidence:\n" + "\n\n".join(context_lines)
     textbook_block = format_fusion_evidence_block(fusion_evidence) if fusion_evidence else ""
     user_parts = [f"Question:\n{question}"]
@@ -983,6 +1240,8 @@ def _prepare_ask_v2_context(
     if plan_name == "textbook_first_then_paper":
         if structured_block:
             user_parts.append(structured_block)
+        if grounding_block:
+            user_parts.append(grounding_block)
         if textbook_block:
             user_parts.append(textbook_block)
         user_parts.append(evidence_block)
@@ -990,6 +1249,8 @@ def _prepare_ask_v2_context(
         user_parts.append(evidence_block)
         if structured_block:
             user_parts.append(structured_block)
+        if grounding_block:
+            user_parts.append(grounding_block)
         if textbook_block:
             user_parts.append(textbook_block)
     if knowledge_block:
