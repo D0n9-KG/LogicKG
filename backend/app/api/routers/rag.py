@@ -14,6 +14,10 @@ def _scope_payload(req: AskV2Request) -> dict | None:
     return req.scope.model_dump() if req.scope else None
 
 
+def _conversation_payload(req: AskV2Request) -> list[dict]:
+    return [turn.model_dump() for turn in req.conversation]
+
+
 @router.post("/ask_v2", response_model=AskV2Response)
 def rag_ask_v2(req: AskV2Request):
     try:
@@ -21,6 +25,7 @@ def rag_ask_v2(req: AskV2Request):
             req.question,
             k=req.k,
             scope=_scope_payload(req),
+            conversation=_conversation_payload(req),
             locale=req.locale,
             domain_prompt=req.domain_prompt,
         )
@@ -38,6 +43,7 @@ def rag_ask(req: AskV2Request):
             req.question,
             k=req.k,
             scope=_scope_payload(req),
+            conversation=_conversation_payload(req),
             locale=req.locale,
             domain_prompt=req.domain_prompt,
         )
@@ -60,6 +66,7 @@ def rag_ask_v2_stream(req: AskV2Request):
                 req.question,
                 k=req.k,
                 scope=_scope_payload(req),
+                conversation=_conversation_payload(req),
                 locale=req.locale,
                 domain_prompt=req.domain_prompt,
             ):

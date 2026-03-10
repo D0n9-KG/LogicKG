@@ -1,8 +1,21 @@
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://127.0.0.1:8000'
+const API_BASE_STORAGE_KEY = 'logickg.api.base'
 
-let resolvedApiUrl = API_URL.replace(/\/+$/, '')
+function readStoredApiUrl() {
+  if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') return ''
+  return String(sessionStorage.getItem(API_BASE_STORAGE_KEY) ?? '').trim().replace(/\/+$/, '')
+}
+
+function writeStoredApiUrl(baseUrl: string) {
+  if (!baseUrl || typeof window === 'undefined' || typeof sessionStorage === 'undefined') return
+  sessionStorage.setItem(API_BASE_STORAGE_KEY, baseUrl)
+}
+
+let resolvedApiUrl = readStoredApiUrl() || API_URL.replace(/\/+$/, '')
 let resolveApiPromise: Promise<string> | null = null
 let resolvedApiUrlVerified = false
+const apiSurfaceCache = new Map<string, Set<string> | null>()
+const apiUnsupportedPathCache = new Map<string, Set<string>>()
 
 function uniq(values: string[]) {
   return Array.from(new Set(values.map((v) => String(v || '').trim().replace(/\/+$/, '')).filter(Boolean)))
@@ -10,15 +23,16 @@ function uniq(values: string[]) {
 
 function candidateApiUrls() {
   const staticCandidates = ['http://127.0.0.1:8000', 'http://127.0.0.1:8001', 'http://localhost:8000', 'http://localhost:8001']
+  const stored = readStoredApiUrl()
 
-  if (typeof window === 'undefined') return uniq([API_URL, ...staticCandidates])
+  if (typeof window === 'undefined') return uniq([stored, resolvedApiUrl, API_URL, ...staticCandidates])
 
   const host = window.location.hostname || '127.0.0.1'
   const runtimeCandidates = [`http://${host}:8000`, `http://${host}:8001`]
   if (host === '127.0.0.1') runtimeCandidates.push('http://localhost:8000', 'http://localhost:8001')
   if (host === 'localhost') runtimeCandidates.push('http://127.0.0.1:8000', 'http://127.0.0.1:8001')
 
-  return uniq([API_URL, ...runtimeCandidates, ...staticCandidates])
+  return uniq([stored, resolvedApiUrl, API_URL, ...runtimeCandidates, ...staticCandidates])
 }
 
 const REQUIRED_API_PATHS = ['/graph/network', '/graph/papers', '/rag/ask_v2', '/textbooks']
@@ -31,6 +45,46 @@ function isCriticalApiPath(path: string) {
 function compatFallbackPath(path: string) {
   if (path.startsWith('/rag/ask_v2')) return path.replace('/rag/ask_v2', '/rag/ask')
   return null
+}
+
+function pathWithoutQuery(path: string) {
+  return String(path || '').split('?')[0] || ''
+}
+
+function specPathCandidates(path: string) {
+  const pathname = pathWithoutQuery(path)
+  if (!pathname) return []
+  if (/^\/textbooks\/[^/]+\/graph$/i.test(pathname)) return ['/textbooks/{textbook_id}/graph', pathname]
+  if (/^\/textbooks\/[^/]+\/chapters\/[^/]+\/graph$/i.test(pathname)) {
+    return ['/textbooks/{textbook_id}/chapters/{chapter_id}/graph', pathname]
+  }
+  return [pathname]
+}
+
+function isPathSupportedByCachedSurface(baseUrl: string, path: string): boolean | null {
+  const normalizedCandidates = specPathCandidates(path)
+  const unsupported = apiUnsupportedPathCache.get(baseUrl)
+  if (unsupported && normalizedCandidates.some((candidate) => unsupported.has(candidate))) {
+    return false
+  }
+
+  const surface = apiSurfaceCache.get(baseUrl)
+  if (!surface) return null
+  return normalizedCandidates.some((candidate) => surface.has(candidate))
+}
+
+function markPathUnsupported(baseUrl: string, path: string) {
+  const normalizedCandidates = specPathCandidates(path)
+  if (!normalizedCandidates.length) return
+  const cache = apiUnsupportedPathCache.get(baseUrl) ?? new Set<string>()
+  for (const candidate of normalizedCandidates) cache.add(candidate)
+  apiUnsupportedPathCache.set(baseUrl, cache)
+}
+
+function rememberResolvedApiUrl(baseUrl: string) {
+  resolvedApiUrl = baseUrl
+  resolvedApiUrlVerified = true
+  writeStoredApiUrl(baseUrl)
 }
 
 async function probeHealth(baseUrl: string) {
@@ -57,9 +111,11 @@ async function probeApiSurface(baseUrl: string) {
     if (!res.ok) return true
     const spec = (await res.json()) as { paths?: Record<string, unknown> }
     const pathKeys = Object.keys(spec.paths ?? {})
+    apiSurfaceCache.set(baseUrl, new Set(pathKeys))
     return REQUIRED_API_PATHS.every((p) => pathKeys.includes(p))
   } catch {
     // If OpenAPI probing fails, keep this candidate eligible based on health endpoint.
+    apiSurfaceCache.set(baseUrl, null)
     return true
   } finally {
     clearTimeout(timer)
@@ -96,11 +152,13 @@ function isNetworkFailure(error: unknown) {
 }
 
 async function fetchWithFailover(path: string, init?: RequestInit) {
-  const primary = resolvedApiUrlVerified ? resolvedApiUrl : await resolveApiUrl()
+  const primary = resolvedApiUrlVerified ? resolvedApiUrl : readStoredApiUrl() || await resolveApiUrl()
   const candidates = uniq([primary, ...candidateApiUrls()])
 
   let lastNetworkError: unknown = null
   for (const baseUrl of candidates) {
+    const support = isPathSupportedByCachedSurface(baseUrl, path)
+    if (support === false) continue
     try {
       const res = await fetch(`${baseUrl}${path}`, init)
       if (res.status === 404) {
@@ -108,14 +166,16 @@ async function fetchWithFailover(path: string, init?: RequestInit) {
         if (fallbackPath) {
           const fallbackRes = await fetch(`${baseUrl}${fallbackPath}`, init)
           if (fallbackRes.status !== 404) {
-            resolvedApiUrl = baseUrl
+            rememberResolvedApiUrl(baseUrl)
             return fallbackRes
           }
         }
-        if (isCriticalApiPath(path)) continue
+        if (isCriticalApiPath(path)) {
+          markPathUnsupported(baseUrl, path)
+          continue
+        }
       }
-      resolvedApiUrl = baseUrl
-      resolvedApiUrlVerified = true
+      rememberResolvedApiUrl(baseUrl)
       return res
     } catch (error: unknown) {
       if (!isNetworkFailure(error)) throw error

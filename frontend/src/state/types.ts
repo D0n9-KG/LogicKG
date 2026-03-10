@@ -182,6 +182,19 @@ export type AskItem = {
 }
 
 export type AskModuleState = {
+  sessions: AskSession[]
+  currentSessionId: string | null
+  history: AskItem[]
+  currentId: string | null
+  draftQuestion: string
+  draftK: number
+}
+
+export type AskSession = {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
   history: AskItem[]
   currentId: string | null
   draftQuestion: string
@@ -227,11 +240,14 @@ export type GlobalAction =
   | { type: 'PAPERS_SELECT'; paperId: string | null }
   | { type: 'PAPERS_SEARCH'; query: string }
   // Ask module
-  | { type: 'ASK_SET_DRAFT'; question?: string; k?: number }
-  | { type: 'ASK_ADD_ITEM'; item: AskItem }
-  | { type: 'ASK_UPDATE_ITEM'; id: string; patch: Partial<AskItem> }
-  | { type: 'ASK_SET_CURRENT'; id: string | null }
-  | { type: 'ASK_RESET_SESSION'; keepDraft?: boolean }
+  | { type: 'ASK_SET_DRAFT'; question?: string; k?: number; sessionId?: string }
+  | { type: 'ASK_CREATE_SESSION' }
+  | { type: 'ASK_SWITCH_SESSION'; sessionId: string }
+  | { type: 'ASK_DELETE_SESSION'; sessionId: string }
+  | { type: 'ASK_ADD_ITEM'; item: AskItem; sessionId?: string }
+  | { type: 'ASK_UPDATE_ITEM'; id: string; patch: Partial<AskItem>; sessionId?: string }
+  | { type: 'ASK_SET_CURRENT'; id: string | null; sessionId?: string }
+  | { type: 'ASK_RESET_SESSION'; keepDraft?: boolean; sessionId?: string }
   | { type: 'ASK_RESTORE'; ask: AskModuleState }
   // Evolution module
   | { type: 'EVOLUTION_SELECT_GROUP'; groupId: string | null }

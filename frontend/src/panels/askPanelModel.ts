@@ -38,6 +38,11 @@ export type AskResponseLike = {
   insufficient_scope_evidence?: unknown
 }
 
+export type AskConversationPayload = {
+  question: string
+  answer: string
+}
+
 export type EvidenceLike = {
   paper_id?: unknown
   paper_source?: unknown
@@ -180,6 +185,22 @@ export function buildChatMessages(turns: ConversationTurn[], locale: AskUiLocale
     })
   }
   return messages
+}
+
+export function buildConversationPayload(
+  history: AskItem[],
+  currentId: string | null,
+  locale: AskUiLocale = 'zh-CN',
+  limit = 4,
+): AskConversationPayload[] {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 4
+  return toConversationTurns(history, currentId)
+    .map((turn) => ({
+      question: normalize(turn.question),
+      answer: normalize(assistantTurnText(turn, locale)),
+    }))
+    .filter((turn) => turn.question && turn.answer)
+    .slice(-safeLimit)
 }
 
 export function shouldAutoRetryWithAllScope(scopeMode: AskScopeMode, response: AskResponseLike): boolean {

@@ -1,13 +1,14 @@
 import cytoscape from 'cytoscape'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n, type UILocale } from '../i18n'
 import { paperRefForAskScope } from '../paperRefs'
 import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNode } from '../state/types'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
-import Graph3D from './Graph3D'
 import { resolveGraphCanvasViewState } from './graphCanvasViewState'
 import { resolveGraphRenderPlan } from './graphRenderPlan'
+
+const Graph3D = lazy(() => import('./Graph3D'))
 
 type Props = {
   elements: GraphElement[]
@@ -2063,7 +2064,15 @@ export default function GraphCanvas({
 
       {show3D && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-          <Graph3D elements={filteredElements} onSelectNode={onSelectNode} transitioning={transitioning} />
+          <Suspense
+            fallback={(
+              <div className="kgCanvasOverlay is-loading" style={{ position: 'absolute', inset: 0 }}>
+                <div className="kgLoadingRing" />
+              </div>
+            )}
+          >
+            <Graph3D elements={filteredElements} onSelectNode={onSelectNode} transitioning={transitioning} />
+          </Suspense>
         </div>
       )}
       <div ref={containerRef} className="kgGraphContainer" style={{ visibility: show2D ? 'visible' : 'hidden' }} />

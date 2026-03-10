@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 // frontend/src/state/store.tsx
 import { createContext, useContext, useReducer, useCallback, type ReactNode } from 'react'
+import { createAskSession, deleteAskSession, deriveAskModuleState, mapAskSession, prependAskSession, switchAskSession } from './askSessions'
 import type { GlobalState, GlobalAction, ModuleId } from './types'
 
 export const INITIAL_STATE: GlobalState = {
@@ -13,7 +14,7 @@ export const INITIAL_STATE: GlobalState = {
   transitioning: false,
 
   papers: { selectedPaperId: null, searchQuery: '' },
-  ask: { history: [], currentId: null, draftQuestion: '', draftK: 8 },
+  ask: deriveAskModuleState([createAskSession()], null),
   evolution: { selectedGroupId: null, searchQuery: '' },
   textbooks: { selectedTextbookId: null, selectedChapterId: null },
 }
@@ -23,6 +24,9 @@ export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
     case 'SET_MODULE':
       return { ...state, activeModule: action.module, selectedNode: null }
     case 'SET_GRAPH':
+      if (state.graphElements === action.elements && state.graphLayout === action.layout) {
+        return state
+      }
       return {
         ...state,
         graphElements: action.elements,
@@ -55,43 +59,72 @@ export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
     case 'ASK_SET_DRAFT':
       return {
         ...state,
-        ask: {
-          ...state.ask,
-          draftQuestion: action.question ?? state.ask.draftQuestion,
-          draftK: action.k ?? state.ask.draftK,
-        },
+        ask: mapAskSession(state.ask, action.sessionId, (session) => ({
+          ...session,
+          draftQuestion: action.question ?? session.draftQuestion,
+          draftK: action.k ?? session.draftK,
+          updatedAt: Date.now(),
+        })),
+      }
+    case 'ASK_CREATE_SESSION':
+      return {
+        ...state,
+        ask: prependAskSession(state.ask, createAskSession()),
+      }
+    case 'ASK_SWITCH_SESSION':
+      return {
+        ...state,
+        ask: switchAskSession(state.ask, action.sessionId),
+      }
+    case 'ASK_DELETE_SESSION':
+      return {
+        ...state,
+        ask: deleteAskSession(state.ask, action.sessionId),
       }
     case 'ASK_ADD_ITEM':
-      return { ...state, ask: { ...state.ask, history: [action.item, ...state.ask.history].slice(0, 30) } }
+      return {
+        ...state,
+        ask: mapAskSession(state.ask, action.sessionId, (session) => ({
+          ...session,
+          title: session.title || action.item.question.slice(0, 42),
+          history: [action.item, ...session.history].slice(0, 30),
+          updatedAt: Date.now(),
+        })),
+      }
     case 'ASK_UPDATE_ITEM':
       return {
         ...state,
-        ask: {
-          ...state.ask,
-          history: state.ask.history.map((item) => (item.id === action.id ? { ...item, ...action.patch } : item)),
-        },
+        ask: mapAskSession(state.ask, action.sessionId, (session) => ({
+          ...session,
+          history: session.history.map((item) => (item.id === action.id ? { ...item, ...action.patch } : item)),
+          updatedAt: Date.now(),
+        })),
       }
     case 'ASK_SET_CURRENT':
-      return { ...state, ask: { ...state.ask, currentId: action.id } }
+      return {
+        ...state,
+        ask: mapAskSession(state.ask, action.sessionId, (session) => ({
+          ...session,
+          currentId: action.id,
+          updatedAt: Date.now(),
+        })),
+      }
     case 'ASK_RESET_SESSION':
       return {
         ...state,
-        ask: {
+        ask: mapAskSession(state.ask, action.sessionId, (session) => ({
+          ...session,
           history: [],
           currentId: null,
-          draftQuestion: action.keepDraft ? state.ask.draftQuestion : '',
-          draftK: action.keepDraft ? state.ask.draftK : 8,
-        },
+          draftQuestion: action.keepDraft ? session.draftQuestion : '',
+          draftK: action.keepDraft ? session.draftK : 8,
+          updatedAt: Date.now(),
+        })),
       }
     case 'ASK_RESTORE':
       return {
         ...state,
-        ask: {
-          history: action.ask.history.slice(0, 30),
-          currentId: action.ask.currentId,
-          draftQuestion: action.ask.draftQuestion,
-          draftK: action.ask.draftK,
-        },
+        ask: deriveAskModuleState(action.ask.sessions, action.ask.currentSessionId),
       }
 
     case 'EVOLUTION_SELECT_GROUP':

@@ -14,21 +14,15 @@ import {
 } from './rightPanelModel'
 import { paperRefForAskScope } from '../paperRefs'
 import { loadScope, saveScope } from '../scope'
+import { ASK_STORE_EVENT, ASK_STORE_KEY, getCurrentAskSession, readAskModuleStateFromStorage } from '../state/askSessions'
 import { useGlobalState } from '../state/store'
+import type { AskModuleState } from '../state/types'
 import { assistantTurnText, buildEvidenceStats, toConversationTurns } from '../panels/askPanelModel'
-
-type AskStoreSnapshot = {
-  currentId?: string
-  items: AskItem[]
-}
 
 type PaperPreviewApi = {
   logic_steps?: Array<{ step_type?: string; summary?: string }>
   claims?: Array<{ step_type?: string; text?: string }>
 }
-
-const ASK_STORE_KEY = 'logickg.ask.v1'
-const ASK_STORE_EVENT = 'logickg:ask_state_changed'
 
 type LocalizedText = {
   zh: string
@@ -165,18 +159,9 @@ function summarizeAskTurn(item: AskItem, locale: UILocale): string {
   return shortText(assistantTurnText(item, locale), 180)
 }
 
-function loadAskSnapshot(): AskStoreSnapshot | null {
-  try {
-    const raw = localStorage.getItem(ASK_STORE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { currentId?: string; items?: AskItem[] }
-    return {
-      currentId: typeof parsed.currentId === 'string' ? parsed.currentId : undefined,
-      items: Array.isArray(parsed.items) ? parsed.items : [],
-    }
-  } catch {
-    return null
-  }
+function loadAskSnapshot(): AskModuleState | null {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null
+  return readAskModuleStateFromStorage(localStorage.getItem(ASK_STORE_KEY))
 }
 
 type Props = {
@@ -194,7 +179,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
   const [askDetailTab, setAskDetailTab] = useState<'summary' | 'node' | 'evidence'>('summary')
   const [showRaw, setShowRaw] = useState(false)
   const [evidenceQuery, setEvidenceQuery] = useState('')
-  const [snapshot, setSnapshot] = useState<AskStoreSnapshot | null>(() => loadAskSnapshot())
+  const [snapshot, setSnapshot] = useState<AskModuleState | null>(() => loadAskSnapshot())
   const [paperPreview, setPaperPreview] = useState<{ logic: string[]; claims: string[] } | null>(null)
   const [paperPreviewLoading, setPaperPreviewLoading] = useState(false)
   const [paperPreviewError, setPaperPreviewError] = useState('')
@@ -240,24 +225,21 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
     }
   }, [])
 
+  const askCurrentSession = useMemo(() => {
+    return getCurrentAskSession(ask) ?? (snapshot ? getCurrentAskSession(snapshot) : null)
+  }, [ask, snapshot])
+
   const askCurrent = useMemo(() => {
-    const fromState =
-      (ask.currentId ? ask.history.find((item) => item.id === ask.currentId) : undefined) ?? ask.history[0]
-    if (fromState) return fromState
-
-    const snapshotItems = snapshot?.items ?? []
-    if (!snapshotItems.length) return undefined
-
-    if (snapshot?.currentId) {
-      const matched = snapshotItems.find((item) => item.id === snapshot.currentId)
-      if (matched) return matched
-    }
-    return snapshotItems[0]
-  }, [ask.currentId, ask.history, snapshot])
+    return (
+      (askCurrentSession?.currentId
+        ? askCurrentSession.history.find((item) => item.id === askCurrentSession.currentId)
+        : undefined) ?? askCurrentSession?.history[0]
+    )
+  }, [askCurrentSession])
 
   const askTurns = useMemo(
-    () => toConversationTurns(ask.history, ask.currentId).slice(-12),
-    [ask.currentId, ask.history],
+    () => toConversationTurns(askCurrentSession?.history ?? [], askCurrentSession?.currentId ?? null).slice(-12),
+    [askCurrentSession],
   )
 
   const askContext = useMemo(() => {

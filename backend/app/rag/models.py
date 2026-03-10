@@ -12,10 +12,19 @@ class Scope(BaseModel):
     paper_ids: list[str] | None = None
 
 
+class AskConversationTurn(BaseModel):
+    question: str = Field(min_length=1)
+    answer: str = Field(min_length=1)
+
+
 class AskV2Request(BaseModel):
     question: str = Field(min_length=1)
     k: int = Field(default=8, ge=1, le=20)
     scope: Scope | None = None
+    conversation: list[AskConversationTurn] = Field(
+        default_factory=list,
+        description="Recent prior turns for multi-turn follow-up disambiguation.",
+    )
     locale: str | None = Field(
         default=None,
         description="UI locale hint (e.g. zh-CN, en-US) for answer language control.",

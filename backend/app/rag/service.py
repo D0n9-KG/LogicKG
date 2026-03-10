@@ -376,6 +376,7 @@ def _build_system_prompt(domain_prompt: str | None = None, *, locale: str | None
             "引用证据时使用 [E1]、[E2] 这类证据编号。\n"
             "引用已验证主张时使用 [CL:abc123] 这类主张编号。\n"
             "有图谱上下文时，请结合引用关系、逻辑步骤和主张关系进行解释。\n"
+            "如提供了历史对话，仅将其用于消解追问中的指代，并以当前问题为准。\n"
             "除用户明确要求外，回答请使用简体中文。"
         )
     if not domain:
@@ -386,9 +387,54 @@ def _build_system_prompt(domain_prompt: str | None = None, *, locale: str | None
         "If evidence is insufficient, say what is missing.\n"
         "Cite evidence by referencing the evidence ids like [E1], [E2].\n"
         "When referencing validated claims, use their claim id like [CL:abc123].\n"
+        "When conversation history is provided, use it only to resolve follow-up references and prioritize the current question.\n"
         "When graph context is provided, use it to enrich your answer with "
         "structural relationships (citations, logic steps, claims)."
     )
+
+
+def _normalize_conversation_turns(
+    conversation: list[dict[str, Any]] | None,
+    *,
+    limit: int = 4,
+) -> list[dict[str, str]]:
+    safe_limit = max(1, min(8, int(limit or 4)))
+    normalized: list[dict[str, str]] = []
+    for row in conversation or []:
+        if not isinstance(row, dict):
+            continue
+        question = re.sub(r"\s+", " ", str(row.get("question") or "")).strip()
+        answer = re.sub(r"\s+", " ", str(row.get("answer") or "")).strip()
+        if not question or not answer:
+            continue
+        normalized.append({
+            "question": question[:400],
+            "answer": answer[:800],
+        })
+    return normalized[-safe_limit:]
+
+
+def _format_conversation_history(conversation: list[dict[str, str]] | None) -> str:
+    if not conversation:
+        return ""
+    lines = ["Conversation History:"]
+    for index, turn in enumerate(conversation, start=1):
+        lines.append(f"[Turn {index}]")
+        lines.append(f"User: {turn['question']}")
+        lines.append(f"Assistant: {turn['answer']}")
+    return "\n".join(lines)
+
+
+def _conversation_aware_question(question: str, conversation: list[dict[str, str]] | None) -> str:
+    current = str(question or "").strip()
+    if not conversation:
+        return current
+    lines = ["Conversation context:"]
+    for turn in conversation:
+        lines.append(f"User: {turn['question']}")
+        lines.append(f"Assistant: {turn['answer']}")
+    lines.append(f"Current question: {current}")
+    return "\n".join(lines)
 
 
 def _stringify_graph_value(value: Any, *, max_chars: int = 240) -> str:
@@ -985,6 +1031,7 @@ def _prepare_ask_v2_context(
     k: int = 8,
     scope: dict | None = None,
     *,
+    conversation: list[dict[str, Any]] | None = None,
     locale: str | None = None,
     domain_prompt: str | None = None,
 ) -> dict[str, Any]:
@@ -996,11 +1043,13 @@ def _prepare_ask_v2_context(
 
     allowed_sources = _allowed_paper_sources(scope)
     scope_paper = _single_scope_paper_context(scope)
-    raw_query_plan = plan_ask_query(question, scope=scope, locale=normalized_locale)
+    normalized_conversation = _normalize_conversation_turns(conversation)
+    planner_question = _conversation_aware_question(question, normalized_conversation)
+    raw_query_plan = plan_ask_query(planner_question, scope=scope, locale=normalized_locale)
     query_plan = (
         raw_query_plan
         if isinstance(raw_query_plan, AskQueryPlan)
-        else resolve_query_plan(question, raw_query_plan)
+        else resolve_query_plan(planner_question, raw_query_plan)
     )
     plan_name = str(getattr(query_plan.retrieval_plan, "value", query_plan.retrieval_plan) or "").strip()
     paper_query = _plan_text(query_plan, "paper_query", fallback=query_plan.main_query)
@@ -1185,7 +1234,7 @@ def _prepare_ask_v2_context(
     try:
         structured_evidence = list(
             retrieve_structured_evidence(
-                question=question,
+                question=planner_question,
                 query_plan=query_plan,
                 evidence=evidence,
                 allowed_sources=allowed_sources,
@@ -1233,7 +1282,11 @@ def _prepare_ask_v2_context(
     grounding_block = _format_grounding(grounding)
     evidence_block = "Evidence:\n" + "\n\n".join(context_lines)
     textbook_block = format_fusion_evidence_block(fusion_evidence) if fusion_evidence else ""
-    user_parts = [f"Question:\n{question}"]
+    user_parts: list[str] = []
+    conversation_block = _format_conversation_history(normalized_conversation)
+    if conversation_block:
+        user_parts.append(conversation_block)
+    user_parts.append(f"Question:\n{question}")
     scope_paper_block = _format_scope_paper_context(scope_paper)
     if scope_paper_block:
         user_parts.insert(1, scope_paper_block)
@@ -1303,11 +1356,19 @@ def ask_v2(
     k: int = 8,
     scope: dict | None = None,
     *,
+    conversation: list[dict[str, Any]] | None = None,
     locale: str | None = None,
     domain_prompt: str | None = None,
 ) -> dict:
     """Answer a question using hybrid retrieval (FAISS + lexical) with graph context."""
-    ctx = _prepare_ask_v2_context(question, k=k, scope=scope, locale=locale, domain_prompt=domain_prompt)
+    ctx = _prepare_ask_v2_context(
+        question,
+        k=k,
+        scope=scope,
+        conversation=conversation,
+        locale=locale,
+        domain_prompt=domain_prompt,
+    )
     early = ctx.get("early_response")
     if early:
         return dict(early)
@@ -1323,11 +1384,19 @@ def ask_v2_stream(
     k: int = 8,
     scope: dict | None = None,
     *,
+    conversation: list[dict[str, Any]] | None = None,
     locale: str | None = None,
     domain_prompt: str | None = None,
 ):
     """Stream answer deltas with final structured payload."""
-    ctx = _prepare_ask_v2_context(question, k=k, scope=scope, locale=locale, domain_prompt=domain_prompt)
+    ctx = _prepare_ask_v2_context(
+        question,
+        k=k,
+        scope=scope,
+        conversation=conversation,
+        locale=locale,
+        domain_prompt=domain_prompt,
+    )
     early = ctx.get("early_response")
     if early:
         yield "done", dict(early)

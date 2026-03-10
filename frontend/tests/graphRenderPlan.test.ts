@@ -32,4 +32,15 @@ describe('graphRenderPlan', () => {
     const relayout = reducer(merged, { type: 'RELAYOUT' })
     expect(relayout.graphUpdateReason).toBe('relayout')
   })
+
+  test('skips redundant graph replacement when the same graph payload is already active', () => {
+    const elements = [{ group: 'nodes', data: { id: 'paper:1', label: 'Paper 1', kind: 'paper' } }] as const
+    const withGraph = reducer(INITIAL_STATE, { type: 'SET_GRAPH', elements: [...elements], layout: 'cose' })
+    const previousTrigger = withGraph.layoutTrigger
+
+    const repeated = reducer(withGraph, { type: 'SET_GRAPH', elements: withGraph.graphElements, layout: 'cose' })
+
+    expect(repeated).toBe(withGraph)
+    expect(repeated.layoutTrigger).toBe(previousTrigger)
+  })
 })

@@ -12,9 +12,12 @@ from app.rag.service import (
     _format_graph_context,
     _format_structured_knowledge,
     _stringify_graph_value,
+    ask_v2,
+    ask_v2_stream,
     ground_structured_evidence,
     retrieve_structured_evidence,
 )
+from app.rag.models import EvidenceBundle
 
 
 # ── RRF fusion ──
@@ -1252,3 +1255,230 @@ def test_prepare_ask_v2_context_scope_uses_structured_hits_before_early_return(m
     assert "early_response" not in ctx
     assert ctx["bundle"].structured_evidence[0].source_id == "cl-1"
     assert ctx["bundle"].insufficient_scope_evidence is False
+
+
+def test_prepare_ask_v2_context_includes_recent_conversation_history(monkeypatch):
+    class _Doc:
+        def __init__(self):
+            self.page_content = "Finite element method is used."
+            self.metadata = {
+                "chunk_id": "c1",
+                "paper_source": "paper-A",
+                "paper_title": "Paper A",
+                "md_path": "runs/paper-A/content.md",
+                "start_line": 1,
+                "end_line": 5,
+                "section": "Method",
+                "kind": "chunk",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, question, k=0):
+            return [(_Doc(), 0.91)]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return []
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {"logic_steps": [], "claims": []}
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return []
+
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: _FakeStore())
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    ctx = _prepare_ask_v2_context(
+        "How does that compare to the baseline?",
+        k=4,
+        conversation=[
+            {"question": "What method is used?", "answer": "The paper uses FEM."},
+            {"question": "Why does it help?", "answer": "It stabilizes the mesh discretization."},
+        ],
+    )
+
+    assert "Conversation History" in ctx["user"]
+    assert "User: What method is used?" in ctx["user"]
+    assert "Assistant: The paper uses FEM." in ctx["user"]
+    assert "How does that compare to the baseline?" in ctx["user"]
+
+
+def test_prepare_ask_v2_context_uses_conversation_when_planning_follow_up_queries(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _Doc:
+        def __init__(self):
+            self.page_content = "Finite element method is used."
+            self.metadata = {
+                "chunk_id": "c1",
+                "paper_source": "paper-A",
+                "paper_title": "Paper A",
+                "md_path": "runs/paper-A/content.md",
+                "start_line": 1,
+                "end_line": 5,
+                "section": "Method",
+                "kind": "chunk",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, question, k=0):
+            captured["retrieval_query"] = question
+            return [(_Doc(), 0.91)]
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_citation_context_by_paper_source(self, paper_sources, limit=50):
+            return []
+
+        def get_structured_knowledge_for_papers(self, paper_sources):
+            return {"logic_steps": [], "claims": []}
+
+        def list_fusion_basics_by_paper_sources(self, paper_sources, limit=200):
+            return []
+
+    def _fake_plan(question, scope=None, locale=None):
+        captured["planner_question"] = question
+        return {
+            "intent": "paper_detail",
+            "retrieval_plan": "paper_first_then_textbook",
+            "main_query": question,
+            "paper_query": question,
+        }
+
+    monkeypatch.setattr("app.rag.service.plan_ask_query", _fake_plan, raising=False)
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: _FakeStore())
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    _prepare_ask_v2_context(
+        "How does that compare?",
+        k=4,
+        conversation=[
+            {"question": "What method is used?", "answer": "The paper uses FEM."},
+        ],
+    )
+
+    assert "What method is used?" in str(captured["planner_question"])
+    assert "The paper uses FEM." in str(captured["planner_question"])
+    assert "How does that compare?" in str(captured["planner_question"])
+    assert "How does that compare?" in str(captured["retrieval_query"])
+
+
+def test_ask_v2_passes_conversation_to_context_builder(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_prepare(question, k=8, scope=None, locale=None, domain_prompt=None, conversation=None):
+        captured["question"] = question
+        captured["conversation"] = conversation
+        return {
+            "api_key": "fake-key",
+            "base_url": "https://example.invalid/v1",
+            "system": "system",
+            "user": "user",
+            "bundle": EvidenceBundle(answer="") if False else EvidenceBundle(),
+        }
+
+    class _FakeLLM:
+        def invoke(self, messages):
+            return SimpleNamespace(content="ok")
+
+    monkeypatch.setattr("app.rag.service._prepare_ask_v2_context", _fake_prepare)
+    monkeypatch.setattr("app.rag.service._build_rag_llm", lambda api_key, base_url: _FakeLLM())
+
+    response = ask_v2(
+        "Follow-up question",
+        conversation=[{"question": "Earlier", "answer": "Earlier answer"}],
+    )
+
+    assert response["answer"] == "ok"
+    assert captured["question"] == "Follow-up question"
+    assert captured["conversation"] == [{"question": "Earlier", "answer": "Earlier answer"}]
+
+
+def test_ask_v2_stream_passes_conversation_to_context_builder(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_prepare(question, k=8, scope=None, locale=None, domain_prompt=None, conversation=None):
+        captured["question"] = question
+        captured["conversation"] = conversation
+        return {
+            "api_key": "fake-key",
+            "base_url": "https://example.invalid/v1",
+            "system": "system",
+            "user": "user",
+            "bundle": EvidenceBundle(),
+        }
+
+    class _FakeLLM:
+        def stream(self, messages):
+            yield SimpleNamespace(content="part-1")
+            yield SimpleNamespace(content="part-2")
+
+    monkeypatch.setattr("app.rag.service._prepare_ask_v2_context", _fake_prepare)
+    monkeypatch.setattr("app.rag.service._build_rag_llm", lambda api_key, base_url: _FakeLLM())
+    monkeypatch.setattr("app.rag.service._stream_chunk_text", lambda chunk: str(chunk.content))
+
+    events = list(
+        ask_v2_stream(
+            "Follow-up question",
+            conversation=[{"question": "Earlier", "answer": "Earlier answer"}],
+        )
+    )
+
+    assert events[0] == ("delta", {"delta": "part-1"})
+    assert events[1] == ("delta", {"delta": "part-2"})
+    assert events[2][0] == "done"
+    assert events[2][1]["answer"] == "part-1part-2"
+    assert captured["question"] == "Follow-up question"
+    assert captured["conversation"] == [{"question": "Earlier", "answer": "Earlier answer"}]

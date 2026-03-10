@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useGlobalState } from '../state/store'
-import OverviewPanel from '../panels/OverviewPanel'
-import PapersPanel from '../panels/PapersPanel'
-import AskPanel from '../panels/AskPanel'
-import TextbooksPanel from '../panels/TextbooksPanel'
-import OpsPanel from '../panels/OpsPanel'
+
+const OverviewPanel = lazy(() => import('../panels/OverviewPanel'))
+const PapersPanel = lazy(() => import('../panels/PapersPanel'))
+const AskPanel = lazy(() => import('../panels/AskPanel'))
+const TextbooksPanel = lazy(() => import('../panels/TextbooksPanel'))
+const OpsPanel = lazy(() => import('../panels/OpsPanel'))
 
 const PANEL_ICONS: Record<string, string> = {
   overview: 'O',
@@ -53,11 +54,9 @@ export default function LeftPanel({ collapsed, floating = false, onToggle }: Pro
             {PANEL_ICONS[activeModule] ?? 'M'}
           </button>
         </div>
-        {floating ? (
-          <div aria-hidden="true" style={{ display: 'none' }}>
-            {renderContent()}
-          </div>
-        ) : null}
+        <div aria-hidden="true" style={{ display: 'none' }}>
+          <Suspense fallback={null}>{renderContent()}</Suspense>
+        </div>
       </aside>
     )
   }
@@ -85,7 +84,24 @@ export default function LeftPanel({ collapsed, floating = false, onToggle }: Pro
           {'<'}
         </button>
       </div>
-      <div className={`kgPanelContent${transitioning ? ' is-transitioning' : ''}`}>{renderContent()}</div>
+      <div className={`kgPanelContent${transitioning ? ' is-transitioning' : ''}`}>
+        <Suspense fallback={<PanelFallback label={activeModule.toUpperCase()} message={t('姝ｅ湪鍔犺浇妯″潡...', 'Loading module...')} />}>
+          {renderContent()}
+        </Suspense>
+      </div>
     </aside>
+  )
+}
+
+function PanelFallback({ label, message }: { label: string; message: string }) {
+  return (
+    <div className="kgPanelBody kgStack" aria-busy="true">
+      <div className="kgCard">
+        <div className="kgCardTitle">{label}</div>
+        <div className="text-faint" style={{ fontSize: 11 }}>
+          {message}
+        </div>
+      </div>
+    </div>
   )
 }

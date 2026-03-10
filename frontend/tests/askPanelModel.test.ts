@@ -4,6 +4,7 @@ import type { AskItem } from '../src/state/types'
 import {
   assistantTurnText,
   buildChatMessages,
+  buildConversationPayload,
   buildEvidenceStats,
   buildScopePaperOptions,
   getScopePaperRenderState,
@@ -65,6 +66,24 @@ describe('askPanelModel', () => {
     expect(messages.find((item) => item.id === 't2:assistant')?.status).toBe('running')
     expect(messages.find((item) => item.id === 't2:assistant')?.active).toBe(true)
     expect(messages.find((item) => item.id === 't2:assistant')?.k).toBe(8)
+  })
+
+  test('buildConversationPayload serializes recent completed turns for multi-turn requests', () => {
+    const history: AskItem[] = [
+      { id: 't4', question: 'Follow-up 4', k: 8, createdAt: 400, status: 'done', answer: 'Answer 4' },
+      { id: 't3', question: 'Follow-up 3', k: 8, createdAt: 300, status: 'done', answer: 'Answer 3' },
+      { id: 't2', question: 'Follow-up 2', k: 8, createdAt: 200, status: 'error', error: 'temporary failure' },
+      { id: 't1', question: 'Follow-up 1', k: 8, createdAt: 100, status: 'done', answer: 'Answer 1' },
+      { id: 'blank', question: '   ', k: 8, createdAt: 50, status: 'done', answer: 'ignored' },
+    ]
+
+    const payload = buildConversationPayload(history, 't4', 'en-US', 3)
+
+    expect(payload).toEqual([
+      { question: 'Follow-up 2', answer: 'temporary failure' },
+      { question: 'Follow-up 3', answer: 'Answer 3' },
+      { question: 'Follow-up 4', answer: 'Answer 4' },
+    ])
   })
 
   test('shouldAutoRetryWithAllScope respects explicit user scope selections', () => {

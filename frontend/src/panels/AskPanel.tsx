@@ -5,9 +5,11 @@ import { useI18n } from '../i18n'
 import { resolveAskGraph, type AskApiResponse } from '../loaders/ask'
 import { loadOverviewGraph } from '../loaders/overview'
 import { loadScope, saveScope, scopeLabel, type Scope } from '../scope'
+import { ASK_STORE_EVENT, ASK_STORE_KEY, getCurrentAskSession, isAskStatePristine, readAskModuleStateFromStorage, serializeAskModuleState } from '../state/askSessions'
 import { useGlobalState } from '../state/store'
-import type { AskItem, AskModuleState, GraphElement } from '../state/types'
+import type { AskItem, AskSession, GraphElement } from '../state/types'
 import {
+  buildConversationPayload,
   buildChatMessages,
   assistantTurnText,
   buildScopePaperOptions,
@@ -18,8 +20,6 @@ import {
   type ScopePaperApiRow,
 } from './askPanelModel'
 
-const ASK_STORE_KEY = 'logickg.ask.v1'
-const ASK_STORE_EVENT = 'logickg:ask_state_changed'
 const OVERVIEW_GRAPH_PAPER_LIMIT = 400
 const OVERVIEW_GRAPH_EDGE_LIMIT = 1200
 const SCOPE_LIST_PAGE_SIZE = 120
@@ -145,61 +145,24 @@ async function streamAskRequest(
 }
 
 function emitAskStoreChanged() {
+  if (typeof window === 'undefined') return
   window.dispatchEvent(new Event(ASK_STORE_EVENT))
 }
 
-function readAskStore(): AskModuleState | null {
-  try {
-    const raw = localStorage.getItem(ASK_STORE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as {
-      draft?: { question?: string; k?: number }
-      currentId?: string
-      items?: AskItem[]
-    }
-
-    const history = Array.isArray(parsed.items)
-      ? parsed.items
-          .filter((item) => item && typeof item.id === 'string' && item.id.trim())
-          .map((item) => ({
-            ...item,
-            question: String(item.question ?? ''),
-            k: clampK(item.k),
-            createdAt: Number(item.createdAt ?? Date.now()),
-            status:
-              item.status === 'done' || item.status === 'error' || item.status === 'running'
-                ? item.status
-                : 'done',
-          }))
-          .slice(0, 30)
-      : []
-
-    const currentId =
-      typeof parsed.currentId === 'string'
-        ? parsed.currentId
-        : history.length
-          ? history[0].id
-          : null
-
-    return {
-      history,
-      currentId,
-      draftQuestion: String(parsed.draft?.question ?? ''),
-      draftK: clampK(parsed.draft?.k),
-    }
-  } catch {
-    return null
-  }
+function persistAskStore(serialized: string) {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return
+  localStorage.setItem(ASK_STORE_KEY, serialized)
+  emitAskStoreChanged()
 }
 
-function persistAskStore(ask: AskModuleState) {
-  const payload = {
-    draft: { question: ask.draftQuestion, k: clampK(ask.draftK) },
-    currentId: ask.currentId ?? undefined,
-    items: ask.history,
-  }
-  localStorage.setItem(ASK_STORE_KEY, JSON.stringify(payload))
-  emitAskStoreChanged()
+function sessionTitle(session: AskSession, fallback: string) {
+  return normalizeText(session.title) || fallback
+}
+
+function sessionPreview(session: AskSession, locale: 'zh-CN' | 'en-US') {
+  const latest = session.history[0]
+  if (latest) return normalizeText(latest.question) || assistantTurnText(latest, locale)
+  return normalizeText(session.draftQuestion)
 }
 
 function toRequestScope(scope: Scope): { mode: 'all' } | { mode: 'collection'; collection_id: string } | { mode: 'papers'; paper_ids: string[] } {
@@ -229,13 +192,16 @@ export default function AskPanel() {
   const [paperCatalogLoading, setPaperCatalogLoading] = useState(false)
   const [paperCatalogError, setPaperCatalogError] = useState('')
 
+  const currentSession = useMemo(() => getCurrentAskSession(ask), [ask])
   const current = useMemo(() => {
-    if (ask.currentId) {
-      const matched = ask.history.find((item) => item.id === ask.currentId)
+    const sessionHistory = currentSession?.history ?? []
+    const sessionCurrentId = currentSession?.currentId ?? null
+    if (sessionCurrentId) {
+      const matched = sessionHistory.find((item) => item.id === sessionCurrentId)
       if (matched) return matched
     }
-    return ask.history[0]
-  }, [ask.currentId, ask.history])
+    return sessionHistory[0]
+  }, [currentSession])
   const hasGraphNodes = useMemo(
     () => state.graphElements.some((item) => item.group === 'nodes'),
     [state.graphElements],
@@ -243,8 +209,8 @@ export default function AskPanel() {
 
   const busy = current?.status === 'running'
   const conversationTurns = useMemo(
-    () => toConversationTurns(ask.history, ask.currentId),
-    [ask.currentId, ask.history],
+    () => toConversationTurns(currentSession?.history ?? [], currentSession?.currentId ?? null),
+    [currentSession],
   )
   const chatMessages = useMemo(() => buildChatMessages(conversationTurns, locale), [conversationTurns, locale])
   const latestChatMessageText = chatMessages[chatMessages.length - 1]?.text ?? ''
@@ -260,23 +226,22 @@ export default function AskPanel() {
     if (hydratedRef.current) return
     hydratedRef.current = true
 
-    const hasRuntimeState =
-      ask.history.length > 0 || ask.currentId !== null || ask.draftQuestion.trim().length > 0 || ask.draftK !== 8
-    if (hasRuntimeState) return
+    if (!isAskStatePristine(ask)) return
 
-    const restored = readAskStore()
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return
+    const restored = readAskModuleStateFromStorage(localStorage.getItem(ASK_STORE_KEY))
     if (!restored) return
     dispatch({ type: 'ASK_RESTORE', ask: restored })
-  }, [ask.currentId, ask.draftK, ask.draftQuestion, ask.history.length, dispatch])
+  }, [ask, dispatch])
 
   useEffect(() => {
-    persistAskStore(ask)
+    persistAskStore(serializeAskModuleState(ask))
   }, [ask])
 
   useEffect(() => {
-    if (ask.currentId || ask.history.length === 0) return
-    dispatch({ type: 'ASK_SET_CURRENT', id: ask.history[0].id })
-  }, [ask.currentId, ask.history, dispatch])
+    if (ask.currentId || ask.history.length === 0 || !ask.currentSessionId) return
+    dispatch({ type: 'ASK_SET_CURRENT', id: ask.history[0].id, sessionId: ask.currentSessionId })
+  }, [ask.currentId, ask.currentSessionId, ask.history, dispatch])
 
   useEffect(() => {
     let cancelled = false
@@ -436,6 +401,7 @@ export default function AskPanel() {
     async (question: string, k: number, requestedScope: Scope) => {
       if (!question.trim() || busy) return
 
+      const sessionId = ask.currentSessionId ?? currentSession?.id ?? null
       const id = makeId()
       const item: AskItem = {
         id,
@@ -460,12 +426,17 @@ export default function AskPanel() {
         error: '',
       }
 
-      dispatch({ type: 'ASK_ADD_ITEM', item })
-      dispatch({ type: 'ASK_SET_CURRENT', id })
+      dispatch({ type: 'ASK_ADD_ITEM', item, sessionId: sessionId ?? undefined })
+      dispatch({ type: 'ASK_SET_CURRENT', id, sessionId: sessionId ?? undefined })
       dispatch({ type: 'SET_SELECTED', node: null })
 
       try {
-        const payload = { question: question.trim(), k: clampK(k), locale }
+        const payload = {
+          question: question.trim(),
+          k: clampK(k),
+          locale,
+          conversation: buildConversationPayload(currentSession?.history ?? [], currentSession?.currentId ?? null, locale),
+        }
 
         const requestWithStreaming = async (scopePayload: ReturnType<typeof toRequestScope>) => {
           let streamedAnswer = ''
@@ -480,6 +451,7 @@ export default function AskPanel() {
                 dispatch({
                   type: 'ASK_UPDATE_ITEM',
                   id,
+                  sessionId: sessionId ?? undefined,
                   patch: {
                     status: 'running',
                     answer: streamedAnswer,
@@ -508,6 +480,7 @@ export default function AskPanel() {
           dispatch({
             type: 'ASK_UPDATE_ITEM',
             id,
+            sessionId: sessionId ?? undefined,
             patch: {
               status: 'running',
               answer: '',
@@ -547,6 +520,7 @@ export default function AskPanel() {
         dispatch({
           type: 'ASK_UPDATE_ITEM',
           id,
+          sessionId: sessionId ?? undefined,
           patch: {
             status: 'done',
             answer: response.answer ?? '',
@@ -570,6 +544,7 @@ export default function AskPanel() {
         dispatch({
           type: 'ASK_UPDATE_ITEM',
           id,
+          sessionId: sessionId ?? undefined,
           patch: {
             status: 'error',
             error: String((error as { message?: unknown } | null)?.message ?? error),
@@ -577,7 +552,7 @@ export default function AskPanel() {
         })
       }
     },
-    [busy, dispatch, locale, t],
+    [ask.currentSessionId, busy, currentSession?.id, dispatch, locale, t],
   )
   const submitAsk = useCallback(async () => {
     const question = ask.draftQuestion.trim()
@@ -599,7 +574,7 @@ export default function AskPanel() {
 
   const startNewSessionWithAllGraph = useCallback(() => {
     saveScope({ mode: 'all' })
-    dispatch({ type: 'ASK_RESET_SESSION', keepDraft: false })
+    dispatch({ type: 'ASK_CREATE_SESSION' })
     dispatch({ type: 'SET_SELECTED', node: null })
     dispatch({ type: 'SET_TRANSITIONING', value: true })
     setScopeQuery('')
@@ -609,12 +584,62 @@ export default function AskPanel() {
   const retryCurrentOnAllScope = useCallback(async () => {
     if (!current || busy) return
     saveScope({ mode: 'all' })
-    dispatch({ type: 'ASK_SET_DRAFT', question: current.question, k: current.k })
+    dispatch({ type: 'ASK_SET_DRAFT', question: current.question, k: current.k, sessionId: currentSession?.id })
     await submitQuestion(current.question, current.k, { mode: 'all' })
-  }, [busy, current, dispatch, submitQuestion])
+  }, [busy, current, currentSession?.id, dispatch, submitQuestion])
+
+  const deleteSession = useCallback(
+    (sessionId: string) => {
+      dispatch({ type: 'ASK_DELETE_SESSION', sessionId })
+      dispatch({ type: 'SET_SELECTED', node: null })
+      dispatch({ type: 'SET_TRANSITIONING', value: true })
+    },
+    [dispatch],
+  )
 
   return (
     <div className="kgPanelBody kgStack kgAskChatShell">
+      <div className="kgAskPanelSection">
+        <div className="kgSectionTitle" style={{ marginTop: 0 }}>
+          {t('历史会话', 'Sessions')}
+        </div>
+        <div className="kgStack kgAskHistoryList">
+          {ask.sessions.map((session) => {
+            const active = currentSession?.id === session.id
+            const title = sessionTitle(session, t('新会话', 'New Session'))
+            const preview = sessionPreview(session, locale) || t('暂无内容', 'No turns yet')
+            return (
+              <div key={session.id} className={`kgListItem${active ? ' is-active' : ''} kgAskHistoryItem`}>
+                <div className="kgAskSessionRow">
+                  <button
+                    type="button"
+                    className="kgAskSessionMain"
+                    disabled={busy}
+                    onClick={() => dispatch({ type: 'ASK_SWITCH_SESSION', sessionId: session.id })}
+                  >
+                    <div className="kgListItemTitle truncate">{title}</div>
+                    <div className="kgListItemMeta truncate">{preview}</div>
+                    <div className="kgListItemMeta">
+                      <span>{t('轮次', 'Turns')}: {session.history.length}</span>
+                      <span>{new Date(session.updatedAt).toLocaleString(locale)}</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="kgBtn kgBtn--sm"
+                    disabled={busy}
+                    onClick={() => deleteSession(session.id)}
+                    title={t('删除会话', 'Delete session')}
+                  >
+                    {t('删除', 'Delete')}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       <div className="kgAskPanelSection kgAskConversationSection">
         <div className="kgSectionTitle" style={{ marginTop: 0 }}>
           {t('对话助手', 'Conversation')}
@@ -872,4 +897,3 @@ export default function AskPanel() {
     </div>
   )
 }
-

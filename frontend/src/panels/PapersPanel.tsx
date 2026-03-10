@@ -15,6 +15,7 @@ import { saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import { loadPaperNeighborhood } from '../loaders/papers'
 import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
+import { derivePapersEntryGraph, shouldHydratePapersOverviewGraph } from './papersPanelModel'
 
 export default function PapersPanel() {
   const { state, dispatch, switchModule } = useGlobalState()
@@ -38,6 +39,14 @@ export default function PapersPanel() {
   const [collEditMode, setCollEditMode] = useState<'create' | 'rename'>('create')
   const [collEditName, setCollEditName] = useState('')
   const [collEditBusy, setCollEditBusy] = useState(false)
+  const entryGraphElements = useMemo(
+    () => derivePapersEntryGraph(state.graphElements, papers.selectedPaperId),
+    [papers.selectedPaperId, state.graphElements],
+  )
+  const shouldHydrateEntryGraph = useMemo(
+    () => shouldHydratePapersOverviewGraph(state.graphElements, papers.selectedPaperId),
+    [papers.selectedPaperId, state.graphElements],
+  )
 
   const reloadCollections = useCallback(async () => {
     setCollections(await loadPaperCollections())
@@ -54,16 +63,37 @@ export default function PapersPanel() {
     }
   }, [collectionFilter])
 
-  // Load graph on mount
+  // Let the panel render first, then refresh the paper overview graph in the background if needed.
   useEffect(() => {
     let cancelled = false
-    dispatch({ type: 'SET_TRANSITIONING', value: true })
-    loadOverviewGraph(200, 600, { includeTextbooks: false })
-      .then((els) => { if (!cancelled) dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' }) })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) dispatch({ type: 'SET_TRANSITIONING', value: false }) })
-    return () => { cancelled = true }
-  }, [dispatch])
+    let hydrateTimer = 0
+
+    dispatch({ type: 'SET_TRANSITIONING', value: false })
+
+    if (entryGraphElements && entryGraphElements !== state.graphElements) {
+      dispatch({ type: 'SET_GRAPH', elements: entryGraphElements, layout: 'cose' })
+    }
+
+    if (!shouldHydrateEntryGraph) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    hydrateTimer = window.setTimeout(() => {
+      void loadOverviewGraph(200, 600, { includeTextbooks: false })
+        .then((els) => {
+          if (cancelled || selectReqRef.current) return
+          dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
+        })
+        .catch(() => {})
+    }, 120)
+
+    return () => {
+      cancelled = true
+      if (hydrateTimer) window.clearTimeout(hydrateTimer)
+    }
+  }, [dispatch, entryGraphElements, shouldHydrateEntryGraph, state.graphElements])
 
   useEffect(() => { reloadCollections().catch(() => {}) }, [reloadCollections])
   useEffect(() => { reloadPapers().catch(() => {}) }, [reloadPapers])
