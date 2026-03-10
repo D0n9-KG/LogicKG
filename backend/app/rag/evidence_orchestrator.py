@@ -46,3 +46,50 @@ def merge_evidence(
     if lexical:
         return _rrf_fuse([faiss, lexical])[:want]
     return list(faiss[:want])
+
+
+def merge_structured_channels(
+    *,
+    channels: list[tuple[str, list[dict[str, Any]]]],
+    k: int,
+) -> list[dict[str, Any]]:
+    """Merge heterogeneous structured channels with deterministic round-robin fairness."""
+    want = max(1, int(k))
+    queues: list[tuple[str, list[dict[str, Any]]]] = [
+        (str(name), [dict(row) for row in rows if isinstance(row, dict)])
+        for name, rows in channels
+        if rows
+    ]
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    while queues and len(out) < want:
+        next_queues: list[tuple[str, list[dict[str, Any]]]] = []
+        for name, rows in queues:
+            chosen: dict[str, Any] | None = None
+            while rows:
+                candidate = rows.pop(0)
+                kind = str(candidate.get("kind") or name or "structured").strip() or "structured"
+                ident = (
+                    str(candidate.get("source_id") or "").strip()
+                    or str(candidate.get("id") or "").strip()
+                    or str(candidate.get("chunk_id") or "").strip()
+                )
+                if not ident:
+                    continue
+                key = (kind, ident)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidate["kind"] = kind
+                chosen = candidate
+                break
+            if chosen is not None:
+                out.append(chosen)
+                if len(out) >= want:
+                    return out
+            if rows:
+                next_queues.append((name, rows))
+        queues = next_queues
+
+    return out

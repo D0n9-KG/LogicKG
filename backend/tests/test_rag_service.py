@@ -12,6 +12,7 @@ from app.rag.service import (
     _format_graph_context,
     _format_structured_knowledge,
     _stringify_graph_value,
+    retrieve_structured_evidence,
 )
 
 
@@ -819,3 +820,96 @@ def test_prepare_ask_v2_context_falls_back_when_planner_returns_invalid_dict(mon
     assert bundle_dump["query_plan"]["intent"] == "paper_detail"
     assert bundle_dump["query_plan"]["retrieval_plan"] == "paper_first_then_textbook"
     assert bundle_dump["query_plan"]["main_query"] == "What assumptions does FEM make?"
+
+
+def test_retrieve_structured_evidence_claim_first_prefers_claims_and_logic(monkeypatch):
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_logic_steps",
+        lambda query, k, allowed_sources=None: [
+            {"kind": "logic_step", "source_id": "ls-1", "text": "Method: uses FEM.", "score": 0.81, "paper_source": "paper-A"}
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_claims",
+        lambda query, k, allowed_sources=None: [
+            {"kind": "claim", "source_id": "cl-1", "text": "Result: FEM improves stability.", "score": 0.9, "paper_source": "paper-A"}
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_propositions",
+        lambda query, k, allowed_sources=None: [
+            {"kind": "proposition", "source_id": "pr-1", "text": "Canonical FEM proposition.", "score": 0.7}
+        ],
+        raising=False,
+    )
+
+    rows = retrieve_structured_evidence(
+        question="What method and results does this paper report?",
+        query_plan={
+            "intent": "paper_detail",
+            "retrieval_plan": "claim_first",
+            "main_query": "fem method results",
+            "paper_query": "fem method results in this paper",
+            "proposition_query": "fem method result proposition",
+        },
+        evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/example"}],
+        allowed_sources={"paper-A"},
+        k=4,
+        fusion_rows=[],
+    )
+
+    assert [row["kind"] for row in rows[:2]] == ["claim", "logic_step"]
+
+
+def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(monkeypatch):
+    monkeypatch.setattr("app.rag.service.retrieve_logic_steps", lambda *args, **kwargs: [], raising=False)
+    monkeypatch.setattr("app.rag.service.retrieve_claims", lambda *args, **kwargs: [], raising=False)
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_propositions",
+        lambda query, k, allowed_sources=None: [
+            {
+                "kind": "proposition",
+                "source_id": "pr-1",
+                "proposition_id": "pr-1",
+                "text": "Finite element discretization stabilizes PDE solving.",
+                "score": 0.79,
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+            }
+        ],
+        raising=False,
+    )
+
+    rows = retrieve_structured_evidence(
+        question="What are the assumptions of finite element method?",
+        query_plan={
+            "intent": "foundational",
+            "retrieval_plan": "textbook_first_then_paper",
+            "main_query": "finite element method assumptions",
+            "paper_query": "finite element method assumptions in this paper",
+            "textbook_query": "finite element method definition assumptions discretization",
+            "proposition_query": "finite element method assumptions proposition",
+        },
+        evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/example"}],
+        allowed_sources=None,
+        k=4,
+        fusion_rows=[
+            {
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/example",
+                "step_type": "Method",
+                "entity_id": "ent-1",
+                "entity_name": "Finite Element Method",
+                "entity_type": "method",
+                "description": "A numerical method for PDE discretization.",
+                "score": 0.83,
+                "rank_score": 0.91,
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+            }
+        ],
+    )
+
+    assert [row["kind"] for row in rows[:2]] == ["textbook", "proposition"]

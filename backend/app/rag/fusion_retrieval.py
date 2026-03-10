@@ -81,6 +81,41 @@ def rank_fusion_basics(
     return scored[: max(1, int(k))]
 
 
+def fusion_rows_to_structured_hits(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        entity_id = str(row.get("entity_id") or "").strip()
+        entity_name = _normalize_text(str(row.get("entity_name") or ""))
+        description = _normalize_text(str(row.get("description") or ""))
+        if not entity_id or not (entity_name or description):
+            continue
+        text = entity_name
+        if description:
+            text = f"{entity_name}: {description}" if entity_name else description
+        try:
+            score = float(row.get("rank_score") or row.get("score") or 0.0)
+        except Exception:
+            score = 0.0
+        hits.append(
+            {
+                "kind": "textbook",
+                "source_id": entity_id,
+                "id": entity_id,
+                "text": text,
+                "score": score,
+                "paper_source": str(row.get("paper_source") or "").strip() or None,
+                "paper_id": str(row.get("paper_id") or "").strip() or None,
+                "source_kind": "textbook_entity",
+                "source_ref_id": entity_id,
+                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+                "chapter_id": str(row.get("chapter_id") or row.get("source_chapter_id") or "").strip() or None,
+            }
+        )
+    return hits
+
+
 def format_fusion_evidence_block(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "Textbook Fundamentals:\n- (none)"

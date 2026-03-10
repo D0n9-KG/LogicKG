@@ -10,15 +10,22 @@ from langchain_openai import ChatOpenAI
 
 from app.graph.neo4j_client import Neo4jClient
 from app.ingest.paper_meta import load_canonical_meta
-from app.rag.evidence_orchestrator import _rrf_fuse, merge_evidence
+from app.rag.evidence_orchestrator import _rrf_fuse, merge_evidence, merge_structured_channels
 from app.rag.models import AskQueryPlan, EvidenceBundle
 from app.rag.fusion_retrieval import (
     format_fusion_evidence_block,
+    fusion_rows_to_structured_hits,
     has_dual_evidence,
     rank_fusion_basics,
 )
 from app.rag.planner import plan_ask_query, resolve_query_plan
 from app.rag.retrieval import latest_run_dir, load_chunks_from_run, lexical_retrieve
+from app.rag.structured_retrieval import (
+    normalize_structured_rows,
+    retrieve_claims,
+    retrieve_logic_steps,
+    retrieve_propositions,
+)
 from app.rag.tree_router import route_query
 from app.retrieval.pageindex_adapter import PageIndexAdapter
 from app.settings import settings
@@ -541,8 +548,124 @@ def _format_structured_evidence(items: list[dict[str, Any]] | None) -> str:
     return "Structured Evidence:\n" + "\n".join(lines)
 
 
-def retrieve_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
-    return []
+def _query_plan_value(question: str, query_plan: AskQueryPlan | dict[str, Any] | None) -> AskQueryPlan:
+    if isinstance(query_plan, AskQueryPlan):
+        return query_plan
+    return resolve_query_plan(question, query_plan if isinstance(query_plan, dict) else None)
+
+
+def _plan_text(plan: AskQueryPlan, field_name: str, *, fallback: str) -> str:
+    raw = getattr(plan, field_name, None)
+    text = str(raw or "").strip()
+    return text or str(fallback or "").strip() or "question"
+
+
+def _structured_channel_limits(plan_name: str, want: int) -> dict[str, int]:
+    base = max(2, want + 1)
+    boosted = max(base + 1, want * 2)
+    limits = {
+        "logic_step": base,
+        "claim": base,
+        "proposition": base,
+        "textbook": base,
+    }
+    if plan_name == "paper_first_then_textbook":
+        limits["logic_step"] = boosted
+        limits["claim"] = boosted
+    elif plan_name == "textbook_first_then_paper":
+        limits["proposition"] = boosted
+        limits["textbook"] = boosted
+    elif plan_name == "claim_first":
+        limits["claim"] = boosted
+        limits["logic_step"] = max(base, want + 2)
+    elif plan_name == "proposition_first":
+        limits["proposition"] = boosted
+        limits["textbook"] = max(base, want + 2)
+    elif plan_name == "hybrid_parallel":
+        limits = {key: max(base, want + 2) for key in limits}
+    return limits
+
+
+def _attach_paper_metadata(
+    rows: list[dict[str, Any]] | None,
+    evidence: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    paper_id_by_source: dict[str, str] = {}
+    for item in evidence or []:
+        paper_source = str(item.get("paper_source") or "").strip()
+        paper_id = str(item.get("paper_id") or "").strip()
+        if paper_source and paper_id and paper_source not in paper_id_by_source:
+            paper_id_by_source[paper_source] = paper_id
+
+    hydrated: list[dict[str, Any]] = []
+    for row in normalize_structured_rows(rows):
+        item = dict(row)
+        paper_source = str(item.get("paper_source") or "").strip()
+        if paper_source and not str(item.get("paper_id") or "").strip():
+            paper_id = paper_id_by_source.get(paper_source)
+            if paper_id:
+                item["paper_id"] = paper_id
+        hydrated.append(item)
+    return hydrated
+
+
+def retrieve_structured_evidence(
+    *,
+    question: str,
+    query_plan: AskQueryPlan | dict[str, Any] | None,
+    evidence: list[dict[str, Any]] | None,
+    allowed_sources: set[str] | None,
+    k: int,
+    fusion_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    plan = _query_plan_value(question, query_plan)
+    plan_name = str(getattr(plan.retrieval_plan, "value", plan.retrieval_plan) or "").strip()
+    want = max(1, int(k))
+    limits = _structured_channel_limits(plan_name, want)
+
+    paper_query = _plan_text(plan, "paper_query", fallback=plan.main_query)
+    textbook_query = _plan_text(plan, "textbook_query", fallback=plan.main_query)
+    proposition_query = _plan_text(plan, "proposition_query", fallback=textbook_query or plan.main_query)
+
+    logic_hits = _attach_paper_metadata(
+        retrieve_logic_steps(paper_query, limits["logic_step"], allowed_sources=allowed_sources),
+        evidence,
+    )
+    claim_hits = _attach_paper_metadata(
+        retrieve_claims(paper_query, limits["claim"], allowed_sources=allowed_sources),
+        evidence,
+    )
+
+    proposition_allowed_sources = allowed_sources if plan_name in {"paper_first_then_textbook", "claim_first"} else None
+    proposition_hits = _attach_paper_metadata(
+        retrieve_propositions(proposition_query, limits["proposition"], allowed_sources=proposition_allowed_sources),
+        evidence,
+    )
+
+    ranked_textbook_rows = rank_fusion_basics(textbook_query, fusion_rows or [], k=limits["textbook"])
+    textbook_hits = _attach_paper_metadata(fusion_rows_to_structured_hits(ranked_textbook_rows), evidence)
+
+    channel_order = {
+        "textbook_first_then_paper": ["textbook", "proposition", "claim", "logic_step"],
+        "claim_first": ["claim", "logic_step", "proposition", "textbook"],
+        "proposition_first": ["proposition", "textbook", "claim", "logic_step"],
+        "hybrid_parallel": ["claim", "proposition", "logic_step", "textbook"],
+        "paper_first_then_textbook": ["claim", "logic_step", "textbook", "proposition"],
+    }.get(plan_name, ["claim", "logic_step", "textbook", "proposition"])
+
+    channel_map = {
+        "logic_step": logic_hits,
+        "claim": claim_hits,
+        "proposition": proposition_hits,
+        "textbook": textbook_hits,
+    }
+    merged = merge_structured_channels(
+        channels=[(name, channel_map.get(name, [])) for name in channel_order],
+        k=want,
+    )
+    return normalize_structured_rows(merged)
 
 
 def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
@@ -571,9 +694,16 @@ def _prepare_ask_v2_context(
         if isinstance(raw_query_plan, AskQueryPlan)
         else resolve_query_plan(question, raw_query_plan)
     )
-    retrieval_query = _build_retrieval_query(query_plan.main_query, scope_paper, locale=normalized_locale)
+    plan_name = str(getattr(query_plan.retrieval_plan, "value", query_plan.retrieval_plan) or "").strip()
+    paper_query = _plan_text(query_plan, "paper_query", fallback=query_plan.main_query)
+    textbook_query = _plan_text(query_plan, "textbook_query", fallback=query_plan.main_query)
+    retrieval_query = _build_retrieval_query(paper_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
+    if plan_name == "claim_first":
+        oversample = min(100, max(oversample, want * 6))
+    elif plan_name == "proposition_first":
+        oversample = min(100, max(oversample, want * 4))
     route = route_query(
         retrieval_query,
         pageindex_enabled=bool(settings.pageindex_enabled),
@@ -728,6 +858,7 @@ def _prepare_ask_v2_context(
     # Hybrid graph context + structured knowledge
     graph_context = None
     structured_knowledge = None
+    fusion_rows: list[dict[str, Any]] = []
     fusion_evidence: list[dict[str, Any]] = []
     structured_evidence: list[dict[str, Any]] = []
     grounding: list[dict[str, Any]] = []
@@ -746,37 +877,45 @@ def _prepare_ask_v2_context(
                         structured_knowledge = None
                     try:
                         fusion_rows = client.list_fusion_basics_by_paper_sources(paper_sources, limit=200)
-                        fusion_evidence = rank_fusion_basics(retrieval_query, fusion_rows, k=min(12, max(4, want)))
+                        fusion_query = textbook_query if plan_name in {
+                            "textbook_first_then_paper",
+                            "proposition_first",
+                            "hybrid_parallel",
+                        } else retrieval_query
+                        fusion_evidence = rank_fusion_basics(fusion_query, fusion_rows, k=min(12, max(4, want)))
                     except Exception:
+                        fusion_rows = []
                         fusion_evidence = []
             except Exception:
                 graph_context = None
                 structured_knowledge = None
+                fusion_rows = []
                 fusion_evidence = []
-        try:
-            structured_evidence = list(
-                retrieve_structured_evidence(
-                    question=question,
-                    query_plan=query_plan.model_dump(),
-                    evidence=evidence,
-                    allowed_sources=allowed_sources,
-                    k=want,
-                )
-                or []
+    try:
+        structured_evidence = list(
+            retrieve_structured_evidence(
+                question=question,
+                query_plan=query_plan,
+                evidence=evidence,
+                allowed_sources=allowed_sources,
+                k=want,
+                fusion_rows=fusion_rows,
             )
-        except Exception:
-            structured_evidence = []
-        try:
-            grounding = list(
-                ground_structured_evidence(
-                    structured_evidence=structured_evidence,
-                    evidence=evidence,
-                    k=want,
-                )
-                or []
+            or []
+        )
+    except Exception:
+        structured_evidence = []
+    try:
+        grounding = list(
+            ground_structured_evidence(
+                structured_evidence=structured_evidence,
+                evidence=evidence,
+                k=want,
             )
-        except Exception:
-            grounding = []
+            or []
+        )
+    except Exception:
+        grounding = []
 
     system = _build_system_prompt(domain_prompt, locale=normalized_locale)
     graph_block = _format_graph_context(graph_context)

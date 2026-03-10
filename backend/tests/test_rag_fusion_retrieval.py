@@ -1,5 +1,6 @@
 from app.rag.fusion_retrieval import (
     format_fusion_evidence_block,
+    fusion_rows_to_structured_hits,
     rank_fusion_basics,
 )
 
@@ -45,3 +46,40 @@ def test_format_fusion_evidence_block_is_nonempty_for_ranked_rows() -> None:
     block = format_fusion_evidence_block(ranked)
     assert "Textbook Fundamentals" in block
     assert "Natural Frequency" in block
+
+
+def test_fusion_rows_to_structured_hits_preserves_textbook_metadata() -> None:
+    hits = fusion_rows_to_structured_hits(
+        [
+            {
+                "paper_source": "p1",
+                "paper_id": "doi:10.1000/example",
+                "logic_step_id": "ls-1",
+                "step_type": "Method",
+                "entity_id": "ent-1",
+                "entity_name": "Finite Element Method",
+                "entity_type": "method",
+                "description": "A numerical method for PDE discretization.",
+                "rank_score": 0.91,
+                "score": 0.83,
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+            }
+        ]
+    )
+
+    assert hits == [
+        {
+            "kind": "textbook",
+            "source_id": "ent-1",
+            "id": "ent-1",
+            "text": "Finite Element Method: A numerical method for PDE discretization.",
+            "score": 0.91,
+            "paper_source": "p1",
+            "paper_id": "doi:10.1000/example",
+            "source_kind": "textbook_entity",
+            "source_ref_id": "ent-1",
+            "textbook_id": "tb:1",
+            "chapter_id": "tb:1:ch001",
+        }
+    ]
