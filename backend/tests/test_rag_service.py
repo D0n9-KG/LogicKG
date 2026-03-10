@@ -1028,3 +1028,143 @@ def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(mo
     )
 
     assert [row["kind"] for row in rows[:2]] == ["textbook", "proposition"]
+
+
+def test_retrieve_structured_evidence_scoped_proposition_first_keeps_textbook_origin(monkeypatch):
+    monkeypatch.setattr("app.rag.service.retrieve_logic_steps", lambda *args, **kwargs: [], raising=False)
+    monkeypatch.setattr("app.rag.service.retrieve_claims", lambda *args, **kwargs: [], raising=False)
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_propositions",
+        lambda query, k, allowed_sources=None: [
+            {
+                "kind": "proposition",
+                "source_id": "pr-textbook",
+                "proposition_id": "pr-textbook",
+                "text": "Textbook FEM definition.",
+                "score": 0.93,
+                "source_kind": "textbook_entity",
+                "source_ref_id": "ent-1",
+                "textbook_id": "tb:1",
+                "chapter_id": "tb:1:ch001",
+            },
+            {
+                "kind": "proposition",
+                "source_id": "pr-paper-out",
+                "proposition_id": "pr-paper-out",
+                "text": "Out-of-scope paper proposition.",
+                "score": 0.91,
+                "source_kind": "claim",
+                "source_ref_id": "cl-out",
+                "paper_source": "paper-B",
+                "paper_id": "doi:10.1000/out",
+            },
+            {
+                "kind": "proposition",
+                "source_id": "pr-paper-in",
+                "proposition_id": "pr-paper-in",
+                "text": "In-scope paper proposition.",
+                "score": 0.89,
+                "source_kind": "claim",
+                "source_ref_id": "cl-in",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/in",
+            },
+        ],
+        raising=False,
+    )
+
+    rows = retrieve_structured_evidence(
+        question="What foundational propositions explain this scoped paper?",
+        query_plan={
+            "intent": "foundational",
+            "retrieval_plan": "proposition_first",
+            "main_query": "finite element method assumptions",
+            "paper_query": "finite element method assumptions in this paper",
+            "textbook_query": "finite element method definition assumptions discretization",
+            "proposition_query": "finite element method assumptions proposition",
+        },
+        evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/in"}],
+        allowed_sources={"paper-A"},
+        k=5,
+        fusion_rows=[],
+    )
+
+    source_ids = [row["source_id"] for row in rows]
+    assert "pr-textbook" in source_ids
+    assert "pr-paper-in" in source_ids
+    assert "pr-paper-out" not in source_ids
+
+
+def test_prepare_ask_v2_context_scope_uses_structured_hits_before_early_return(monkeypatch):
+    class _Doc:
+        def __init__(self):
+            self.page_content = "Out-of-scope paper chunk."
+            self.metadata = {
+                "chunk_id": "c-out",
+                "paper_source": "paper-B",
+                "paper_title": "Paper B",
+                "md_path": "runs/paper-B/content.md",
+                "start_line": 1,
+                "end_line": 4,
+                "section": "Method",
+                "kind": "chunk",
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, question, k=0):
+            return [(_Doc(), 0.91)]
+
+    monkeypatch.setattr(
+        "app.rag.service.plan_ask_query",
+        lambda question, scope=None, locale=None: {
+            "intent": "paper_detail",
+            "retrieval_plan": "claim_first",
+            "main_query": "finite element method assumptions",
+            "paper_query": "finite element method assumptions in this paper",
+        },
+        raising=False,
+    )
+    monkeypatch.setattr("app.rag.service._allowed_paper_sources", lambda scope: {"paper-A"}, raising=False)
+    monkeypatch.setattr("app.rag.service._single_scope_paper_context", lambda scope: None, raising=False)
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_structured_evidence",
+        lambda *args, **kwargs: [
+            {
+                "kind": "claim",
+                "source_id": "cl-1",
+                "text": "Scoped paper claim evidence.",
+                "paper_source": "paper-A",
+                "paper_id": "doi:10.1000/in",
+            }
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr("app.rag.service.ground_structured_evidence", lambda *args, **kwargs: [], raising=False)
+    monkeypatch.setattr("app.rag.service.load_faiss", lambda path: _FakeStore())
+    monkeypatch.setattr("app.rag.service.latest_faiss_dir", lambda: "fake-faiss")
+    monkeypatch.setattr("app.rag.service.latest_run_dir", lambda path: "fake-run")
+    monkeypatch.setattr("app.rag.service.load_chunks_from_run", lambda run_dir: [])
+    monkeypatch.setattr("app.rag.service.lexical_retrieve", lambda question, chunks, k=0: [])
+    monkeypatch.setattr("app.rag.service.route_query", lambda question, pageindex_enabled=False: {"mode": "faiss"})
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            pageindex_enabled=False,
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+            storage_dir="storage",
+            effective_llm_api_key=lambda: "fake-key",
+            effective_llm_base_url=lambda: "https://example.invalid/v1",
+        ),
+    )
+
+    ctx = _prepare_ask_v2_context(
+        "What does the scoped paper claim?",
+        k=4,
+        scope={"mode": "papers", "paper_ids": ["paper-A"]},
+    )
+
+    assert "early_response" not in ctx
+    assert ctx["bundle"].structured_evidence[0].source_id == "cl-1"
+    assert ctx["bundle"].insufficient_scope_evidence is False

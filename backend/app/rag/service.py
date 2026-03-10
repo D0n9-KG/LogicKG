@@ -600,8 +600,15 @@ def _attach_paper_metadata(
             paper_id_by_source[paper_source] = paper_id
 
     hydrated: list[dict[str, Any]] = []
-    for row in normalize_structured_rows(rows):
-        item = dict(row)
+    for row in rows:
+        normalized_rows = normalize_structured_rows([row])
+        if not normalized_rows:
+            continue
+        item = dict(normalized_rows[0])
+        if isinstance(row, dict):
+            for key, value in row.items():
+                if key not in item:
+                    item[key] = value
         paper_source = str(item.get("paper_source") or "").strip()
         if paper_source and not str(item.get("paper_id") or "").strip():
             paper_id = paper_id_by_source.get(paper_source)
@@ -609,6 +616,49 @@ def _attach_paper_metadata(
                 item["paper_id"] = paper_id
         hydrated.append(item)
     return hydrated
+
+
+def _is_textbook_origin_proposition(row: dict[str, Any]) -> bool:
+    source_kind = str(row.get("source_kind") or "").strip().lower()
+    return source_kind == "textbook_entity" or bool(
+        str(row.get("textbook_id") or "").strip() or str(row.get("chapter_id") or "").strip()
+    )
+
+
+def _filter_scoped_proposition_hits(
+    rows: list[dict[str, Any]] | None,
+    allowed_sources: set[str] | None,
+) -> list[dict[str, Any]]:
+    if not rows or allowed_sources is None:
+        return list(rows or [])
+    allowed = {str(source).strip() for source in allowed_sources if str(source).strip()}
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        paper_source = str(row.get("paper_source") or "").strip()
+        if paper_source:
+            if paper_source in allowed:
+                filtered.append(row)
+            continue
+        if _is_textbook_origin_proposition(row):
+            filtered.append(row)
+    return filtered
+
+
+def _normalize_structured_rows_preserving_extras(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in rows or []:
+        normalized_rows = normalize_structured_rows([row])
+        if not normalized_rows:
+            continue
+        item = dict(normalized_rows[0])
+        if isinstance(row, dict):
+            for key, value in row.items():
+                if key not in item:
+                    item[key] = value
+        out.append(item)
+    return out
 
 
 def retrieve_structured_evidence(
@@ -638,9 +688,11 @@ def retrieve_structured_evidence(
         evidence,
     )
 
-    proposition_allowed_sources = allowed_sources if plan_name in {"paper_first_then_textbook", "claim_first"} else None
     proposition_hits = _attach_paper_metadata(
-        retrieve_propositions(proposition_query, limits["proposition"], allowed_sources=proposition_allowed_sources),
+        _filter_scoped_proposition_hits(
+            retrieve_propositions(proposition_query, limits["proposition"], allowed_sources=None),
+            allowed_sources,
+        ),
         evidence,
     )
 
@@ -665,7 +717,7 @@ def retrieve_structured_evidence(
         channels=[(name, channel_map.get(name, [])) for name in channel_order],
         k=want,
     )
-    return normalize_structured_rows(merged)
+    return _normalize_structured_rows_preserving_extras(merged)
 
 
 def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
@@ -838,24 +890,6 @@ def _prepare_ask_v2_context(
     else:
         retrieval_mode = "faiss"
 
-    if allowed_sources is not None and len(evidence) < min(2, want):
-        bundle = EvidenceBundle(
-            evidence=evidence,
-            query_plan=query_plan,
-            structured_evidence=[],
-            grounding=[],
-            retrieval_mode=retrieval_mode,
-            graph_context=None,
-            structured_knowledge=None,
-            insufficient_scope_evidence=True,
-            message=(
-                "当前范围内证据不足，请扩大范围或细化问题。"
-                if normalized_locale == "zh-CN"
-                else "Insufficient evidence in current scope. Broaden scope or refine the question."
-            ),
-        )
-        return {"early_response": {"answer": "", **bundle.model_dump()}}
-
     # Hybrid graph context + structured knowledge
     graph_context = None
     structured_knowledge = None
@@ -917,6 +951,24 @@ def _prepare_ask_v2_context(
         )
     except Exception:
         grounding = []
+
+    if allowed_sources is not None and len(evidence) < min(2, want) and not structured_evidence:
+        bundle = EvidenceBundle(
+            evidence=evidence,
+            query_plan=query_plan,
+            structured_evidence=[],
+            grounding=grounding,
+            retrieval_mode=retrieval_mode,
+            graph_context=graph_context,
+            structured_knowledge=structured_knowledge,
+            insufficient_scope_evidence=True,
+            message=(
+                "当前范围内证据不足，请扩大范围或细化问题。"
+                if normalized_locale == "zh-CN"
+                else "Insufficient evidence in current scope. Broaden scope or refine the question."
+            ),
+        )
+        return {"early_response": {"answer": "", **bundle.model_dump()}}
 
     system = _build_system_prompt(domain_prompt, locale=normalized_locale)
     graph_block = _format_graph_context(graph_context)

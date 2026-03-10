@@ -111,6 +111,14 @@ def fusion_rows_to_structured_hits(rows: list[dict[str, Any]] | None) -> list[di
                 "source_ref_id": entity_id,
                 "textbook_id": str(row.get("textbook_id") or "").strip() or None,
                 "chapter_id": str(row.get("chapter_id") or row.get("source_chapter_id") or "").strip() or None,
+                "logic_step_id": str(row.get("logic_step_id") or "").strip() or None,
+                "step_type": str(row.get("step_type") or "").strip() or None,
+                "entity_type": str(row.get("entity_type") or "").strip() or None,
+                "source_chapter_id": str(row.get("source_chapter_id") or row.get("chapter_id") or "").strip() or None,
+                "reasons": list(row.get("reasons") or []),
+                "evidence_chunk_ids": [str(x).strip() for x in (row.get("evidence_chunk_ids") or []) if str(x).strip()],
+                "source_chunk_id": str(row.get("source_chunk_id") or "").strip() or None,
+                "evidence_quote": _normalize_text(str(row.get("evidence_quote") or "")) or None,
             }
         )
     return hits
