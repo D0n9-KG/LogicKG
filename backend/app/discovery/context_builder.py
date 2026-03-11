@@ -64,10 +64,19 @@ def _pick_target_paper_ids(client: Neo4jClient, gap: dict) -> list[str]:
     if out:
         return out
 
-    prop_ids = _dedup([str(x) for x in (gap.get("source_proposition_ids") or [])])
-    if prop_ids:
-        out.extend(client.list_paper_ids_for_propositions(prop_ids, limit=80))
-        out = _dedup(out)
+    community_ids = _dedup([str(x) for x in (gap.get("source_community_ids") or [])])
+    if community_ids:
+        claim_ids: list[str] = []
+        for community_id in community_ids[:12]:
+            members = client.list_global_community_members(community_id, limit=200)
+            for member in members:
+                member_id = str(member.get("member_id") or "").strip()
+                member_kind = str(member.get("member_kind") or "").strip().lower()
+                if member_id and member_kind == "claim":
+                    claim_ids.append(member_id)
+        if claim_ids:
+            out.extend(client.list_paper_ids_for_claims(_dedup(claim_ids), limit=80))
+            out = _dedup(out)
     return out
 
 
@@ -229,7 +238,15 @@ def build_hybrid_context_for_gap(
     return {
         "graph_context_summary": graph_summary,
         "rag_context_snippets": rag_snippets,
-        "source_paper_ids": _dedup([*(_dedup([str(x) for x in (gap_row.get("source_paper_ids") or [])])), *[str(x) for x in adjacent_ids], *[str(x) for x in community_ids], *[str(x) for x in random_ids]]),
+        "source_paper_ids": _dedup(
+            [
+                *(_dedup([str(x) for x in (gap_row.get("source_paper_ids") or [])])),
+                *[str(x) for x in target_ids],
+                *[str(x) for x in adjacent_ids],
+                *[str(x) for x in community_ids],
+                *[str(x) for x in random_ids],
+            ]
+        ),
         "inspiration_adjacent_paper_ids": adjacent_ids,
         "inspiration_community_paper_ids": community_ids,
         "inspiration_random_paper_ids": random_ids,

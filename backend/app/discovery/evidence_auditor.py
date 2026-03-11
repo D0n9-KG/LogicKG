@@ -102,23 +102,20 @@ def _paper_sources_for_ids(paper_ids: list[str]) -> set[str]:
     return out
 
 
-def _collect_challenge_events(prop_ids: list[str], max_items: int = 4) -> list[str]:
+def _collect_community_member_claim_ids(community_ids: list[str], max_items: int = 4) -> list[str]:
     ids: list[str] = []
-    if not prop_ids:
+    if not community_ids:
         return ids
     try:
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
-            for prop_id in prop_ids[:3]:
-                detail = client.get_proposition_detail(prop_id=prop_id, limit_events=120)
-                for ev in detail.get("events") or []:
-                    event_type = str(ev.get("event_type") or "").upper()
-                    status = str(ev.get("status") or "").lower()
-                    event_id = str(ev.get("event_id") or "").strip()
-                    if not event_id or status != "accepted":
+            for community_id in community_ids[:3]:
+                members = client.list_global_community_members(community_id, limit=200)
+                for member in members:
+                    member_id = str(member.get("member_id") or "").strip()
+                    member_kind = str(member.get("member_kind") or "").strip().lower()
+                    if not member_id or member_kind != "claim":
                         continue
-                    if event_type not in {"CHALLENGES", "SUPERSEDES"}:
-                        continue
-                    ids.append(f"EV:{event_id}")
+                    ids.append(member_id)
                     if len(ids) >= max_items:
                         return _dedup_ids(ids)
     except Exception:
@@ -134,7 +131,7 @@ def audit_candidate_evidence(candidate: dict, *, dry_run: bool = False) -> dict:
     support_ids = _dedup_ids([str(x) for x in (base.get("support_evidence_ids") or [])])
     challenge_ids = _dedup_ids([str(x) for x in (base.get("challenge_evidence_ids") or [])])
     source_claim_ids = _dedup_ids([str(x) for x in (base.get("source_claim_ids") or [])])
-    source_prop_ids = _dedup_ids([str(x) for x in (base.get("source_proposition_ids") or [])])
+    source_community_ids = _dedup_ids([str(x) for x in (base.get("source_community_ids") or [])])
     source_paper_ids = _dedup_ids([str(x) for x in (base.get("source_paper_ids") or [])])
 
     if dry_run and question:
@@ -145,7 +142,8 @@ def audit_candidate_evidence(candidate: dict, *, dry_run: bool = False) -> dict:
     else:
         # 1) Reuse provenance from upstream graph mining.
         support_ids.extend([f"CL:{cid}" for cid in source_claim_ids[:4]])
-        support_ids.extend([f"PR:{pid}" for pid in source_prop_ids[:3]])
+        support_ids.extend([f"GC:{cid}" for cid in source_community_ids[:3]])
+        support_ids.extend([f"CL:{cid}" for cid in _collect_community_member_claim_ids(source_community_ids, max_items=4)])
 
         # 2) Retrieve chunk-level lexical evidence for better grounding.
         paper_sources = _paper_sources_for_ids(source_paper_ids)
@@ -158,9 +156,6 @@ def audit_candidate_evidence(candidate: dict, *, dry_run: bool = False) -> dict:
         rag_snips = [str(x) for x in (base.get("rag_context_snippets") or [])]
         rag_snips.extend(lexical_snippets)
         base["rag_context_snippets"] = _dedup_ids(rag_snips)[:4]
-
-        # 3) Pull challenge signals from proposition events.
-        challenge_ids.extend(_collect_challenge_events(source_prop_ids, max_items=4))
 
     support_ids = _dedup_ids(support_ids)
     challenge_ids = _dedup_ids(challenge_ids)
@@ -193,6 +188,6 @@ def audit_candidate_evidence(candidate: dict, *, dry_run: bool = False) -> dict:
     if needs_more_evidence and not str(base.get("missing_evidence_statement") or "").strip():
         base["missing_evidence_statement"] = (
             "Needs additional support evidence from at least two independent signals "
-            "(claim/proposition/chunk) before ranking."
+            "(claim/community/chunk) before ranking."
         )
     return base

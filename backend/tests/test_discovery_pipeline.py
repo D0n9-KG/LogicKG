@@ -74,6 +74,64 @@ def test_discovery_batch_uses_source_claims_for_support(monkeypatch):
     assert any(str(x).startswith("CL:claim:test:1") for x in support_ids)
 
 
+def test_discovery_batch_uses_source_communities_for_support(monkeypatch):
+    import app.discovery.evidence_auditor as auditor
+    import app.discovery.service as svc
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def list_global_community_members(self, community_id: str, limit: int = 200):
+            assert community_id == "gc:demo"
+            return [{"member_id": "claim:test:1", "member_kind": "Claim", "text": "FEM improves stability."}]
+
+    monkeypatch.setattr(
+        svc,
+        "detect_knowledge_gaps",
+        lambda domain, limit: [
+            {
+                "gap_id": "gap:community:1",
+                "gap_type": "gap_claim",
+                "description": "Need community-level explanation for FEM stability disagreement.",
+                "missing_evidence_statement": "Need member-backed evidence across papers.",
+                "priority_score": 0.8,
+                "source_community_ids": ["gc:demo"],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        svc,
+        "generate_candidate_questions",
+        lambda gaps, **kwargs: [
+            {
+                "candidate_id": "rq:community:1",
+                "question": "What community-level mechanism explains FEM stability disagreement?",
+                "gap_id": "gap:community:1",
+                "gap_type": "gap_claim",
+                "source_community_ids": ["gc:demo"],
+                "novelty_score": 0.7,
+                "feasibility_score": 0.6,
+                "relevance_score": 0.8,
+            }
+        ],
+    )
+    monkeypatch.setattr(auditor, "Neo4jClient", _FakeNeo4jClient)
+
+    out = run_discovery_batch(domain="granular_flow", dry_run=False, use_llm=False)
+
+    assert len(out["candidates"]) == 1
+    candidate = out["candidates"][0]
+    assert candidate["source_community_ids"] == ["gc:demo"]
+    assert any(str(x).startswith("GC:gc:demo") for x in candidate["support_evidence_ids"])
+
+
 def test_discovery_batch_attaches_hybrid_context(monkeypatch):
     import app.discovery.service as svc
 

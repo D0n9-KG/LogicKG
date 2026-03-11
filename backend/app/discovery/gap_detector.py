@@ -11,18 +11,6 @@ from app.settings import settings
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _SPACE_RE = re.compile(r"\s+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<!\d)[.!?;。！？；]+(?!\d)")
-_GENERIC_SIGNAL_RE = re.compile(
-    r"^(gap|future\s*work|limitation|critique)\s+signal\s+from\s+(claim|extracted\s+gap\s+seed)\b[:：]?\s*",
-    flags=re.IGNORECASE,
-)
-_LEADING_FILLER_RE = re.compile(
-    r"^(this\s+(paper|study|work)\s+(suggests|shows|indicates|highlights)\s+that\s+|"
-    r"it\s+is\s+important\s+to\s+note\s+that\s+|"
-    r"the\s+main\s+limitation\s+is\s+that\s+)",
-    flags=re.IGNORECASE,
-)
-
-_DEFAULT_GAP_CLAIM_KINDS = ["Gap", "FutureWork", "Limitation", "Critique"]
 
 _FALLBACK_BY_DOMAIN: dict[str, list[dict[str, Any]]] = {
     "granular_flow": [
@@ -54,14 +42,14 @@ def _domain_keywords(domain: str) -> list[str]:
     normalized = _norm_domain(domain).replace("-", "_")
     if not normalized:
         return []
-    return [x for x in _WORD_RE.findall(normalized.replace("_", " ")) if len(x) >= 3]
+    return [token for token in _WORD_RE.findall(normalized.replace("_", " ")) if len(token) >= 3]
 
 
 def _domain_match(text: str, keywords: list[str]) -> bool:
     if not keywords:
         return True
-    t = str(text or "").lower()
-    return any(k in t for k in keywords)
+    haystack = str(text or "").lower()
+    return any(keyword in haystack for keyword in keywords)
 
 
 def _gap_id(prefix: str, payload: str) -> str:
@@ -78,12 +66,7 @@ def _clamp01(v: float) -> float:
 
 
 def _clean_text(text: str) -> str:
-    merged = _SPACE_RE.sub(" ", str(text or "")).strip()
-    if not merged:
-        return ""
-    merged = _GENERIC_SIGNAL_RE.sub("", merged).strip()
-    merged = _LEADING_FILLER_RE.sub("", merged).strip()
-    return merged
+    return _SPACE_RE.sub(" ", str(text or "")).strip()
 
 
 def _first_sentence(text: str, *, max_chars: int = 160) -> str:
@@ -96,284 +79,163 @@ def _first_sentence(text: str, *, max_chars: int = 160) -> str:
         clipped = out[: max_chars - 1]
         if " " in clipped:
             clipped = clipped.rsplit(" ", 1)[0]
-        out = clipped.rstrip(" ,;:-") + "…"
+        out = clipped.rstrip(" ,;:-") + "..."
     return out
 
 
-def _topic_hint(row: dict[str, Any]) -> str:
-    for key in ("text", "prop_text"):
-        candidate = _first_sentence(str(row.get(key) or ""), max_chars=120)
-        if candidate:
-            return candidate
-    title = _first_sentence(str(row.get("paper_title") or ""), max_chars=96)
+def _string_list(values: Any) -> list[str]:
+    if isinstance(values, (list, tuple, set)):
+        return [str(value).strip() for value in values if str(value).strip()]
+    text = str(values or "").strip()
+    return [text] if text else []
+
+
+def _community_text(row: dict[str, Any]) -> str:
+    title = _clean_text(str(row.get("title") or ""))
+    summary = _clean_text(str(row.get("summary") or ""))
+    keywords = _string_list(row.get("keywords") or row.get("keyword_texts"))
+    return " ".join(part for part in [title, summary, " ".join(keywords)] if part)
+
+
+def _community_gap_type(row: dict[str, Any]) -> str:
+    support_count = int(row.get("paper_support_count") or 0)
+    challenge_count = int(row.get("paper_challenge_count") or 0)
+    textbook_count = int(row.get("textbook_member_count") or 0)
+    paper_count = int(row.get("paper_member_count") or row.get("paper_count") or support_count + challenge_count)
+    benchmark_gap_count = int(row.get("benchmark_gap_count") or 0)
+    if challenge_count > 0 and support_count > 0:
+        return "conflict_hotspot"
+    if benchmark_gap_count > 0:
+        return "limitation"
+    if textbook_count > 0 and paper_count <= 1:
+        return "gap_claim"
+    if challenge_count > 0:
+        return "conflict_hotspot"
+    return "seed"
+
+
+def _community_missing_statement(gap_type: str, row: dict[str, Any]) -> str:
+    textbook_count = int(row.get("textbook_member_count") or 0)
+    paper_count = int(row.get("paper_member_count") or row.get("paper_count") or 0)
+    if gap_type == "conflict_hotspot":
+        return "Need member-level support and challenge evidence that explains why this community disagrees across papers."
+    if gap_type == "limitation":
+        return "Need benchmark and boundary-condition evidence for the weakly covered parts of this community."
+    if textbook_count > 0 and paper_count <= 1:
+        return "Need more paper-backed evidence for a community that is currently dominated by textbook coverage."
+    return "Need additional community-member evidence across papers, settings, and methods."
+
+
+def _community_title(gap_type: str, row: dict[str, Any]) -> str:
+    topic = _first_sentence(str(row.get("title") or row.get("summary") or row.get("community_id") or ""), max_chars=96) or "community"
+    if gap_type == "conflict_hotspot":
+        return f"Conflicting community evidence needs disambiguation: {topic}"
+    if gap_type == "limitation":
+        return f"Community limitation remains unresolved: {topic}"
+    if gap_type == "gap_claim":
+        return f"Community lacks paper-backed evidence: {topic}"
+    return f"Open community mechanism gap: {topic}"
+
+
+def _community_description(row: dict[str, Any]) -> str:
+    summary = _clean_text(str(row.get("summary") or ""))
+    if summary:
+        return summary
+    title = _clean_text(str(row.get("title") or ""))
     if title:
         return title
-    return "the reported open issue"
+    return "A global community lacks sufficient evidence coverage for high-confidence explanation."
 
 
-def _human_title_for_gap(gap_type: str, row: dict[str, Any]) -> str:
-    topic = _topic_hint(row)
-    if gap_type == "future_work":
-        return f"Future direction needs validation: {topic}"
-    if gap_type == "limitation":
-        return f"Method limitation remains unresolved: {topic}"
-    if gap_type == "conflict_hotspot":
-        return f"Conflicting evidence requires disambiguation: {topic}"
-    if gap_type == "challenged_proposition":
-        return f"Challenged proposition needs boundary testing: {topic}"
-    return f"Open mechanism gap: {topic}"
-
-
-def _human_description_for_gap(gap_type: str, row: dict[str, Any]) -> str:
-    text = _clean_text(str(row.get("text") or ""))
-    prop_text = _clean_text(str(row.get("prop_text") or ""))
-    paper_title = _clean_text(str(row.get("paper_title") or ""))
-    if len(text) >= 24:
-        desc = text
-    elif len(prop_text) >= 24:
-        desc = prop_text
-    elif paper_title:
-        desc = f"The issue appears in: {paper_title}."
-    else:
-        desc = "Insufficiently specified claim text requires deeper extraction and validation."
-    return desc
-
-
-def _pick_gap_type(kinds: list[str]) -> str:
-    lowered = {str(k).strip().lower() for k in kinds}
-    if "futurework" in lowered:
-        return "future_work"
-    if "limitation" in lowered:
-        return "limitation"
-    if "critique" in lowered:
-        return "limitation"
-    if "gap" in lowered:
-        return "gap_claim"
-    return "gap_claim"
-
-
-def _missing_statement_for_kind(kind: str) -> str:
-    if kind == "future_work":
-        return "Need concrete validation protocol and measurable success criteria for the future direction."
-    if kind == "limitation":
-        return "Need evidence that quantifies boundary conditions and failure modes of current methods."
-    return "Need support/challenge evidence across datasets, settings, and methodological variants."
-
-
-def _from_conflict_hotspots(
+def _from_global_communities(
     client: Neo4jClient,
     keywords: list[str],
     limit: int,
-) -> list[dict]:
-    rows = client.list_conflict_hotspots(limit=max(50, limit * 4), min_events=1)
-    out: list[dict] = []
-    for r in rows:
-        prop_id = str(r.get("prop_id") or "").strip()
-        text = str(r.get("canonical_text") or "").strip()
-        if not prop_id or not text:
+) -> list[dict[str, Any]]:
+    rows = client.list_global_community_rows(limit=max(50, limit * 8))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        community_id = str(row.get("community_id") or "").strip()
+        if not community_id:
             continue
-        if not _domain_match(text, keywords):
+        community_text = _community_text(row)
+        if not _domain_match(community_text, keywords):
             continue
 
-        conflict_events = int(r.get("conflict_events") or 0)
-        supersede_events = int(r.get("supersede_events") or 0)
-        challenge_events = int(r.get("challenge_events") or 0)
-        paper_count = int(r.get("source_paper_count") or 0)
-        raw_priority = 0.35 + 0.08 * min(conflict_events, 5) + 0.04 * min(supersede_events + challenge_events, 5)
-        raw_priority += 0.03 * min(paper_count, 5)
+        member_count = int(row.get("member_count") or 0)
+        support_count = int(row.get("paper_support_count") or 0)
+        challenge_count = int(row.get("paper_challenge_count") or 0)
+        textbook_count = int(row.get("textbook_member_count") or 0)
+        paper_count = int(row.get("paper_member_count") or row.get("paper_count") or support_count + challenge_count)
+        benchmark_gap_count = int(row.get("benchmark_gap_count") or 0)
+        gap_type = _community_gap_type(row)
 
-        out.append(
-            {
-                "gap_id": f"gap:conflict:{prop_id}",
-                "gap_type": "conflict_hotspot",
-                "title": f"Conflicting evidence around proposition: {text[:84]}",
-                "description": f"Conflict hotspot detected ({conflict_events} challenge/supersede events) for proposition \"{text}\".",
-                "missing_evidence_statement": "Need disambiguating evidence and condition-specific comparisons to resolve conflicting findings.",
-                "priority_score": _clamp01(raw_priority),
-                "source_proposition_ids": [prop_id],
-                "signals": {
-                    "conflict_events": conflict_events,
-                    "challenge_events": challenge_events,
-                    "supersede_events": supersede_events,
-                    "source_paper_count": paper_count,
-                },
-            }
+        disagreement = challenge_count / max(1.0, float(support_count + challenge_count))
+        sparse_paper_density = 1.0 - min(1.0, paper_count / max(1.0, float(member_count or 1)))
+        textbook_heaviness = min(1.0, textbook_count / max(1.0, float(member_count or 1)))
+        benchmark_gap = min(1.0, benchmark_gap_count / 3.0)
+        raw_priority = (
+            0.28
+            + 0.28 * disagreement
+            + 0.18 * sparse_paper_density
+            + 0.14 * textbook_heaviness
+            + 0.12 * benchmark_gap
         )
-    return out
-
-
-def _from_gap_like_claims(
-    client: Neo4jClient,
-    keywords: list[str],
-    limit: int,
-) -> list[dict]:
-    rows = client.list_gap_like_claims(limit=max(80, limit * 8), kinds=_DEFAULT_GAP_CLAIM_KINDS)
-    out: list[dict] = []
-    for r in rows:
-        claim_id = str(r.get("claim_id") or "").strip()
-        text = str(r.get("text") or "").strip()
-        if not claim_id or not text:
-            continue
-        if not _domain_match(text, keywords):
-            continue
-        kinds = [str(k).strip() for k in (r.get("kinds") or []) if str(k).strip()]
-        gap_type = _pick_gap_type(kinds)
-        confidence = float(r.get("confidence") or 0.0)
-        evidence_count = int(r.get("evidence_count") or 0)
-        prop_id = str(r.get("prop_id") or "").strip()
-        paper_id = str(r.get("paper_id") or "").strip()
-        paper_title = str(r.get("paper_title") or "").strip()
-
-        raw_priority = 0.38 + 0.35 * _clamp01(confidence) + 0.07 * min(evidence_count, 4)
-        if gap_type == "future_work":
-            raw_priority += 0.06
-        if gap_type == "limitation":
-            raw_priority += 0.05
-
-        out.append(
-            {
-                "gap_id": _gap_id("claim", claim_id),
-                "gap_type": gap_type,
-                "title": _human_title_for_gap(gap_type, r),
-                "description": _human_description_for_gap(gap_type, r),
-                "missing_evidence_statement": _missing_statement_for_kind(gap_type),
-                "priority_score": _clamp01(raw_priority),
-                "source_claim_ids": [claim_id],
-                "source_proposition_ids": [prop_id] if prop_id else [],
-                "source_paper_ids": [paper_id] if paper_id else [],
-                "signals": {
-                    "confidence": confidence,
-                    "evidence_count": evidence_count,
-                    "paper_title": paper_title,
-                    "kinds": kinds,
-                },
-            }
-        )
-    return out
-
-
-def _from_gap_seeds(
-    client: Neo4jClient,
-    keywords: list[str],
-    limit: int,
-) -> list[dict]:
-    rows = client.list_gap_seeds(limit=max(80, limit * 8), kinds=_DEFAULT_GAP_CLAIM_KINDS)
-    out: list[dict] = []
-    for r in rows:
-        seed_id = str(r.get("seed_id") or "").strip()
-        text = str(r.get("text") or "").strip()
-        if not seed_id or not text:
-            continue
-        if not _domain_match(text, keywords):
-            continue
-        kinds = [str(k).strip() for k in (r.get("kinds") or []) if str(k).strip()]
-        gap_type = _pick_gap_type(kinds)
-        confidence = float(r.get("confidence") or 0.0)
-        prop_id = str(r.get("prop_id") or "").strip()
-        paper_id = str(r.get("paper_id") or "").strip()
-        paper_title = str(r.get("paper_title") or "").strip()
-
-        raw_priority = 0.4 + 0.4 * _clamp01(confidence)
-        if gap_type in {"future_work", "limitation"}:
+        if gap_type == "conflict_hotspot":
             raw_priority += 0.06
 
         out.append(
             {
-                "gap_id": _gap_id("seed", seed_id),
+                "gap_id": _gap_id("community", community_id),
                 "gap_type": gap_type,
-                "title": _human_title_for_gap(gap_type, r),
-                "description": _human_description_for_gap(gap_type, r),
-                "missing_evidence_statement": _missing_statement_for_kind(gap_type),
+                "title": _community_title(gap_type, row),
+                "description": _community_description(row),
+                "missing_evidence_statement": _community_missing_statement(gap_type, row),
                 "priority_score": _clamp01(raw_priority),
-                "source_claim_ids": [str(r.get("claim_id") or "").strip()] if str(r.get("claim_id") or "").strip() else [],
-                "source_proposition_ids": [prop_id] if prop_id else [],
-                "source_paper_ids": [paper_id] if paper_id else [],
+                "source_community_ids": [community_id],
+                "source_paper_ids": _string_list(row.get("paper_ids")),
                 "signals": {
-                    "confidence": confidence,
-                    "paper_title": paper_title,
-                    "kinds": kinds,
-                    "origin": "knowledge_gap_seed",
+                    "member_count": member_count,
+                    "paper_support_count": support_count,
+                    "paper_challenge_count": challenge_count,
+                    "paper_member_count": paper_count,
+                    "textbook_member_count": textbook_count,
+                    "benchmark_gap_count": benchmark_gap_count,
+                    "keywords": _string_list(row.get("keywords") or row.get("keyword_texts")),
                 },
             }
         )
     return out
 
 
-def _from_challenged_propositions(
-    client: Neo4jClient,
-    keywords: list[str],
-    limit: int,
-) -> list[dict]:
-    rows = client.list_propositions(limit=max(60, limit * 6), state="challenged")
-    out: list[dict] = []
-    for r in rows:
-        prop_id = str(r.get("prop_id") or "").strip()
-        text = str(r.get("canonical_text") or "").strip()
-        if not prop_id or not text:
-            continue
-        if not _domain_match(text, keywords):
-            continue
-
-        challenges = int(r.get("challenges") or 0)
-        supports = int(r.get("supports") or 0)
-        supersedes = int(r.get("supersedes") or 0)
-        mention_count = int(r.get("mention_count") or 0)
-        score = float(r.get("current_score") or 0.0)
-        raw_priority = 0.3 + 0.06 * min(challenges + supersedes, 6) + 0.04 * min(mention_count, 6)
-        raw_priority += 0.15 * (1.0 - _clamp01(score))
-
-        out.append(
-            {
-                "gap_id": f"gap:challenged:{prop_id}",
-                "gap_type": "challenged_proposition",
-                "title": f"Challenged proposition requires targeted hypothesis testing",
-                "description": text,
-                "missing_evidence_statement": "Need targeted experiments or analyses that explain when this proposition holds or fails.",
-                "priority_score": _clamp01(raw_priority),
-                "source_proposition_ids": [prop_id],
-                "signals": {
-                    "supports": supports,
-                    "challenges": challenges,
-                    "supersedes": supersedes,
-                    "mention_count": mention_count,
-                    "current_score": score,
-                },
-            }
-        )
-    return out
-
-
-def _dedup_and_sort(candidates: list[dict], limit: int) -> list[dict]:
-    by_key: dict[str, dict] = {}
+def _dedup_and_sort(candidates: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
     for raw in candidates:
         item = dict(raw or {})
-        gid = str(item.get("gap_id") or "").strip()
+        gap_id = str(item.get("gap_id") or "").strip()
         desc = str(item.get("description") or "").strip()
-        if not gid:
-            gid = _gap_id("auto", desc or str(item))
-            item["gap_id"] = gid
-        prev = by_key.get(gid)
-        if prev is None:
-            by_key[gid] = item
-            continue
-        if float(item.get("priority_score") or 0.0) > float(prev.get("priority_score") or 0.0):
-            by_key[gid] = item
+        if not gap_id:
+            gap_id = _gap_id("auto", desc or str(item))
+            item["gap_id"] = gap_id
+        previous = by_key.get(gap_id)
+        if previous is None or float(item.get("priority_score") or 0.0) > float(previous.get("priority_score") or 0.0):
+            by_key[gap_id] = item
 
     ordered = sorted(
         by_key.values(),
-        key=lambda x: (
-            float(x.get("priority_score") or 0.0),
-            str(x.get("gap_type") or ""),
-            str(x.get("gap_id") or ""),
+        key=lambda item: (
+            float(item.get("priority_score") or 0.0),
+            str(item.get("gap_type") or ""),
+            str(item.get("gap_id") or ""),
         ),
         reverse=True,
     )
     return ordered[: max(1, int(limit))]
 
 
-def _fallback_gaps(domain: str, limit: int) -> list[dict]:
+def _fallback_gaps(domain: str, limit: int) -> list[dict[str, Any]]:
     normalized = _norm_domain(domain)
-    seeds = [dict(x) for x in _FALLBACK_BY_DOMAIN.get(normalized, [])]
+    seeds = [dict(item) for item in _FALLBACK_BY_DOMAIN.get(normalized, [])]
     if not seeds:
         seeds = [
             {
@@ -388,18 +250,14 @@ def _fallback_gaps(domain: str, limit: int) -> list[dict]:
     return seeds[: max(1, int(limit))]
 
 
-def detect_knowledge_gaps(domain: str, limit: int = 8) -> list[dict]:
-    """Detect research gaps from graph signals, with deterministic fallback."""
+def detect_knowledge_gaps(domain: str, limit: int = 8) -> list[dict[str, Any]]:
     final_limit = max(1, min(64, int(limit)))
     keywords = _domain_keywords(domain)
-    mined: list[dict] = []
+    mined: list[dict[str, Any]] = []
 
     try:
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
-            mined.extend(_from_conflict_hotspots(client=client, keywords=keywords, limit=final_limit))
-            mined.extend(_from_gap_seeds(client=client, keywords=keywords, limit=final_limit))
-            mined.extend(_from_gap_like_claims(client=client, keywords=keywords, limit=final_limit))
-            mined.extend(_from_challenged_propositions(client=client, keywords=keywords, limit=final_limit))
+            mined.extend(_from_global_communities(client=client, keywords=keywords, limit=final_limit))
     except Exception:
         mined = []
 

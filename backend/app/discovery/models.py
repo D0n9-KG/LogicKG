@@ -35,7 +35,7 @@ class ResearchQuestionCandidate(BaseModel):
     timeline: str | None = None
 
     source_claim_ids: list[str] = Field(default_factory=list)
-    source_proposition_ids: list[str] = Field(default_factory=list)
+    source_community_ids: list[str] = Field(default_factory=list)
     source_paper_ids: list[str] = Field(default_factory=list)
     inspiration_adjacent_paper_ids: list[str] = Field(default_factory=list)
     inspiration_random_paper_ids: list[str] = Field(default_factory=list)
@@ -76,7 +76,7 @@ class ResearchQuestionCandidate(BaseModel):
 
     @field_validator(
         "source_claim_ids",
-        "source_proposition_ids",
+        "source_community_ids",
         "source_paper_ids",
         "inspiration_adjacent_paper_ids",
         "inspiration_random_paper_ids",

@@ -185,7 +185,7 @@ def run_discovery_batch(
                 evaluation_metrics=list(row.get("evaluation_metrics") or []),
                 timeline=row.get("timeline"),
                 source_claim_ids=list(row.get("source_claim_ids") or []),
-                source_proposition_ids=list(row.get("source_proposition_ids") or []),
+                source_community_ids=list(row.get("source_community_ids") or []),
                 source_paper_ids=list(row.get("source_paper_ids") or []),
                 inspiration_adjacent_paper_ids=list(row.get("inspiration_adjacent_paper_ids") or []),
                 inspiration_random_paper_ids=list(row.get("inspiration_random_paper_ids") or []),

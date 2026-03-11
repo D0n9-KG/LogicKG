@@ -39,5 +39,6 @@ def test_gap_detector_returns_source_community_ids_instead_of_proposition_ids(mo
     rows = detect_knowledge_gaps(domain="finite_element", limit=4)
 
     assert rows[0].get("source_community_ids") == ["gc:demo"]
+    assert rows[0].get("gap_type") in {"conflict_hotspot", "gap_claim", "seed", "limitation"}
     assert "source_proposition_ids" not in rows[0]
 
