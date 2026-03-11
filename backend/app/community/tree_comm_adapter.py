@@ -19,28 +19,63 @@ class _NodeView(dict[str, dict[str, Any]]):
         return list(self.keys())
 
 
+class _EdgeView:
+    def __init__(self, graph: "MultiDiGraph") -> None:
+        self._graph = graph
+
+    def __call__(self, data: bool = False):
+        if data:
+            return list(self._graph._edges)
+        return [(source, target) for source, target, _ in self._graph._edges]
+
+    def __getitem__(self, key: tuple[Any, Any, int]):
+        source, target, edge_key = key
+        return self._graph._adj[str(source)][str(target)][int(edge_key)]
+
+
 class MultiDiGraph:
     def __init__(self) -> None:
         self.nodes = _NodeView()
         self._edges: list[tuple[str, str, dict[str, Any]]] = []
+        self._adj: dict[str, dict[str, dict[int, dict[str, Any]]]] = {}
+        self.edges = _EdgeView(self)
 
     def add_node(self, node_for_adding: Any, **attr: Any) -> None:
-        self.nodes[str(node_for_adding)] = dict(attr)
+        node_id = str(node_for_adding)
+        self.nodes[node_id] = dict(attr)
+        self._adj.setdefault(node_id, {})
 
     def add_edge(self, u_for_edge: Any, v_for_edge: Any, **attr: Any) -> None:
-        self._edges.append((str(u_for_edge), str(v_for_edge), dict(attr)))
+        source = str(u_for_edge)
+        target = str(v_for_edge)
+        self._adj.setdefault(source, {})
+        self._adj.setdefault(target, {})
+        keyed_edges = self._adj[source].setdefault(target, {})
+        edge_key = len(keyed_edges)
+        edge_data = dict(attr)
+        keyed_edges[edge_key] = edge_data
+        self._edges.append((source, target, edge_data))
 
-    def edges(self, data: bool = False):
-        if data:
-            return list(self._edges)
-        return [(source, target) for source, target, _ in self._edges]
+    def neighbors(self, node: Any):
+        return list(self._adj.get(str(node), {}).keys())
+
+    def degree(self, node: Any | None = None) -> int | dict[str, int]:
+        if node is None:
+            return {node_id: self.degree(node_id) for node_id in self.nodes.keys()}
+        node_id = str(node)
+        out_degree = sum(len(edges) for edges in self._adj.get(node_id, {}).values())
+        in_degree = 0
+        for source, targets in self._adj.items():
+            if source == node_id:
+                continue
+            in_degree += len(targets.get(node_id, {}))
+        return out_degree + in_degree
 
     def number_of_nodes(self) -> int:
         return len(self.nodes)
 
     def number_of_edges(self) -> int:
         return len(self._edges)
-
 
 if _NetworkXMultiDiGraph is not None:
     MultiDiGraph = _NetworkXMultiDiGraph

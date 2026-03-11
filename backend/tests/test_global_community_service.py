@@ -162,7 +162,7 @@ def test_global_community_read_helpers_return_keywords_and_members() -> None:
     ]
 
 
-def test_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() -> None:
+def test_legacy_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() -> None:
     class _CleanupSession(_FakeSession):
         def run(self, query: str, **params):
             self.calls.append((str(query), dict(params)))
@@ -179,9 +179,12 @@ def test_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() ->
     fake_session = _CleanupSession()
     client = _client_with_fake_driver(fake_session)
 
-    assert hasattr(client, "clear_proposition_artifacts"), "Expected clear_proposition_artifacts() to exist."
+    assert hasattr(
+        client,
+        "clear_legacy_proposition_artifacts",
+    ), "Expected clear_legacy_proposition_artifacts() to exist."
 
-    deleted = client.clear_proposition_artifacts()
+    deleted = client.clear_legacy_proposition_artifacts()
 
     assert deleted == {
         "deleted_proposition_groups": 2,
@@ -195,6 +198,25 @@ def test_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() ->
     assert "SUPPORTS" in queries
     assert "CHALLENGES" in queries
     assert "SUPERSEDES" in queries
+
+
+def test_legacy_proposition_schema_cleanup_helper_drops_constraints_and_indexes() -> None:
+    fake_session = _FakeSession()
+    client = _client_with_fake_driver(fake_session)
+
+    dropped = client.drop_legacy_proposition_schema()
+
+    assert dropped == {
+        "dropped_constraints": 3,
+        "dropped_indexes": 2,
+    }
+
+    queries = "\n".join(query for query, _ in fake_session.calls)
+    assert "DROP CONSTRAINT proposition_id_unique IF EXISTS" in queries
+    assert "DROP CONSTRAINT proposition_key_unique IF EXISTS" in queries
+    assert "DROP CONSTRAINT proposition_group_id_unique IF EXISTS" in queries
+    assert "DROP INDEX proposition_state IF EXISTS" in queries
+    assert "DROP INDEX proposition_score IF EXISTS" in queries
 
 
 def test_rebuild_global_communities_passes_projection_limits_from_settings(monkeypatch) -> None:

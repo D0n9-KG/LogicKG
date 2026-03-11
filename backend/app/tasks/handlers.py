@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from app.community.service import rebuild_global_communities
 from app.ingest.pipeline import ingest_path
-from app.ingest.rebuild import rebuild_global_faiss, rebuild_paper
+from app.ingest.rebuild import cleanup_legacy_proposition_artifacts, rebuild_global_faiss, rebuild_paper
 from app.ingest.upload_actions import commit_ready, replace_with_new
 from app.ingest.textbook_pipeline import ingest_textbook
 from app.discovery.service import run_discovery_batch
@@ -216,6 +216,20 @@ def handle_rebuild_global_communities(
         update(stage, p, msg)
 
     return rebuild_global_communities(progress=progress, log=log)
+
+
+def handle_cleanup_legacy_propositions(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    _load_payload(task_id)
+    update("community:cleanup:init", 0.02, "Cleaning legacy proposition artifacts")
+
+    def progress(stage: str, p: float, msg: str | None = None) -> None:
+        update(stage, p, msg)
+
+    return cleanup_legacy_proposition_artifacts(progress=progress, log=log)
 
 
 def handle_update_similarity_paper(

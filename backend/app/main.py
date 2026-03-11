@@ -19,6 +19,7 @@ from app.api.routers.fusion import router as fusion_router
 from app.api.routers.textbooks import router as textbooks_router
 
 from app.tasks.handlers import (
+    handle_cleanup_legacy_propositions,
     handle_ingest_path,
     handle_ingest_textbook,
     handle_ingest_upload_ready,
@@ -45,6 +46,7 @@ def register_task_handlers(manager: TaskManager) -> None:
     manager.register(TaskType.rebuild_all, handle_rebuild_all)
     manager.register(TaskType.rebuild_fusion, handle_rebuild_fusion)
     manager.register(TaskType.rebuild_global_communities, handle_rebuild_global_communities)
+    manager.register(TaskType.cleanup_legacy_propositions, handle_cleanup_legacy_propositions)
     manager.register(TaskType.rebuild_similarity, handle_rebuild_similarity)
     manager.register(TaskType.update_similarity_paper, handle_update_similarity_paper)
     manager.register(TaskType.ingest_textbook, handle_ingest_textbook)

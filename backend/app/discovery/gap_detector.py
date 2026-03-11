@@ -192,8 +192,8 @@ def _from_gap_like_claims(
                 "source_paper_ids": _string_list(row.get("paper_id")),
                 "signals": {
                     "claim_id": str(row.get("claim_id") or "").strip(),
-                    "prop_id": str(row.get("prop_id") or "").strip(),
                     "kinds": _string_list(row.get("kinds")),
+                    "source_community_ids": _string_list(row.get("source_community_ids")),
                     "evidence_count": int(row.get("evidence_count") or 0),
                 },
             }
@@ -228,8 +228,8 @@ def _from_gap_seeds(
                 "signals": {
                     "seed_id": str(row.get("seed_id") or "").strip(),
                     "claim_id": str(row.get("claim_id") or "").strip(),
-                    "prop_id": str(row.get("prop_id") or "").strip(),
                     "kinds": _string_list(row.get("kinds")),
+                    "source_community_ids": _string_list(row.get("source_community_ids")),
                 },
             }
         )

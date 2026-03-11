@@ -1,4 +1,4 @@
-"""Embedding generation utilities for Proposition clustering."""
+"""Embedding generation utilities for semantic similarity workflows."""
 from __future__ import annotations
 
 import requests

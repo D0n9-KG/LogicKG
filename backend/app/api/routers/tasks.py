@@ -98,6 +98,15 @@ def submit_rebuild_community(req: RebuildCommunityTaskRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/cleanup/propositions", response_model=SubmitTaskResponse)
+def submit_cleanup_legacy_propositions():
+    try:
+        task_id = task_manager.submit(TaskType.cleanup_legacy_propositions, {})
+        return SubmitTaskResponse(task_id=task_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 class UpdateSimilarityPaperRequest(BaseModel):
     paper_id: str = Field(min_length=3)
 

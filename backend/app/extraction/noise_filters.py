@@ -149,7 +149,7 @@ def is_pure_definition_text(
 ) -> bool:
     """Detect if text is a pure definition.
 
-    Pure definitions have low semantic value for evolution relations.
+    Pure definitions have low semantic value for downstream relation mining.
     Examples: "X is a Y", "X refers to Y", "X is defined as Y"
 
     Context-aware rule: if *next_text* (the immediately following claim in the

@@ -72,13 +72,23 @@ class _FakeNeo4jClient:
             {"member_id": "ke-1", "member_kind": "KnowledgeEntity", "text": "Finite Element Method"},
         ]
 
-    def list_proposition_structured_rows(self, limit=50000):  # noqa: ARG002
-        raise AssertionError("rebuild_global_faiss should not export proposition corpora")
+    def clear_legacy_proposition_artifacts(self):
+        return {
+            "deleted_proposition_groups": 2,
+            "deleted_propositions": 3,
+            "deleted_relation_edges": 4,
+        }
+
+    def drop_legacy_proposition_schema(self):
+        return {
+            "dropped_constraints": 3,
+            "dropped_indexes": 2,
+        }
 
 
 def test_rebuild_global_faiss_keeps_only_community_corpora_and_removes_stale_proposition_exports(monkeypatch, tmp_path) -> None:
     fake_client = _FakeNeo4jClient()
-    built_row_corpora: list[tuple[str, list[dict]]] = []
+    built_row_corpora: list[tuple[str, list[dict], dict]] = []
 
     monkeypatch.setattr(rebuild_mod, "Neo4jClient", lambda *args, **kwargs: fake_client)  # noqa: ARG005
     monkeypatch.setattr(rebuild_mod, "_storage_dir", lambda: tmp_path)
@@ -90,7 +100,7 @@ def test_rebuild_global_faiss_keeps_only_community_corpora_and_removes_stale_pro
     monkeypatch.setattr(
         rebuild_mod,
         "build_faiss_for_rows",
-        lambda rows, out_dir, **kwargs: built_row_corpora.append((str(out_dir), list(rows))) or {  # noqa: ARG005
+        lambda rows, out_dir, **kwargs: built_row_corpora.append((str(out_dir), list(rows), dict(kwargs))) or {
             "out_dir": str(out_dir),
             "row_count": len(list(rows)),
         },
@@ -105,8 +115,10 @@ def test_rebuild_global_faiss_keeps_only_community_corpora_and_removes_stale_pro
     result = rebuild_mod.rebuild_global_faiss()
 
     assert "propositions" not in result["faiss"]["corpora"]
-    assert not any("propositions" in out_dir for out_dir, _ in built_row_corpora)
-    community_corpus = next(rows for out_dir, rows in built_row_corpora if out_dir.endswith("communities"))
+    assert not any("propositions" in out_dir for out_dir, _, _ in built_row_corpora)
+    claim_corpus_kwargs = next(kwargs for out_dir, _, kwargs in built_row_corpora if out_dir.endswith("claims"))
+    assert "proposition_id" not in list(claim_corpus_kwargs.get("metadata_keys") or [])
+    community_corpus = next(rows for out_dir, rows, _ in built_row_corpora if out_dir.endswith("communities"))
     assert community_corpus == [
         {
             "community_id": "gc:demo",
@@ -127,3 +139,52 @@ def test_rebuild_global_faiss_keeps_only_community_corpora_and_removes_stale_pro
         }
     ]
     assert not stale_dir.exists()
+
+
+def test_cleanup_legacy_proposition_artifacts_rebuilds_communities_and_faiss(monkeypatch, tmp_path) -> None:
+    fake_client = _FakeNeo4jClient()
+    calls: list[str] = []
+    progress_events: list[tuple[str, float, str | None]] = []
+    log_lines: list[str] = []
+
+    monkeypatch.setattr(rebuild_mod, "Neo4jClient", lambda *args, **kwargs: fake_client)  # noqa: ARG005
+    monkeypatch.setattr(rebuild_mod, "_storage_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        rebuild_mod,
+        "rebuild_global_communities",
+        lambda progress=None, log=None: calls.append("community") or {
+            "ok": True,
+            "communities_written": 3,
+        },
+    )
+    monkeypatch.setattr(
+        rebuild_mod,
+        "rebuild_global_faiss",
+        lambda progress=None, log=None: calls.append("faiss") or {
+            "faiss": {"corpora": {"communities": {"row_count": 1}}},
+        },
+    )
+
+    for name in ("propositions", "proposition_groups"):
+        stale_dir = tmp_path / "faiss" / name
+        stale_dir.mkdir(parents=True)
+        (stale_dir / "index.faiss").write_text("stale", encoding="utf-8")
+
+    result = rebuild_mod.cleanup_legacy_proposition_artifacts(
+        progress=lambda stage, p, msg=None: progress_events.append((stage, p, msg)),
+        log=log_lines.append,
+    )
+
+    assert calls == ["community", "faiss"]
+    assert result["cleanup"]["graph"]["deleted_proposition_groups"] == 2
+    assert result["cleanup"]["schema"]["dropped_constraints"] == 3
+    assert result["cleanup"]["removed_corpora"]
+    assert sorted(Path(path).name for path in result["cleanup"]["removed_corpora"]) == [
+        "proposition_groups",
+        "propositions",
+    ]
+    assert result["community"]["communities_written"] == 3
+    assert "faiss" in result
+    assert progress_events[0][0] == "cleanup:legacy:init"
+    assert progress_events[-1][0] == "cleanup:legacy:done"
+    assert any("legacy proposition artifacts" in line.lower() for line in log_lines)

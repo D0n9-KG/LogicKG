@@ -29,45 +29,6 @@ def paper_id_for_md_path(md_path: str, doi: str | None = None) -> str:
 _WS_RE = re.compile(r"\s+")
 
 
-def normalize_proposition_text(text: str) -> str:
-    s = _WS_RE.sub(" ", (text or "").strip().lower())
-    while s and s[-1] in ".;銆傦紱":
-        s = s[:-1].rstrip()
-    return s
-
-
-def _author_id_for_name(name: str) -> str:
-    normalized = _WS_RE.sub(" ", str(name or "").strip().lower())
-    normalized = normalized.replace(".", " ")
-    normalized = _WS_RE.sub(" ", normalized).strip()
-    if not normalized:
-        return ""
-    digest = hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return f"author:{digest}"
-
-
-def proposition_key_for_claim(text: str, step_type: str | None = None, kinds: list[str] | None = None) -> str:
-    """
-    Generate deterministic proposition key based ONLY on normalized text.
-
-    Assertion Layer (P1): Text-only identity ensures that identical claims
-    from different reasoning steps or with different kinds are properly
-    deduplicated. step_type and kinds are now tracked separately in the
-    step_types_seen and kinds_seen arrays on the Proposition node.
-
-    Parameters kept for backward compatibility but are ignored in hash calculation.
-    """
-    base = normalize_proposition_text(text)
-    # Text-only hash for deterministic Assertion Layer identity
-    raw = base.encode("utf-8", errors="ignore")
-    return hashlib.sha256(raw).hexdigest()[:24]
-
-
-def proposition_id_for_key(prop_key: str) -> str:
-    raw = ("proposition\0" + str(prop_key or "")).encode("utf-8", errors="ignore")
-    return hashlib.sha256(raw).hexdigest()[:24]
-
-
 def iso_time_for_paper_year(year: int | None) -> str:
     try:
         y = int(year) if year is not None else None
@@ -81,7 +42,7 @@ def iso_time_for_paper_year(year: int | None) -> str:
 def _split_prefixed_evidence_ids(ids: list[str]) -> dict[str, list[str]]:
     out = {
         "claim_ids": [],
-        "prop_ids": [],
+        "community_ids": [],
         "chunk_ids": [],
         "event_ids": [],
         "other_ids": [],
@@ -100,8 +61,8 @@ def _split_prefixed_evidence_ids(ids: list[str]) -> dict[str, list[str]]:
         bucket = "other_ids"
         if key == "CL":
             bucket = "claim_ids"
-        elif key == "PR":
-            bucket = "prop_ids"
+        elif key == "GC":
+            bucket = "community_ids"
         elif key == "CH":
             bucket = "chunk_ids"
         elif key == "EV":
@@ -206,9 +167,6 @@ class Neo4jClient:
             "CREATE CONSTRAINT ref_id_unique IF NOT EXISTS FOR (r:ReferenceEntry) REQUIRE r.ref_id IS UNIQUE",
             "CREATE CONSTRAINT logic_step_id_unique IF NOT EXISTS FOR (s:LogicStep) REQUIRE s.logic_step_id IS UNIQUE",
             "CREATE CONSTRAINT claim_id_unique IF NOT EXISTS FOR (cl:Claim) REQUIRE cl.claim_id IS UNIQUE",
-            "CREATE CONSTRAINT proposition_id_unique IF NOT EXISTS FOR (pr:Proposition) REQUIRE pr.prop_id IS UNIQUE",
-            "CREATE CONSTRAINT proposition_key_unique IF NOT EXISTS FOR (pr:Proposition) REQUIRE pr.prop_key IS UNIQUE",
-            "CREATE CONSTRAINT proposition_group_id_unique IF NOT EXISTS FOR (pg:PropositionGroup) REQUIRE pg.group_id IS UNIQUE",
             "CREATE CONSTRAINT evidence_event_id_unique IF NOT EXISTS FOR (ev:EvidenceEvent) REQUIRE ev.event_id IS UNIQUE",
             "CREATE CONSTRAINT figure_id_unique IF NOT EXISTS FOR (f:Figure) REQUIRE f.figure_id IS UNIQUE",
             "CREATE CONSTRAINT collection_id_unique IF NOT EXISTS FOR (co:Collection) REQUIRE co.collection_id IS UNIQUE",
@@ -217,8 +175,6 @@ class Neo4jClient:
             "CREATE INDEX paper_year IF NOT EXISTS FOR (p:Paper) ON (p.year)",
             "CREATE INDEX paper_ingested IF NOT EXISTS FOR (p:Paper) ON (p.ingested)",
             "CREATE INDEX author_name IF NOT EXISTS FOR (a:Author) ON (a.name)",
-            "CREATE INDEX proposition_state IF NOT EXISTS FOR (pr:Proposition) ON (pr.current_state)",
-            "CREATE INDEX proposition_score IF NOT EXISTS FOR (pr:Proposition) ON (pr.current_score)",
             "CREATE INDEX evidence_event_type IF NOT EXISTS FOR (ev:EvidenceEvent) ON (ev.event_type)",
             "CREATE INDEX evidence_event_status IF NOT EXISTS FOR (ev:EvidenceEvent) ON (ev.status)",
             "CREATE INDEX collection_name IF NOT EXISTS FOR (co:Collection) ON (co.name)",
@@ -250,6 +206,24 @@ class Neo4jClient:
         with self._driver.session() as session:
             for s in stmts:
                 session.run(s)
+
+    def drop_legacy_proposition_schema(self) -> dict[str, int]:
+        constraints = [
+            "DROP CONSTRAINT proposition_id_unique IF EXISTS",
+            "DROP CONSTRAINT proposition_key_unique IF EXISTS",
+            "DROP CONSTRAINT proposition_group_id_unique IF EXISTS",
+        ]
+        indexes = [
+            "DROP INDEX proposition_state IF EXISTS",
+            "DROP INDEX proposition_score IF EXISTS",
+        ]
+        with self._driver.session() as session:
+            for stmt in constraints + indexes:
+                session.run(stmt)
+        return {
+            "dropped_constraints": len(constraints),
+            "dropped_indexes": len(indexes),
+        }
 
     def upsert_paper_and_chunks(self, doc: DocumentIR) -> None:
         paper_id = _paper_id_for_doc(doc)
@@ -845,21 +819,6 @@ LIMIT $limit
 """
         with self._driver.session() as session:
             rows = session.run(cypher, claim_ids=ids, limit=limit)
-            return [str(r.get("paper_id") or "").strip() for r in rows if str(r.get("paper_id") or "").strip()]
-
-    def list_paper_ids_for_propositions(self, proposition_ids: list[str], limit: int = 200) -> list[str]:
-        ids = [str(x).strip() for x in (proposition_ids or []) if str(x).strip()]
-        if not ids:
-            return []
-        limit = max(1, min(5000, int(limit)))
-        cypher = """
-MATCH (p:Paper)-[:HAS_CLAIM]->(:Claim)-[:MAPS_TO]->(pr:Proposition)
-WHERE pr.prop_id IN $prop_ids
-RETURN DISTINCT p.paper_id AS paper_id
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            rows = session.run(cypher, prop_ids=ids, limit=limit)
             return [str(r.get("paper_id") or "").strip() for r in rows if str(r.get("paper_id") or "").strip()]
 
     def _sample_author_hop_papers(
@@ -1773,13 +1732,6 @@ DETACH DELETE re
 MATCH (p:Paper {paper_id:$paper_id})-[:HAS_FIGURE]->(f:Figure)
 DETACH DELETE f
 """,
-            # Clean up orphaned Propositions (those with no incoming MAPS_TO relationships)
-            # This is safe because Propositions are only accessed via Claims
-            """
-MATCH (pr:Proposition)
-WHERE NOT EXISTS((pr)<-[:MAPS_TO]-())
-DETACH DELETE pr
-""",
         ]
         with self._driver.session() as session:
             for s in stmts:
@@ -2311,70 +2263,6 @@ LIMIT $limit
             out.append({"node_id": step_id, "paper_id": p_id, "text": effective})
         return out
 
-    def list_proposition_similarity_rows(self, paper_id: str | None = None, limit: int = 200000) -> list[dict]:
-        """
-        Return proposition texts with claim/textbook provenance for similarity indexing.
-
-        Notes:
-        - Prefers claim provenance when a proposition is linked to both a claim and a textbook entity.
-        - Deduplicates by proposition id so callers get a stable single row per proposition.
-        """
-        pid = (paper_id or "").strip()
-        limit = max(1, min(200000, int(limit)))
-        cypher = """
-MATCH (pr:Proposition)
-OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (p:Paper)-[:HAS_CLAIM]->(cl)
-WHERE ($paper_id = '' OR p.paper_id = $paper_id)
-OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
-OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
-RETURN pr.prop_id AS node_id,
-       coalesce(p.paper_id, '') AS paper_id,
-       coalesce(p.paper_source, '') AS paper_source,
-       coalesce(pr.canonical_text, '') AS text,
-       CASE
-         WHEN cl IS NOT NULL THEN 'claim'
-         WHEN ke IS NOT NULL THEN 'textbook_entity'
-         ELSE 'proposition'
-       END AS source_kind,
-       coalesce(cl.claim_id, ke.entity_id, pr.prop_id) AS source_id,
-       tb.textbook_id AS textbook_id,
-       tc.chapter_id AS chapter_id
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            rows = [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
-
-        priority = {"claim": 3, "textbook_entity": 2, "proposition": 1}
-        merged: dict[str, dict] = {}
-        for row in rows:
-            node_id = str(row.get("node_id") or "").strip()
-            text = str(row.get("text") or "").strip()
-            if not node_id or not text:
-                continue
-            normalized = {
-                "node_id": node_id,
-                "paper_id": str(row.get("paper_id") or "").strip(),
-                "paper_source": str(row.get("paper_source") or "").strip(),
-                "text": text,
-                "source_kind": str(row.get("source_kind") or "proposition").strip() or "proposition",
-                "source_id": str(row.get("source_id") or node_id).strip() or node_id,
-                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
-                "chapter_id": str(row.get("chapter_id") or "").strip() or None,
-            }
-            existing = merged.get(node_id)
-            if not existing:
-                merged[node_id] = normalized
-                continue
-            if priority.get(normalized["source_kind"], 0) > priority.get(existing.get("source_kind", ""), 0):
-                existing["source_kind"] = normalized["source_kind"]
-                existing["source_id"] = normalized["source_id"]
-            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id"):
-                if not existing.get(key) and normalized.get(key):
-                    existing[key] = normalized[key]
-        return list(merged.values())[:limit]
-
     def list_logic_step_structured_rows(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
         pid = (paper_id or "").strip()
         limit = max(1, min(200000, int(limit)))
@@ -2405,7 +2293,6 @@ MATCH (p:Paper)-[:HAS_CLAIM]->(cl:Claim)
 WHERE ($paper_id = '' OR p.paper_id = $paper_id)
 OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
 WITH p, cl, collect(DISTINCT ch)[0..12] AS chunks
-OPTIONAL MATCH (cl)-[:MAPS_TO]->(pr:Proposition)
 RETURN 'claim' AS kind,
        cl.claim_id AS source_id,
        p.paper_id AS paper_id,
@@ -2413,7 +2300,6 @@ RETURN 'claim' AS kind,
        cl.step_type AS step_type,
        cl.text AS text,
        cl.confidence AS confidence,
-       pr.prop_id AS proposition_id,
        [ch IN chunks WHERE ch.chunk_id IS NOT NULL | ch.chunk_id] AS evidence_chunk_ids,
        coalesce(cl.evidence_quote, head([ch IN chunks WHERE trim(coalesce(ch.text, '')) <> '' | ch.text]), '') AS evidence_quote
 ORDER BY p.paper_id ASC, cl.claim_id ASC
@@ -2422,81 +2308,10 @@ LIMIT $limit
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
 
-    def list_proposition_structured_rows(self, paper_id: str | None = None, limit: int = 50000) -> list[dict]:
-        pid = (paper_id or "").strip()
-        limit = max(1, min(200000, int(limit)))
-        cypher = """
-MATCH (pr:Proposition)
-OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (p:Paper)-[:HAS_CLAIM]->(cl)
-WHERE ($paper_id = '' OR p.paper_id = $paper_id)
-OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
-OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
-OPTIONAL MATCH (ev:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-RETURN 'proposition' AS kind,
-       pr.prop_id AS source_id,
-       pr.prop_id AS proposition_id,
-       p.paper_id AS paper_id,
-       p.paper_source AS paper_source,
-       pr.canonical_text AS text,
-       CASE
-         WHEN cl IS NOT NULL THEN 'claim'
-         WHEN ke IS NOT NULL THEN 'textbook_entity'
-         ELSE 'proposition'
-       END AS source_kind,
-       coalesce(cl.claim_id, ke.entity_id, pr.prop_id) AS source_ref_id,
-       tb.textbook_id AS textbook_id,
-       tc.chapter_id AS chapter_id,
-       coalesce(cl.evidence_quote, ke.description, pr.canonical_text) AS evidence_quote,
-       ev.event_id AS evidence_event_id,
-       ev.event_type AS evidence_event_type
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            rows = [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
-
-        merged: dict[str, dict] = {}
-        priority = {"claim": 3, "textbook_entity": 2, "proposition": 1}
-        for row in rows:
-            source_id = str(row.get("source_id") or "").strip()
-            text = str(row.get("text") or "").strip()
-            if not source_id or not text:
-                continue
-            current = {
-                "kind": "proposition",
-                "source_id": source_id,
-                "proposition_id": str(row.get("proposition_id") or source_id).strip() or source_id,
-                "paper_id": str(row.get("paper_id") or "").strip() or None,
-                "paper_source": str(row.get("paper_source") or "").strip() or None,
-                "text": text,
-                "source_kind": str(row.get("source_kind") or "proposition").strip() or "proposition",
-                "source_ref_id": str(row.get("source_ref_id") or source_id).strip() or source_id,
-                "textbook_id": str(row.get("textbook_id") or "").strip() or None,
-                "chapter_id": str(row.get("chapter_id") or "").strip() or None,
-                "evidence_quote": str(row.get("evidence_quote") or "").strip() or None,
-                "evidence_event_id": str(row.get("evidence_event_id") or "").strip() or None,
-                "evidence_event_type": str(row.get("evidence_event_type") or "").strip() or None,
-            }
-            existing = merged.get(source_id)
-            if not existing:
-                merged[source_id] = current
-                continue
-            if priority.get(current["source_kind"], 0) > priority.get(existing.get("source_kind", ""), 0):
-                existing["source_kind"] = current["source_kind"]
-                existing["source_ref_id"] = current["source_ref_id"]
-                if current.get("evidence_quote"):
-                    existing["evidence_quote"] = current["evidence_quote"]
-            for key in ("paper_id", "paper_source", "textbook_id", "chapter_id", "evidence_event_id", "evidence_event_type"):
-                if not existing.get(key) and current.get(key):
-                    existing[key] = current[key]
-        return list(merged.values())[:limit]
-
     def get_grounding_rows_for_structured_ids(self, ids: list[dict], limit: int = 200) -> list[dict]:
         limit = max(1, min(500, int(limit)))
         claim_ids: list[str] = []
         logic_ids: list[str] = []
-        proposition_ids: list[str] = []
         for item in ids or []:
             kind = str(item.get("kind") or item.get("source_kind") or "").strip().lower()
             ident = str(item.get("id") or item.get("source_id") or "").strip()
@@ -2506,8 +2321,6 @@ LIMIT $limit
                 claim_ids.append(ident)
             elif kind in {"logic_step", "logic"}:
                 logic_ids.append(ident)
-            elif kind == "proposition":
-                proposition_ids.append(ident)
 
         rows: list[dict] = []
         with self._driver.session() as session:
@@ -2559,38 +2372,6 @@ LIMIT $limit
                     )
                 )
 
-            if proposition_ids and len(rows) < limit:
-                proposition_cypher = """
-UNWIND $proposition_ids AS prop_id
-MATCH (pr:Proposition {prop_id: prop_id})
-OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (cl)-[:EVIDENCED_BY]->(ch:Chunk)
-OPTIONAL MATCH (ke:KnowledgeEntity)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (tc:TextbookChapter)-[:HAS_ENTITY]->(ke)
-OPTIONAL MATCH (tb:Textbook)-[:HAS_CHAPTER]->(tc)
-OPTIONAL MATCH (ev:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-RETURN 'proposition' AS source_kind,
-       pr.prop_id AS source_id,
-       coalesce(cl.evidence_quote, ch.text, ke.description, pr.canonical_text) AS quote,
-       ch.chunk_id AS chunk_id,
-       ch.md_path AS md_path,
-       ch.start_line AS start_line,
-       ch.end_line AS end_line,
-       tb.textbook_id AS textbook_id,
-       tc.chapter_id AS chapter_id,
-       ev.event_id AS evidence_event_id,
-       ev.event_type AS evidence_event_type
-LIMIT $limit
-"""
-                rows.extend(
-                    dict(r)
-                    for r in session.run(
-                        proposition_cypher,
-                        proposition_ids=proposition_ids[: max(1, limit - len(rows))],
-                        limit=max(1, limit - len(rows)),
-                    )
-                )
-
         deduped: list[dict] = []
         seen: set[tuple[str, str, str, str]] = set()
         for row in rows:
@@ -2624,305 +2405,6 @@ LIMIT $limit
                 break
         return deduped
 
-    def list_claim_rows_for_evolution(self, paper_id: str | None = None, limit: int = 500000) -> list[dict]:
-        pid = (paper_id or "").strip()
-        limit = max(1, min(500000, int(limit)))
-        cypher = """
-MATCH (p:Paper)-[:HAS_CLAIM]->(cl:Claim)
-WHERE ($paper_id = '' OR p.paper_id = $paper_id)
-RETURN p.paper_id AS paper_id,
-       p.year AS paper_year,
-       cl.claim_id AS claim_id,
-       cl.claim_key AS claim_key,
-       cl.text AS text,
-       cl.step_type AS step_type,
-       cl.kinds AS kinds,
-       cl.confidence AS confidence
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, paper_id=pid, limit=limit)]
-
-    def upsert_proposition_mentions_for_claims(self, paper_id: str, claims: list[dict], paper_year: int | None = None) -> dict[str, int]:
-        pid = str(paper_id or "").strip()
-        if not pid:
-            return {"claims": 0, "propositions": 0}
-        items: list[dict] = []
-        for c in claims or []:
-            claim_id = str(c.get("claim_id") or "").strip()
-            text = str(c.get("text") or "").strip()
-            if not claim_id or not text:
-                continue
-            step_type = str(c.get("step_type") or "").strip()
-            kinds = [str(x).strip() for x in (c.get("kinds") or []) if str(x).strip()]
-            prop_key = proposition_key_for_claim(text=text, step_type=step_type, kinds=kinds)
-            prop_id = proposition_id_for_key(prop_key)
-            try:
-                confidence = float(c.get("confidence") or 0.5)
-            except Exception:
-                confidence = 0.5
-            confidence = max(0.0, min(1.0, confidence))
-            event_id = hashlib.sha256((f"mention\0{pid}\0{claim_id}").encode("utf-8", errors="ignore")).hexdigest()[:32]
-            items.append(
-                {
-                    "paper_id": pid,
-                    "claim_id": claim_id,
-                    "prop_id": prop_id,
-                    "prop_key": prop_key,
-                    "canonical_text": normalize_proposition_text(text),
-                    "step_type": step_type,
-                    "kinds": kinds,
-                    "confidence": confidence,
-                    "strength": confidence,
-                    "event_id": event_id,
-                    "event_time": iso_time_for_paper_year(paper_year),
-                }
-            )
-
-        if not items:
-            return {"claims": 0, "propositions": 0}
-
-        cypher = """
-UNWIND $items AS it
-MATCH (p:Paper {paper_id: it.paper_id})-[:HAS_CLAIM]->(cl:Claim {claim_id: it.claim_id})
-MERGE (pr:Proposition {prop_id: it.prop_id})
-ON CREATE SET pr.prop_key = it.prop_key,
-              pr.canonical_text = it.canonical_text,
-              pr.created_at = $now
-SET pr.last_seen_at = $now,
-    pr.step_types_seen = CASE
-        WHEN it.step_type = '' THEN coalesce(pr.step_types_seen, [])
-        WHEN it.step_type IN coalesce(pr.step_types_seen, []) THEN pr.step_types_seen
-        ELSE coalesce(pr.step_types_seen, []) + [it.step_type]
-    END,
-    pr.kinds_seen = reduce(acc = coalesce(pr.kinds_seen, []), k IN it.kinds |
-        CASE WHEN k IN acc THEN acc ELSE acc + [k] END)
-MERGE (cl)-[:MAPS_TO]->(pr)
-MERGE (ev:EvidenceEvent {event_id: it.event_id})
-ON CREATE SET ev.origin = 'mention',
-              ev.created_at = $now
-SET ev.event_type = 'SUPPORTS',
-    ev.status = 'accepted',
-    ev.paper_id = it.paper_id,
-    ev.claim_id = it.claim_id,
-    ev.source_prop_id = it.prop_id,
-    ev.target_prop_id = it.prop_id,
-    ev.confidence = it.confidence,
-    ev.strength = it.strength,
-    ev.event_time = it.event_time
-MERGE (cl)-[:TRIGGERS_EVENT]->(ev)
-MERGE (ev)-[:ABOUT]->(pr)
-MERGE (ev)-[:FROM_PROPOSITION]->(pr)
-MERGE (ev)-[:TO_PROPOSITION]->(pr)
-"""
-        with self._driver.session() as session:
-            session.run(cypher, items=items, now=datetime.now(tz=timezone.utc).isoformat())
-        return {"claims": len(items), "propositions": len({str(it["prop_id"]) for it in items})}
-
-    def list_proposition_candidate_pairs(self, min_score: float = 0.9, limit: int = 50000) -> list[dict]:
-        limit = max(1, min(500000, int(limit)))
-        cypher = """
-MATCH (a:Claim)-[s:SIMILAR_CLAIM]->(b:Claim)
-WHERE a.paper_id <> b.paper_id
-  AND coalesce(s.score, 0.0) >= $min_score
-MATCH (a)-[:MAPS_TO]->(pa:Proposition)
-MATCH (b)-[:MAPS_TO]->(pb:Proposition)
-WHERE pa.prop_id <> pb.prop_id
-OPTIONAL MATCH (sp:Paper {paper_id: a.paper_id})
-OPTIONAL MATCH (tp:Paper {paper_id: b.paper_id})
-OPTIONAL MATCH (sp)-[c:CITES]->(tp)
-RETURN a.claim_id AS source_claim_id,
-       b.claim_id AS target_claim_id,
-       a.paper_id AS source_paper_id,
-       coalesce(toLower(s.mode), 'embedding') AS similarity_mode,
-       b.paper_id AS target_paper_id,
-       a.text AS source_text,
-       b.text AS target_text,
-       coalesce(a.confidence, 0.5) AS source_confidence,
-       coalesce(b.confidence, 0.5) AS target_confidence,
-       coalesce(c.purpose_labels, []) AS citation_purpose_labels,
-       coalesce(c.purpose_scores, []) AS citation_purpose_scores,
-       coalesce(s.score, 0.0) AS similarity,
-       pa.prop_id AS source_prop_id,
-       pb.prop_id AS target_prop_id
-ORDER BY similarity DESC
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, min_score=float(min_score), limit=limit)]
-
-    def replace_inferred_relation_events(self, items: list[dict], built_at: str) -> None:
-        clear_cypher = """
-MATCH (e:EvidenceEvent {origin:'inferred_relation'})
-DETACH DELETE e
-"""
-        upsert_cypher = """
-UNWIND $items AS it
-MATCH (sp:Proposition {prop_id: it.source_prop_id})
-MATCH (tp:Proposition {prop_id: it.target_prop_id})
-OPTIONAL MATCH (sc:Claim {claim_id: it.source_claim_id})
-OPTIONAL MATCH (tc:Claim {claim_id: it.target_claim_id})
-MERGE (e:EvidenceEvent {event_id: it.event_id})
-ON CREATE SET e.origin = 'inferred_relation',
-              e.created_at = $built_at
-SET e.event_type = it.event_type,
-    e.status = it.status,
-    e.confidence = it.confidence,
-    e.strength = it.strength,
-    e.source_prop_id = it.source_prop_id,
-    e.target_prop_id = it.target_prop_id,
-    e.paper_id = it.target_paper_id,
-    e.claim_id = it.target_claim_id,
-    e.raw_similarity = coalesce(it.raw_similarity, 0.0),
-    e.inference_version = coalesce(it.inference_version, 'v1'),
-    e.event_time = it.event_time
-MERGE (e)-[:FROM_PROPOSITION]->(sp)
-MERGE (e)-[:TO_PROPOSITION]->(tp)
-MERGE (e)-[:ABOUT]->(tp)
-FOREACH (_ IN CASE WHEN sc IS NULL THEN [] ELSE [1] END | MERGE (sc)-[:TRIGGERS_EVENT]->(e))
-FOREACH (_ IN CASE WHEN tc IS NULL THEN [] ELSE [1] END | MERGE (tc)-[:TRIGGERS_EVENT]->(e))
-"""
-        with self._driver.session() as session:
-            session.run(clear_cypher)
-            batch = list(items or [])
-            for i in range(0, len(batch), 200):
-                session.run(upsert_cypher, items=batch[i : i + 200], built_at=str(built_at))
-
-    def _replace_proposition_relation_edges(self, rel_type: str, items: list[dict], built_at: str) -> None:
-        kind = str(rel_type or "").strip().upper()
-        if kind not in {"SUPPORTS", "CHALLENGES", "SUPERSEDES"}:
-            raise ValueError(f"Unsupported relation type: {rel_type}")
-        clear_cypher = f"""
-MATCH (:Proposition)-[r:{kind}]->(:Proposition)
-DELETE r
-"""
-        upsert_cypher = f"""
-UNWIND $items AS it
-MATCH (a:Proposition {{prop_id: it.source_prop_id}})
-MATCH (b:Proposition {{prop_id: it.target_prop_id}})
-MERGE (a)-[r:{kind}]->(b)
-SET r.score = it.score,
-    r.evidence_count = it.evidence_count,
-    r.updated_at = $built_at,
-    r.origin = 'inferred_relation'
-"""
-        with self._driver.session() as session:
-            session.run(clear_cypher)
-            batch = list(items or [])
-            for i in range(0, len(batch), 200):
-                session.run(upsert_cypher, items=batch[i : i + 200], built_at=str(built_at))
-
-    def replace_proposition_support_edges(self, items: list[dict], built_at: str) -> None:
-        self._replace_proposition_relation_edges("SUPPORTS", items, built_at)
-
-    def replace_proposition_challenge_edges(self, items: list[dict], built_at: str) -> None:
-        self._replace_proposition_relation_edges("CHALLENGES", items, built_at)
-
-    def replace_proposition_supersede_edges(self, items: list[dict], built_at: str) -> None:
-        self._replace_proposition_relation_edges("SUPERSEDES", items, built_at)
-
-    def recompute_proposition_states(self) -> dict[str, int]:
-        update_cypher = """
-MATCH (pr:Proposition)
-OPTIONAL MATCH (e:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-WHERE coalesce(e.status, '') = 'accepted'
-WITH pr,
-     sum(CASE WHEN e.event_type = 'SUPPORTS' THEN coalesce(e.strength, e.confidence, 0.5) ELSE 0.0 END) AS support_w,
-     sum(CASE WHEN e.event_type = 'CHALLENGES' THEN coalesce(e.strength, e.confidence, 0.5) ELSE 0.0 END) AS challenge_w,
-     sum(CASE WHEN e.event_type = 'SUPERSEDES' THEN coalesce(e.strength, e.confidence, 0.5) ELSE 0.0 END) AS supersede_w
-WITH pr, support_w, challenge_w, supersede_w, (support_w + challenge_w + supersede_w) AS total_w
-WITH pr,
-     CASE WHEN total_w <= 0 THEN 0.55 ELSE support_w / total_w END AS support_ratio,
-     CASE WHEN total_w <= 0 THEN 0.00 ELSE challenge_w / total_w END AS challenge_ratio,
-     CASE WHEN total_w <= 0 THEN 0.00 ELSE supersede_w / total_w END AS supersede_ratio
-WITH pr, (0.55 + 0.45 * support_ratio - 0.45 * challenge_ratio - 0.65 * supersede_ratio) AS raw_score
-WITH pr, CASE
-    WHEN raw_score < 0 THEN 0.0
-    WHEN raw_score > 1 THEN 1.0
-    ELSE raw_score
-END AS final_score
-SET pr.current_score = final_score,
-pr.current_state = CASE
-    WHEN final_score >= 0.70 THEN 'stable'
-    WHEN final_score >= 0.40 THEN 'challenged'
-    ELSE 'superseded'
-END,
-pr.score_updated_at = $now
-"""
-        stats_cypher = """
-MATCH (pr:Proposition)
-RETURN count(pr) AS total,
-       sum(CASE WHEN pr.current_state = 'stable' THEN 1 ELSE 0 END) AS stable,
-       sum(CASE WHEN pr.current_state = 'challenged' THEN 1 ELSE 0 END) AS challenged,
-       sum(CASE WHEN pr.current_state = 'superseded' THEN 1 ELSE 0 END) AS superseded
-"""
-        with self._driver.session() as session:
-            now = datetime.now(tz=timezone.utc).isoformat()
-            session.run(update_cypher, now=now)
-            row = session.run(stats_cypher).single()
-            if not row:
-                return {"total": 0, "stable": 0, "challenged": 0, "superseded": 0}
-            return {
-                "total": int(row.get("total") or 0),
-                "stable": int(row.get("stable") or 0),
-                "challenged": int(row.get("challenged") or 0),
-                "superseded": int(row.get("superseded") or 0),
-            }
-
-    def list_propositions(self, limit: int = 100, state: str | None = None, query: str | None = None) -> list[dict]:
-        limit = max(1, min(1000, int(limit)))
-        st = str(state or "").strip().lower()
-        q = str(query or "").strip()
-        cypher = """
-MATCH (pr:Proposition)
-WHERE ($state = '' OR toLower(coalesce(pr.current_state, '')) = $state)
-  AND ($search_q = '' OR toLower(coalesce(pr.canonical_text, '')) CONTAINS toLower($search_q))
-OPTIONAL MATCH (cl:Claim)-[:MAPS_TO]->(pr)
-OPTIONAL MATCH (e:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-WHERE coalesce(e.status, '') = 'accepted'
-RETURN pr.prop_id AS prop_id,
-       pr.prop_key AS prop_key,
-       pr.canonical_text AS canonical_text,
-       pr.current_state AS current_state,
-       pr.current_score AS current_score,
-       pr.score_updated_at AS score_updated_at,
-       count(DISTINCT cl) AS mention_count,
-       sum(CASE WHEN e.event_type = 'SUPPORTS' THEN 1 ELSE 0 END) AS supports,
-       sum(CASE WHEN e.event_type = 'CHALLENGES' THEN 1 ELSE 0 END) AS challenges,
-       sum(CASE WHEN e.event_type = 'SUPERSEDES' THEN 1 ELSE 0 END) AS supersedes
-ORDER BY coalesce(pr.current_score, 0.0) DESC, mention_count DESC
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, state=st, search_q=q, limit=limit)]
-
-    def list_conflict_hotspots(self, limit: int = 50, min_events: int = 1) -> list[dict]:
-        limit = max(1, min(1000, int(limit)))
-        min_events = max(1, min(1000, int(min_events)))
-        cypher = """
-MATCH (pr:Proposition)
-OPTIONAL MATCH (e:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-WHERE coalesce(e.status, '') = 'accepted'
-WITH pr,
-     sum(CASE WHEN e.event_type = 'CHALLENGES' THEN 1 ELSE 0 END) AS challenge_events,
-     sum(CASE WHEN e.event_type = 'SUPERSEDES' THEN 1 ELSE 0 END) AS supersede_events,
-     count(DISTINCT CASE WHEN e.event_type IN ['CHALLENGES','SUPERSEDES'] THEN e.paper_id ELSE NULL END) AS source_paper_count
-WITH pr, challenge_events, supersede_events, source_paper_count, (challenge_events + supersede_events) AS conflict_events
-WHERE conflict_events >= $min_events
-RETURN pr.prop_id AS prop_id,
-       pr.canonical_text AS canonical_text,
-       pr.current_state AS current_state,
-       pr.current_score AS current_score,
-       challenge_events,
-       supersede_events,
-       conflict_events,
-       source_paper_count
-ORDER BY conflict_events DESC, supersede_events DESC, challenge_events DESC, coalesce(pr.current_score, 1.0) ASC
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, limit=limit, min_events=min_events)]
-
     def list_gap_like_claims(self, limit: int = 200, kinds: list[str] | None = None) -> list[dict]:
         limit = max(1, min(5000, int(limit)))
         use_kinds = [str(k).strip() for k in (kinds or ["Gap", "FutureWork", "Limitation", "Critique"]) if str(k).strip()]
@@ -2932,7 +2414,7 @@ LIMIT $limit
         cypher = """
 MATCH (p:Paper)-[:HAS_CLAIM]->(cl:Claim)
 WHERE any(k IN coalesce(cl.kinds, []) WHERE k IN $kinds)
-OPTIONAL MATCH (cl)-[:MAPS_TO]->(pr:Proposition)
+OPTIONAL MATCH (cl)-[:IN_GLOBAL_COMMUNITY]->(gc:GlobalCommunity)
 OPTIONAL MATCH (cl)-[ev:EVIDENCED_BY]->(:Chunk)
 RETURN cl.claim_id AS claim_id,
        cl.claim_key AS claim_key,
@@ -2944,8 +2426,7 @@ RETURN cl.claim_id AS claim_id,
        p.paper_source AS paper_source,
        p.title AS paper_title,
        p.year AS paper_year,
-       pr.prop_id AS prop_id,
-       pr.canonical_text AS prop_text,
+       collect(DISTINCT gc.community_id) AS source_community_ids,
        count(DISTINCT ev) AS evidence_count
 ORDER BY confidence DESC, evidence_count DESC, cl.claim_id ASC
 LIMIT $limit
@@ -2963,7 +2444,7 @@ LIMIT $limit
 MATCH (gs:KnowledgeGapSeed)
 WHERE any(k IN coalesce(gs.gap_kinds, []) WHERE k IN $kinds)
 OPTIONAL MATCH (cl:Claim {claim_id: gs.claim_id})<-[:HAS_CLAIM]-(p:Paper)
-OPTIONAL MATCH (cl)-[:MAPS_TO]->(pr:Proposition)
+OPTIONAL MATCH (cl)-[:IN_GLOBAL_COMMUNITY]->(gc:GlobalCommunity)
 RETURN gs.seed_id AS seed_id,
        gs.claim_id AS claim_id,
        gs.claim_key AS claim_key,
@@ -2975,8 +2456,7 @@ RETURN gs.seed_id AS seed_id,
        p.paper_source AS paper_source,
        p.title AS paper_title,
        p.year AS paper_year,
-       pr.prop_id AS prop_id,
-       pr.canonical_text AS prop_text
+       collect(DISTINCT gc.community_id) AS source_community_ids
 ORDER BY confidence DESC, gs.updated_at DESC, gs.seed_id ASC
 LIMIT $limit
 """
@@ -3013,7 +2493,7 @@ LIMIT $limit
                     "priority_score": float(g.get("priority_score") or 0.0),
                     "signals_json": json.dumps(g.get("signals") or {}, ensure_ascii=False),
                     "source_claim_ids": [str(x).strip() for x in (g.get("source_claim_ids") or []) if str(x).strip()],
-                    "source_prop_ids": [str(x).strip() for x in (g.get("source_proposition_ids") or []) if str(x).strip()],
+                    "source_community_ids": [str(x).strip() for x in (g.get("source_community_ids") or []) if str(x).strip()],
                     "source_paper_ids": [str(x).strip() for x in (g.get("source_paper_ids") or []) if str(x).strip()],
                 }
             )
@@ -3037,12 +2517,12 @@ UNWIND coalesce(g.source_claim_ids, []) AS cid
 MATCH (cl:Claim {claim_id: cid})
 MERGE (kg)-[:GAP_FROM_CLAIM]->(cl)
 """
-            cypher_gap_props = """
+            cypher_gap_communities = """
 UNWIND $items AS g
 MATCH (kg:KnowledgeGap {gap_id: g.gap_id})
-UNWIND coalesce(g.source_prop_ids, []) AS pid
-MATCH (pr:Proposition {prop_id: pid})
-MERGE (kg)-[:GAP_FROM_PROPOSITION]->(pr)
+UNWIND coalesce(g.source_community_ids, []) AS id
+MATCH (gc:GlobalCommunity {community_id: id})
+MERGE (kg)-[:GAP_FROM_COMMUNITY]->(gc)
 """
             cypher_gap_papers = """
 UNWIND $items AS g
@@ -3059,7 +2539,7 @@ MERGE (kg)-[:GAP_FROM_PAPER]->(p)
                     batch_id=bid,
                     built_at=ts,
                 )
-                session.run(cypher_gap_props, items=gap_items)
+                session.run(cypher_gap_communities, items=gap_items)
                 session.run(cypher_gap_papers, items=gap_items)
 
         question_items: list[dict] = []
@@ -3097,15 +2577,15 @@ MERGE (kg)-[:GAP_FROM_PAPER]->(p)
                     "status": str(q.get("status") or "draft"),
                     "rank": int(q.get("rank") or 0),
                     "support_claim_ids": support["claim_ids"],
-                    "support_prop_ids": support["prop_ids"],
+                    "support_community_ids": support["community_ids"],
                     "support_chunk_ids": support["chunk_ids"],
                     "support_event_ids": support["event_ids"],
                     "challenge_claim_ids": challenge["claim_ids"],
-                    "challenge_prop_ids": challenge["prop_ids"],
+                    "challenge_community_ids": challenge["community_ids"],
                     "challenge_chunk_ids": challenge["chunk_ids"],
                     "challenge_event_ids": challenge["event_ids"],
                     "source_claim_ids": [str(x).strip() for x in (q.get("source_claim_ids") or []) if str(x).strip()],
-                    "source_prop_ids": [str(x).strip() for x in (q.get("source_proposition_ids") or []) if str(x).strip()],
+                    "source_community_ids": [str(x).strip() for x in (q.get("source_community_ids") or []) if str(x).strip()],
                     "source_paper_ids": [str(x).strip() for x in (q.get("source_paper_ids") or []) if str(x).strip()],
                     "inspiration_adjacent_paper_ids": [
                         str(x).strip() for x in (q.get("inspiration_adjacent_paper_ids") or []) if str(x).strip()
@@ -3181,16 +2661,16 @@ MERGE (rq)-[:SUPPORTED_BY]->(cl)
                         rq_id=rid,
                         ids=row["support_claim_ids"],
                     )
-                if row["support_prop_ids"]:
+                if row["support_community_ids"]:
                     session.run(
                         """
 MATCH (rq:ResearchQuestion {rq_id:$rq_id})
 UNWIND $ids AS id
-MATCH (pr:Proposition {prop_id:id})
-MERGE (rq)-[:SUPPORTED_BY]->(pr)
+MATCH (gc:GlobalCommunity {community_id:id})
+MERGE (rq)-[:SUPPORTED_BY]->(gc)
 """,
                         rq_id=rid,
-                        ids=row["support_prop_ids"],
+                        ids=row["support_community_ids"],
                     )
                 if row["support_chunk_ids"]:
                     session.run(
@@ -3226,16 +2706,16 @@ MERGE (rq)-[:CHALLENGED_BY]->(cl)
                         rq_id=rid,
                         ids=row["challenge_claim_ids"],
                     )
-                if row["challenge_prop_ids"]:
+                if row["challenge_community_ids"]:
                     session.run(
                         """
 MATCH (rq:ResearchQuestion {rq_id:$rq_id})
 UNWIND $ids AS id
-MATCH (pr:Proposition {prop_id:id})
-MERGE (rq)-[:CHALLENGED_BY]->(pr)
+MATCH (gc:GlobalCommunity {community_id:id})
+MERGE (rq)-[:CHALLENGED_BY]->(gc)
 """,
                         rq_id=rid,
-                        ids=row["challenge_prop_ids"],
+                        ids=row["challenge_community_ids"],
                     )
                 if row["challenge_chunk_ids"]:
                     session.run(
@@ -3258,6 +2738,17 @@ MERGE (rq)-[:CHALLENGED_BY]->(ev)
 """,
                         rq_id=rid,
                         ids=row["challenge_event_ids"],
+                    )
+                if row["source_community_ids"]:
+                    session.run(
+                        """
+MATCH (rq:ResearchQuestion {rq_id:$rq_id})
+UNWIND $ids AS id
+MATCH (gc:GlobalCommunity {community_id:id})
+MERGE (rq)-[:USES_SOURCE_COMMUNITY]->(gc)
+""",
+                        rq_id=rid,
+                        ids=row["source_community_ids"],
                     )
                 if row["source_paper_ids"]:
                     session.run(
@@ -3350,71 +2841,6 @@ LIMIT $limit
             seen.add(cid)
             out.append(row)
         return out
-
-    def get_proposition_detail(self, prop_id: str, limit_events: int = 200) -> dict:
-        pid = str(prop_id or "").strip()
-        if not pid:
-            raise KeyError("prop_id is required")
-        limit_events = max(1, min(2000, int(limit_events)))
-        with self._driver.session() as session:
-            row = session.run(
-                """
-MATCH (pr:Proposition {prop_id:$prop_id})
-RETURN pr
-""",
-                prop_id=pid,
-            ).single()
-            if not row:
-                raise KeyError(f"Proposition not found: {pid}")
-            proposition = dict(row["pr"])
-
-            events = [
-                dict(r)
-                for r in session.run(
-                    """
-MATCH (pr:Proposition {prop_id:$prop_id})
-MATCH (e:EvidenceEvent)-[:TO_PROPOSITION]->(pr)
-OPTIONAL MATCH (sc:Claim {claim_id:e.claim_id})
-OPTIONAL MATCH (sp:Paper {paper_id:e.paper_id})
-RETURN e.event_id AS event_id,
-       e.event_type AS event_type,
-       e.status AS status,
-       e.confidence AS confidence,
-       e.strength AS strength,
-       e.event_time AS event_time,
-       e.origin AS origin,
-       e.source_prop_id AS source_prop_id,
-       e.target_prop_id AS target_prop_id,
-       sc.text AS claim_text,
-       sp.paper_id AS paper_id,
-       sp.title AS paper_title,
-       sp.year AS paper_year
-ORDER BY coalesce(e.event_time, e.created_at, '') DESC
-LIMIT $limit_events
-""",
-                    prop_id=pid,
-                    limit_events=limit_events,
-                )
-            ]
-
-            neighbors = [
-                dict(r)
-                for r in session.run(
-                    """
-MATCH (a:Proposition {prop_id:$prop_id})-[r:SUPPORTS|CHALLENGES|SUPERSEDES]->(b:Proposition)
-RETURN type(r) AS relation_type,
-       b.prop_id AS target_prop_id,
-       b.canonical_text AS target_text,
-       r.score AS score,
-       r.evidence_count AS evidence_count
-ORDER BY coalesce(r.score, 0.0) DESC
-LIMIT 200
-""",
-                    prop_id=pid,
-                )
-            ]
-
-            return {"proposition": proposition, "events": events, "neighbors": neighbors}
 
     def replace_similar_claim_edges_batch(self, items: list[dict], model: str, built_at: str, mode: str = "embedding") -> None:
         """
@@ -4043,7 +3469,7 @@ RETURN deleted_communities,
             "deleted_keyword_edges": int((row or {}).get("deleted_keyword_edges") or 0),
         }
 
-    def clear_proposition_artifacts(self) -> dict[str, int]:
+    def clear_legacy_proposition_artifacts(self) -> dict[str, int]:
         cypher = """
 CALL {
     MATCH (:Proposition)-[r:SUPPORTS|CHALLENGES|SUPERSEDES]->(:Proposition)
@@ -4213,7 +3639,6 @@ RETURN count(im) AS cnt
             session.run(delete_cypher, community_ids=community_ids)
             row = session.run(write_cypher, rows=rows).single()
         return int((row or {}).get("cnt") or 0)
-
     def list_global_community_rows(self, limit: int = 50000) -> list[dict]:
         cypher = """
 MATCH (gc:GlobalCommunity)
@@ -4817,52 +4242,3 @@ RETURN count(t) AS cnt
 
         with self._driver.session() as session:
             return session.execute_write(_tx)
-
-    def list_knowledge_entities_for_propositions(self, textbook_id: str, limit: int = 5000) -> list[dict]:
-        """List KnowledgeEntities eligible for Proposition mapping.
-
-        Only proposition-type entities are returned: theory, equation,
-        method, model, condition (entities that make assertive claims).
-        """
-        cypher = """
-MATCH (t:Textbook {textbook_id: $textbook_id})-[:HAS_CHAPTER]->(c:TextbookChapter)-[:HAS_ENTITY]->(e:KnowledgeEntity)
-WHERE e.entity_type IN ['theory', 'equation', 'method', 'model', 'condition']
-RETURN DISTINCT e.entity_id   AS entity_id,
-       e.name                 AS name,
-       e.entity_type          AS entity_type,
-       e.description          AS description,
-       c.chapter_id           AS chapter_id
-ORDER BY e.name
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, textbook_id=str(textbook_id), limit=int(limit))]
-
-    def upsert_proposition_for_entity(self, items: list[dict]) -> dict[str, int]:
-        """Create Proposition nodes from KnowledgeEntities and MAPS_TO edges.
-
-        Each item: {entity_id, entity_type, prop_id, prop_key, canonical_text, source_type}
-        """
-        if not items:
-            return {"entities": 0, "propositions": 0}
-        cypher = """
-UNWIND $items AS it
-MATCH (e:KnowledgeEntity {entity_id: it.entity_id})
-MERGE (pr:Proposition {prop_id: it.prop_id})
-ON CREATE SET pr.prop_key        = it.prop_key,
-              pr.canonical_text   = it.canonical_text,
-              pr.created_at       = $now,
-              pr.source_type      = it.source_type,
-              pr.current_state    = 'stable'
-SET pr.last_seen_at = $now
-MERGE (e)-[m:MAPS_TO]->(pr)
-SET m.mapped_at = $now,
-    m.source_type = coalesce(it.source_type, 'textbook'),
-    m.entity_type = coalesce(it.entity_type, '')
-RETURN count(DISTINCT pr) AS prop_cnt
-"""
-        with self._driver.session() as session:
-            result = session.run(cypher, items=items, now=datetime.now(tz=timezone.utc).isoformat())
-            row = result.single()
-        return {"entities": len(items), "propositions": int(row["prop_cnt"]) if row else 0}
-

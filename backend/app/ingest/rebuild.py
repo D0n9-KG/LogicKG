@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from app.citations.aggregate import build_reference_and_cite_records
 from app.citations.citation_event_recovery import recover_citation_events_from_references
+from app.community.service import rebuild_global_communities
 from app.crossref.client import CrossrefClient
 from app.extraction.orchestrator import run_phase1_extraction
 from app.graph.neo4j_client import Neo4jClient
@@ -39,7 +40,7 @@ def _storage_dir() -> Path:
     return p
 
 
-def _clear_stale_proposition_faiss_exports(out_dir: Path) -> dict[str, Any]:
+def _clear_stale_legacy_faiss_exports(out_dir: Path) -> dict[str, Any]:
     removed: list[str] = []
     for name in ("propositions", "proposition_groups"):
         path = out_dir / name
@@ -71,6 +72,54 @@ def _schema_for_md(md_path: str) -> dict[str, Any]:
         return load_active(paper_type)  # type: ignore[arg-type]
     except Exception:
         return load_active("research")  # type: ignore[arg-type]
+
+
+def cleanup_legacy_proposition_artifacts(
+    progress: ProgressFn | None = None,
+    log: LogFn | None = None,
+) -> dict[str, Any]:
+    def notify(stage: str, p: float, msg: str | None = None) -> None:
+        if progress:
+            progress(stage, p, msg)
+
+    def write_log(line: str) -> None:
+        if log:
+            log(line)
+
+    notify("cleanup:legacy:init", 0.05, "Cleaning legacy proposition artifacts")
+    out_dir = _storage_dir() / "faiss"
+    faiss_cleanup = _clear_stale_legacy_faiss_exports(out_dir)
+    if faiss_cleanup["removed_corpora"]:
+        write_log(f"removed stale FAISS corpora: {', '.join(faiss_cleanup['removed_corpora'])}")
+
+    with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+        notify("cleanup:legacy:graph", 0.2, "Deleting legacy proposition graph artifacts")
+        graph_cleanup = client.clear_legacy_proposition_artifacts()
+        notify("cleanup:legacy:schema", 0.32, "Dropping legacy proposition schema objects")
+        schema_cleanup = client.drop_legacy_proposition_schema()
+
+    write_log("legacy proposition artifacts removed from graph, schema, and stale FAISS exports")
+
+    def community_progress(stage: str, p: float, msg: str | None = None) -> None:
+        notify(stage, 0.4 + 0.35 * float(max(0.0, min(1.0, p))), msg)
+
+    community = rebuild_global_communities(progress=community_progress, log=log)
+
+    def faiss_progress(stage: str, p: float, msg: str | None = None) -> None:
+        notify(stage, 0.78 + 0.17 * float(max(0.0, min(1.0, p))), msg)
+
+    faiss = rebuild_global_faiss(progress=faiss_progress, log=log)
+    notify("cleanup:legacy:done", 1.0, "Legacy proposition cleanup complete")
+    return {
+        "ok": True,
+        "cleanup": {
+            "graph": graph_cleanup,
+            "schema": schema_cleanup,
+            "removed_corpora": list(faiss_cleanup.get("removed_corpora") or []),
+        },
+        "community": community,
+        "faiss": faiss,
+    }
 
 
 def rebuild_paper(
@@ -687,7 +736,6 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
                     "paper_source",
                     "step_type",
                     "confidence",
-                    "proposition_id",
                     "evidence_chunk_ids",
                     "evidence_quote",
                 ],
@@ -727,7 +775,7 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
 
     notify("rebuild:faiss_build", 0.55, f"Building FAISS over {len(chunks)} chunks")
     out_dir = _storage_dir() / "faiss"
-    cleanup = _clear_stale_proposition_faiss_exports(out_dir)
+    cleanup = _clear_stale_legacy_faiss_exports(out_dir)
     if cleanup["removed_corpora"]:
         write_log(f"removed stale FAISS corpora: {', '.join(cleanup['removed_corpora'])}")
     res = {

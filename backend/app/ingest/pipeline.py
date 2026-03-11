@@ -701,7 +701,7 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
     clustering: dict[str, Any] = {
         "triggered": False,
         "status": "disabled",
-        "reason": "community_corpus_replaces_proposition_clustering",
+        "reason": "community_corpus_replaces_legacy_clustering",
     }
 
     notify("ingest:done", 1.0, "Done")

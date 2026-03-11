@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 from app.graph.neo4j_client import Neo4jClient
 
 
@@ -61,49 +59,7 @@ def test_list_fusion_basics_by_paper_sources_includes_textbook_and_chapter_metad
     assert fake_session.last_params["paper_sources"] == ["paper-A"]
 
 
-def test_list_proposition_similarity_rows_returns_claim_and_textbook_provenance() -> None:
-    class _PropSession(_FakeSession):
-        def run(self, query: str, **params):
-            self.last_query = str(query)
-            self.last_params = dict(params)
-            return [
-                {
-                    "node_id": "pr-1",
-                    "paper_id": "doi:10.1000/example",
-                    "paper_source": "paper-A",
-                    "text": "Finite element discretization stabilizes PDE solving.",
-                    "source_kind": "claim",
-                    "source_id": "cl-1",
-                    "chapter_id": None,
-                    "textbook_id": None,
-                },
-                {
-                    "node_id": "pr-2",
-                    "paper_id": "",
-                    "paper_source": "",
-                    "text": "The finite element basis interpolates the field variable.",
-                    "source_kind": "textbook_entity",
-                    "source_id": "ent-7",
-                    "chapter_id": "tb:1:ch001",
-                    "textbook_id": "tb:1",
-                },
-            ]
-
-    fake_session = _PropSession()
-    client = object.__new__(Neo4jClient)
-    client._driver = _FakeDriver(fake_session)
-
-    rows = client.list_proposition_similarity_rows(limit=5)
-
-    assert rows[0]["source_kind"] == "claim"
-    assert rows[0]["source_id"] == "cl-1"
-    assert rows[1]["source_kind"] == "textbook_entity"
-    assert rows[1]["chapter_id"] == "tb:1:ch001"
-    assert rows[1]["textbook_id"] == "tb:1"
-    assert fake_session.last_params["limit"] == 5
-
-
-def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() -> None:
+def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations_for_active_kinds() -> None:
     class _GroundingSession(_FakeSession):
         def run(self, query: str, **params):
             self.last_query = str(query)
@@ -124,20 +80,20 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
                         "evidence_event_type": "SUPPORTS",
                     }
                 ]
-            if "UNWIND $proposition_ids AS prop_id" in self.last_query:
+            if "UNWIND $logic_ids AS logic_step_id" in self.last_query:
                 return [
                     {
-                        "source_kind": "proposition",
-                        "source_id": "pr-2",
-                        "quote": "The element basis interpolates the field variable.",
-                        "chunk_id": None,
-                        "md_path": None,
-                        "start_line": None,
-                        "end_line": None,
-                        "textbook_id": "tb:1",
-                        "chapter_id": "tb:1:ch001",
-                        "evidence_event_id": "ev-2",
-                        "evidence_event_type": "SUPPORTS",
+                        "source_kind": "logic_step",
+                        "source_id": "ls-2",
+                        "quote": "Method step summary.",
+                        "chunk_id": "c2",
+                        "md_path": "runs/paper-A/content.md",
+                        "start_line": 20,
+                        "end_line": 21,
+                        "textbook_id": None,
+                        "chapter_id": None,
+                        "evidence_event_id": None,
+                        "evidence_event_type": None,
                     }
                 ]
             return []
@@ -149,7 +105,8 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
     rows = client.get_grounding_rows_for_structured_ids(
         [
             {"kind": "claim", "id": "cl-1"},
-            {"kind": "proposition", "id": "pr-2"},
+            {"kind": "logic_step", "id": "ls-2"},
+            {"kind": "proposition", "id": "pr-legacy"},
         ],
         limit=10,
     )
@@ -158,56 +115,6 @@ def test_get_grounding_rows_for_structured_ids_preserves_quotes_and_locations() 
     assert rows[0]["chunk_id"] == "c1"
     assert rows[0]["start_line"] == 11
     assert rows[0]["evidence_event_id"] == "ev-1"
-    assert rows[1]["textbook_id"] == "tb:1"
-    assert rows[1]["chapter_id"] == "tb:1:ch001"
-    assert rows[1]["evidence_event_type"] == "SUPPORTS"
-
-
-def test_list_proposition_structured_rows_preserves_evidence_event_provenance() -> None:
-    class _PropStructuredSession(_FakeSession):
-        def run(self, query: str, **params):
-            self.last_query = str(query)
-            self.last_params = dict(params)
-            return [
-                {
-                    "kind": "proposition",
-                    "source_id": "pr-1",
-                    "proposition_id": "pr-1",
-                    "paper_id": "doi:10.1000/example",
-                    "paper_source": "paper-A",
-                    "text": "Finite element discretization stabilizes PDE solving.",
-                    "source_kind": "claim",
-                    "source_ref_id": "cl-1",
-                    "textbook_id": None,
-                    "chapter_id": None,
-                    "evidence_quote": "Finite element method discretizes the domain.",
-                    "evidence_event_id": "ev-1",
-                    "evidence_event_type": "SUPPORTS",
-                },
-                {
-                    "kind": "proposition",
-                    "source_id": "pr-2",
-                    "proposition_id": "pr-2",
-                    "paper_id": "",
-                    "paper_source": "",
-                    "text": "The finite element basis interpolates the field variable.",
-                    "source_kind": "textbook_entity",
-                    "source_ref_id": "ent-7",
-                    "textbook_id": "tb:1",
-                    "chapter_id": "tb:1:ch001",
-                    "evidence_quote": "The element basis interpolates the field variable.",
-                    "evidence_event_id": "ev-2",
-                    "evidence_event_type": "SUPPORTS",
-                },
-            ]
-
-    fake_session = _PropStructuredSession()
-    client = object.__new__(Neo4jClient)
-    client._driver = _FakeDriver(fake_session)
-
-    rows = client.list_proposition_structured_rows(limit=5)
-
-    assert rows[0]["evidence_event_id"] == "ev-1"
-    assert rows[0]["evidence_event_type"] == "SUPPORTS"
-    assert rows[1]["evidence_event_id"] == "ev-2"
-    assert rows[1]["chapter_id"] == "tb:1:ch001"
+    assert rows[1]["source_kind"] == "logic_step"
+    assert rows[1]["source_id"] == "ls-2"
+    assert "proposition_ids" not in fake_session.last_params

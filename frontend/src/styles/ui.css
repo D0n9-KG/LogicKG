@@ -896,7 +896,6 @@
 .graphPage,
 .fusionDeck,
 .askDeck,
-.evolutionPage,
 .textbookDeck {
   position: relative;
   isolation: isolate;
@@ -905,7 +904,6 @@
 .graphPage::after,
 .fusionDeck::after,
 .askDeck::after,
-.evolutionPage::after,
 .textbookDeck::after {
   content: '';
   position: absolute;
@@ -1738,11 +1736,6 @@
   --hero-accent-b: rgba(128, 245, 205, 0.25);
 }
 
-.moduleHero--evolution {
-  --hero-accent-a: rgba(80, 178, 255, 0.29);
-  --hero-accent-b: rgba(255, 199, 119, 0.25);
-}
-
 .moduleHero--textbook {
   --hero-accent-a: rgba(94, 170, 255, 0.29);
   --hero-accent-b: rgba(150, 142, 255, 0.25);
@@ -1834,7 +1827,6 @@
 
 .graphTelemetryCard,
 .fusionTickerCard,
-.evolutionSignalCard,
 .askSignalCard,
 .textbookSignalCard {
   border-color: rgba(89, 159, 248, 0.36);
@@ -1846,7 +1838,6 @@
 
 .graphTelemetryCard:hover,
 .fusionTickerCard:hover,
-.evolutionSignalCard:hover,
 .askSignalCard:hover,
 .textbookSignalCard:hover {
   transform: translateY(-1px);
@@ -1871,7 +1862,6 @@
 }
 
 .askDeck,
-.evolutionPage,
 .textbookDeck,
 .fusionDeck {
   position: relative;
@@ -1879,7 +1869,6 @@
 }
 
 .askDeck::before,
-.evolutionPage::before,
 .textbookDeck::before {
   content: '';
   position: absolute;
@@ -1894,10 +1883,6 @@
 
 .askDeckPanel,
 .textbookDeckPanel,
-.evolutionSearchPanel,
-.evolutionGroupPanel,
-.evolutionMainPanel,
-.evolutionHotspotPanel,
 .fusionLeftRail,
 .fusionCenterPanel,
 .fusionRightRail {
@@ -1925,18 +1910,15 @@
 }
 
 .fusionDeckTop,
-.pageHeader.evolutionHeader,
 .askDeck > .pageHeader,
 .textbookDeck > .pageHeader {
   padding: 2px 2px 0;
 }
 
-.evolutionLayout > .panel,
 .fusionDeckLayout > .panel {
   transition: border-color 180ms ease, transform 180ms ease;
 }
 
-.evolutionLayout > .panel:hover,
 .fusionDeckLayout > .panel:hover {
   border-color: rgba(119, 194, 255, 0.52);
 }
@@ -2754,165 +2736,10 @@
   }
 }
 
-/* Evolution page */
-.evolutionPage {
-  display: grid;
-  gap: 14px;
-}
-
-.evolutionSignalStrip {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.evolutionSignalCard {
-  border-radius: 12px;
-  border: 1px solid rgba(84, 148, 235, 0.32);
-  background:
-    linear-gradient(170deg, rgba(13, 27, 53, 0.86), rgba(8, 16, 34, 0.88)),
-    radial-gradient(circle at 18% 0, rgba(66, 163, 255, 0.16), transparent 46%);
-  padding: 8px 10px;
-}
-
-.evolutionSignalCard--ready {
-  border-color: rgba(98, 222, 184, 0.38);
-}
-
-.evolutionSignalCard--running {
-  border-color: rgba(124, 197, 255, 0.48);
-}
-
-.evolutionSignalValue {
-  margin-top: 4px;
-  color: rgba(228, 239, 255, 0.95);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.1;
-}
-
-.evolutionSignalMeta {
-  margin-top: 6px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 11px;
-  color: rgba(195, 217, 250, 0.84);
-}
-
-.evolutionSearchPanel {
-  border-color: rgba(83, 152, 242, 0.42);
-}
-
-.evolutionSearchBar {
-  align-items: center;
-}
-
-.evolutionSearchControls {
-  gap: 8px;
-}
-
-.evolutionSearchInput {
-  width: min(420px, 62vw);
-}
-
-.evolutionLayout {
-  display: grid;
-  grid-template-columns: 340px minmax(0, 1fr) 360px;
-  gap: 12px;
-  align-items: start;
-}
-
-.evolutionRail {
-  position: sticky;
-  top: 14px;
-  align-self: start;
-}
-
-.evolutionGroupPanel,
-.evolutionMainPanel,
-.evolutionHotspotPanel {
-  border-color: rgba(83, 152, 242, 0.4);
-  box-shadow:
-    inset 0 0 0 1px rgba(72, 139, 232, 0.14),
-    0 16px 32px rgba(2, 9, 24, 0.34);
-}
-
-.evolutionScrollable {
-  max-height: 680px;
-}
-
-.evolutionListCard {
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-  transition:
-    transform 180ms ease,
-    border-color 180ms ease,
-    background-color 180ms ease;
-}
-
-.evolutionListCard:hover {
-  transform: translateY(-1px);
-  border-color: rgba(124, 255, 203, 0.44);
-  background: rgba(124, 255, 203, 0.12);
-}
-
 .itemCardActive,
-.evolutionListCardActive {
+.itemCardActive {
   border-color: rgba(124, 255, 203, 0.58);
   background: linear-gradient(145deg, rgba(124, 255, 203, 0.2), rgba(126, 139, 255, 0.14));
-}
-
-.evolutionMainCard {
-  border-color: rgba(84, 148, 235, 0.34);
-  background: rgba(10, 22, 44, 0.48);
-}
-
-.evolutionNeighborCard {
-  border-color: rgba(84, 148, 235, 0.3);
-}
-
-.evolutionNeighborList {
-  margin-top: 8px;
-  gap: 6px;
-}
-
-.evolutionNeighborRow {
-  border: 1px solid rgba(84, 148, 235, 0.22);
-  background: rgba(10, 22, 44, 0.4);
-  border-radius: 10px;
-  padding: 7px 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.evolutionTimelineList {
-  max-height: 360px;
-}
-
-.evolutionTimelineCard {
-  border-color: rgba(84, 148, 235, 0.26);
-}
-
-.evolutionHotspotCard {
-  border-color: rgba(84, 148, 235, 0.26);
-}
-
-.evolutionHotspotMeter {
-  margin-top: 7px;
-  height: 7px;
-  border: 1px solid rgba(91, 140, 222, 0.32);
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(28, 46, 80, 0.5);
-}
-
-.evolutionHotspotMeter > span {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, rgba(42, 197, 255, 0.9), rgba(255, 201, 72, 0.9));
 }
 
 /* Ingest page */
@@ -4774,10 +4601,6 @@
   border-radius: 3px;
 }
 
-.list--scroll.evolutionScrollable {
-  max-height: 680px;
-}
-
 @media (max-width: 1220px) {
   .graphLayout {
     grid-template-columns: minmax(0, 1fr) 330px;
@@ -4787,14 +4610,6 @@
     grid-template-columns: 250px minmax(0, 1fr) 290px;
   }
 
-  .evolutionLayout {
-    grid-template-columns: 300px minmax(0, 1fr);
-  }
-
-  .evolutionHotspotPanel {
-    grid-column: 1 / -1;
-    position: static;
-  }
 }
 
 @media (max-width: 1020px) {
@@ -4951,22 +4766,6 @@
     grid-template-columns: 1fr;
   }
 
-  .evolutionSignalStrip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .evolutionLayout {
-    grid-template-columns: 1fr;
-  }
-
-  .evolutionRail {
-    position: static;
-  }
-
-  .evolutionSearchInput {
-    width: 100%;
-  }
-
   .graphSearchInput {
     width: 100%;
   }
@@ -5065,8 +4864,7 @@
   }
 
   .graphSignalStrip,
-  .graphTelemetryGrid,
-  .evolutionSignalStrip {
+  .graphTelemetryGrid {
     grid-template-columns: 1fr;
   }
 
