@@ -67,3 +67,59 @@ def test_import_youtu_graph_supports_triple_list_payload(tmp_path: Path) -> None
     assert len(dummy.relations) == 2
     assert dummy.chapter_links is not None
     assert dummy.chapter_links[0] == "tb:test:ch000"
+
+
+def test_import_youtu_graph_ignores_remote_chapter_community_artifacts(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph_remote_community.json"
+    payload = {
+        "nodes": [
+            {
+                "id": "entity-1",
+                "label": "entity",
+                "properties": {"name": "Bubble", "description": "Bubble collapse mechanics."},
+            },
+            {
+                "id": "entity-2",
+                "label": "entity",
+                "properties": {"name": "Pressure", "description": "Pressure field response."},
+            },
+            {
+                "id": "community-1",
+                "label": "community",
+                "properties": {"name": "Remote chapter community"},
+            },
+            {
+                "id": "keyword-1",
+                "label": "keyword",
+                "properties": {"name": "stability"},
+            },
+        ],
+        "edges": [
+            {"start_id": "entity-1", "end_id": "entity-2", "relation": "related_to"},
+            {"start_id": "entity-1", "end_id": "community-1", "relation": "member_of"},
+            {"start_id": "keyword-1", "end_id": "community-1", "relation": "keyword_of"},
+        ],
+        "communities": [{"id": 7, "members": ["entity-1", "entity-2"]}],
+    }
+    graph_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    dummy = _DummyNeo4jClient()
+    result = import_youtu_graph(
+        graph_json_path=str(graph_path),
+        textbook_id="tb:test",
+        chapter_id="tb:test:ch001",
+        neo4j_client=dummy,  # type: ignore[arg-type]
+    )
+
+    assert result["entity_count"] == 2
+    assert result["relation_count"] == 1
+    assert result["community_count"] == 0
+    assert len(dummy.entities) == 2
+    assert all('"community_id"' not in str(entity.get("attributes") or "") for entity in dummy.entities)
+    assert dummy.relations == [
+        {
+            "start_id": dummy.entities[0]["entity_id"],
+            "end_id": dummy.entities[1]["entity_id"],
+            "rel_type": "related_to",
+        }
+    ]

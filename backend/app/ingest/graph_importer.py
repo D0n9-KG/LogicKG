@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from app.community.remote_graph_normalizer import normalize_remote_graph_payload
 from app.graph.neo4j_client import Neo4jClient
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ def _merge_attributes(node: dict) -> str:
     """Extract extra attributes from a Youtu node as a JSON string."""
     props = dict(node.get("properties", {}) or {})
     # Remove fields already stored as first-class properties
-    for key in ("name", "description", "id"):
+    for key in ("name", "description", "id", "community_id"):
         props.pop(key, None)
     return json.dumps(props, ensure_ascii=False) if props else "{}"
 
@@ -107,24 +108,18 @@ def import_youtu_graph(
     Mapping:
     - Youtu ``nodes`` → :class:`KnowledgeEntity` nodes
     - Youtu ``edges`` → ``RELATES_TO`` relationships
-    - Youtu ``communities`` → stored as ``community_id`` attribute on entities
+    - remote chapter-local ``community`` / ``keyword`` / ``super-node`` artifacts are discarded
     - ``TextbookChapter -[:HAS_ENTITY]-> KnowledgeEntity`` links created
 
     Returns:
         ``{entity_count, relation_count, community_count}``
     """
     raw = Path(graph_json_path).read_text(encoding="utf-8", errors="replace")
-    data = json.loads(raw)
+    data = normalize_remote_graph_payload(json.loads(raw))
     nodes, edges, communities = _normalize_youtu_payload(data)
 
     # Build Youtu-ID → LogicKG entity_id mapping
     id_map: dict[str, str] = {}
-    # Build community membership: youtu_node_id → community_id
-    community_map: dict[str, int] = {}
-    for comm in communities:
-        cid = comm.get("id")
-        for member in comm.get("members") or []:
-            community_map[str(member)] = cid
 
     # --- Entities ---
     entities: list[dict] = []
@@ -138,14 +133,6 @@ def import_youtu_graph(
 
         props = node.get("properties") or {}
         attrs = _merge_attributes(node)
-        # Inject community_id into attributes if available
-        if source_id in community_map:
-            try:
-                attr_dict = json.loads(attrs)
-            except Exception:
-                attr_dict = {}
-            attr_dict["community_id"] = community_map[source_id]
-            attrs = json.dumps(attr_dict, ensure_ascii=False)
 
         entities.append({
             "entity_id": eid,

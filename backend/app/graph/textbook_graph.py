@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 
 
@@ -67,20 +66,6 @@ def _local_louvain_partition(nodes: list[str], edges: list[tuple[str, str, float
     remap = {old: idx for idx, (old, _) in enumerate(ordered_comms)}
     return {nid: remap[int(comm)] for nid, comm in part.items()}
 
-
-def _parse_attributes(value: object) -> dict:
-    if isinstance(value, dict):
-        return dict(value)
-    raw = str(value or "").strip()
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return {}
-    return dict(parsed) if isinstance(parsed, dict) else {}
-
-
 def _community_label(member_ids: list[str], entity_by_id: dict[str, dict]) -> str:
     names = []
     for member_id in member_ids:
@@ -101,33 +86,8 @@ def build_community_rows(entities: list[dict], relations: list[dict]) -> list[di
         return []
 
     entity_by_id = {str(item["entity_id"]): item for item in entity_rows}
-    explicit_membership: dict[str, list[str]] = defaultdict(list)
-    assigned_ids: set[str] = set()
-
-    for item in entity_rows:
-        entity_id = str(item.get("entity_id") or "").strip()
-        attrs = _parse_attributes(item.get("attributes"))
-        community_id = attrs.get("community_id")
-        if community_id is None or str(community_id).strip() == "":
-            continue
-        cid = f"community:{community_id}"
-        explicit_membership[cid].append(entity_id)
-        assigned_ids.add(entity_id)
-
     rows: list[dict] = []
-    for cid, member_ids in explicit_membership.items():
-        members = sorted(set(member_ids))
-        rows.append(
-            {
-                "community_id": cid,
-                "label": _community_label(members, entity_by_id),
-                "member_ids": members,
-                "size": len(members),
-                "source": "youtu",
-            }
-        )
-
-    unassigned_ids = sorted(set(entity_by_id.keys()) - assigned_ids)
+    unassigned_ids = sorted(entity_by_id.keys())
     if unassigned_ids:
         unassigned_set = set(unassigned_ids)
         weighted_edges = []
