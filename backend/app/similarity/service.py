@@ -4,15 +4,12 @@ import json
 import math
 import re
 import time
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-try:
-    import faiss  # type: ignore[import-not-found]
-except Exception:  # noqa: BLE001
-    faiss = None  # type: ignore[assignment]
 import numpy as np
 from langchain_core.embeddings import Embeddings
 
@@ -36,6 +33,25 @@ _TRANSIENT_KEYWORDS = frozenset([
 _TRANSIENT_MAX = 8
 _STABLE_MAX = 3
 _STABLE_DELAY = 5.0
+_FAISS_IMPORT_WARNING_PATTERNS = (
+    r".*SwigPyPacked.*",
+    r".*SwigPyObject.*",
+    r".*swigvarlink.*",
+)
+
+
+def _import_faiss() -> Any | None:
+    try:
+        with warnings.catch_warnings():
+            for pattern in _FAISS_IMPORT_WARNING_PATTERNS:
+                warnings.filterwarnings("ignore", message=pattern, category=DeprecationWarning)
+            import faiss as faiss_module  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return None
+    return faiss_module
+
+
+faiss = _import_faiss()
 
 
 def _is_transient_error(exc: Exception) -> bool:
