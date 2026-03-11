@@ -209,6 +209,16 @@ class Settings(BaseSettings):
         le=50,
         validation_alias=AliasChoices("GLOBAL_COMMUNITY_TOP_KEYWORDS"),
     )
+    global_community_tree_comm_embedding_model: str = Field(
+        default="all-MiniLM-L6-v2",
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_TREE_COMM_EMBEDDING_MODEL"),
+    )
+    global_community_tree_comm_struct_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_TREE_COMM_STRUCT_WEIGHT"),
+    )
 
     def effective_llm_api_key(self) -> str | None:
         if self.llm_api_key:

@@ -13,3 +13,4 @@ langchain-openai==0.2.11
 faiss-cpu==1.8.0.post1
 numpy==1.26.4
 json-repair==0.25.0
+sentence-transformers==3.0.1

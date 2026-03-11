@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
-from app.fusion.community import detect_fusion_communities
-from app.fusion.keywords import extract_fusion_keywords
+from app.settings import settings
 
 try:
     from networkx import MultiDiGraph as _NetworkXMultiDiGraph
@@ -48,6 +46,9 @@ if _NetworkXMultiDiGraph is not None:
     MultiDiGraph = _NetworkXMultiDiGraph
 
 
+FastTreeComm = None
+
+
 def _graph_nodes(graph: Any) -> list[tuple[str, dict[str, Any]]]:
     nodes_attr = getattr(graph, "nodes", None)
     if callable(nodes_attr):
@@ -85,76 +86,108 @@ def _member_text(data: dict[str, Any]) -> str:
     return ""
 
 
+def _resolve_fast_tree_comm():
+    if FastTreeComm is not None:
+        return FastTreeComm
+    try:
+        from vendor.youtu_graphrag.utils.tree_comm import FastTreeComm as vendored_fast_tree_comm
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Vendored Youtu TreeComm dependencies are unavailable. "
+            "Install backend requirements to enable global community clustering."
+        ) from exc
+    return vendored_fast_tree_comm
+
+
+def _keyword_text(graph: Any, node_id: str) -> str:
+    nodes_attr = getattr(graph, "nodes", None)
+    if nodes_attr is None:
+        return ""
+    try:
+        data = dict(nodes_attr[node_id] or {})
+    except Exception:
+        return ""
+    return _member_text(data)
+
+
+def _community_title(keyword_texts: list[str], member_ids: list[str], graph: Any) -> str:
+    if keyword_texts:
+        return " / ".join(keyword_texts[:3])
+    fallback = [_keyword_text(graph, node_id) for node_id in member_ids[:3]]
+    fallback = [text for text in fallback if text]
+    if fallback:
+        return " / ".join(fallback)
+    return _community_id(member_ids)
+
+
+def _community_summary(keyword_texts: list[str], member_ids: list[str], graph: Any) -> str:
+    preview = [_keyword_text(graph, node_id) for node_id in member_ids[:4]]
+    preview = [text for text in preview if text]
+    if keyword_texts and preview:
+        return f"TreeComm keywords: {', '.join(keyword_texts[:5])}. Members: {', '.join(preview[:4])}."
+    if preview:
+        return "Members: " + ", ".join(preview[:4])
+    if keyword_texts:
+        return "TreeComm keywords: " + ", ".join(keyword_texts[:5])
+    return ""
+
+
 def run_tree_comm(
     graph: Any,
     *,
     top_keywords: int = 5,
     version: str = "v1",
+    embedding_model: str | None = None,
+    struct_weight: float | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    node_rows: list[dict[str, Any]] = []
-    for node_id, data in _graph_nodes(graph):
-        text = _member_text(data)
-        if not text:
-            continue
-        node_rows.append(
-            {
-                "id": node_id,
-                "text": text,
-                "evidence_quote": text[:220],
-            }
-        )
-
-    edge_rows: list[dict[str, Any]] = []
-    for source, target, data in _graph_edges(graph):
-        relation = str(data.get("relation") or data.get("type") or "").strip()
-        if not relation:
-            continue
-        edge_rows.append(
-            {
-                "source": source,
-                "target": target,
-                "type": relation,
-                "weight": float(data.get("weight") or data.get("score") or 1.0),
-            }
-        )
-
-    detected = detect_fusion_communities(node_rows, edge_rows)
+    candidate_nodes = [node_id for node_id, data in _graph_nodes(graph) if _member_text(data)]
     built_at = datetime.now(tz=timezone.utc).isoformat()
+    if not candidate_nodes:
+        return {"communities": [], "keywords": []}
+
+    fast_tree_comm_cls = _resolve_fast_tree_comm()
+    tree_comm = fast_tree_comm_cls(
+        graph,
+        embedding_model=embedding_model or settings.global_community_tree_comm_embedding_model,
+        struct_weight=float(
+            settings.global_community_tree_comm_struct_weight if struct_weight is None else struct_weight
+        ),
+        config=None,
+    )
+    detected = tree_comm.detect_communities(candidate_nodes)
 
     communities: list[dict[str, Any]] = []
-    for row in detected:
-        member_ids = [str(item).strip() for item in (row.get("member_ids") or []) if str(item).strip()]
+    keywords: list[dict[str, Any]] = []
+    for _, members in sorted(detected.items(), key=lambda item: str(item[0])):
+        member_ids = [str(item).strip() for item in members if str(item).strip()]
         if not member_ids:
             continue
+        keyword_nodes = tree_comm.extract_keywords_from_community(member_ids, top_k=max(1, int(top_keywords)))
+        keyword_texts = [_keyword_text(graph, str(node_id or "").strip()) for node_id in keyword_nodes]
+        keyword_texts = [text for text in keyword_texts if text]
+        community_id = _community_id(member_ids)
         communities.append(
             {
-                "community_id": _community_id(member_ids),
-                "title": str(row.get("title") or "").strip() or _community_id(member_ids),
-                "summary": str(row.get("representative_evidence") or row.get("title") or "").strip(),
-                "confidence": float(row.get("confidence") or row.get("weight") or 0.0),
+                "community_id": community_id,
+                "title": _community_title(keyword_texts, member_ids, graph),
+                "summary": _community_summary(keyword_texts, member_ids, graph),
+                "confidence": 1.0,
                 "member_count": len(member_ids),
                 "member_ids": member_ids,
                 "version": str(version or "v1").strip() or "v1",
                 "built_at": built_at,
             }
         )
-
-    keyword_seed_rows = extract_fusion_keywords(communities, node_rows, top_k=max(1, int(top_keywords)))
-    keywords: list[dict[str, Any]] = []
-    for row in keyword_seed_rows:
-        community_id = str(row.get("community_id") or "").strip()
-        keyword = str(row.get("keyword") or "").strip()
-        if not community_id or not keyword:
-            continue
-        keywords.append(
-            {
-                "community_id": community_id,
-                "keyword_id": _keyword_id(community_id, keyword),
-                "keyword": keyword,
-                "rank": int(row.get("rank") or 0),
-                "weight": float(row.get("weight") or 0.0),
-            }
-        )
+        for rank, keyword in enumerate(keyword_texts[: max(1, int(top_keywords))], start=1):
+            keywords.append(
+                {
+                    "community_id": community_id,
+                    "keyword_id": _keyword_id(community_id, keyword),
+                    "keyword": keyword,
+                    "rank": rank,
+                    "weight": float(1.0 / rank),
+                }
+            )
 
     communities.sort(key=lambda item: str(item.get("community_id") or ""))
     keywords.sort(key=lambda item: (str(item.get("community_id") or ""), int(item.get("rank") or 0), str(item.get("keyword") or "")))
