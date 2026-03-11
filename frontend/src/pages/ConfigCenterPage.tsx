@@ -93,7 +93,7 @@ const MODULE_ITEMS: Array<{ id: ModuleTab; label: { zh: string; en: string }; de
   {
     id: 'similarity',
     label: { zh: '相似性', en: 'Similarity' },
-    desc: { zh: '命题分组与聚类行为。', en: 'Proposition grouping and clustering behavior.' },
+    desc: { zh: '相似性聚类行为。', en: 'Similarity clustering behavior.' },
   },
   {
     id: 'schema',
@@ -751,7 +751,7 @@ export default function ConfigCenterPage() {
                   id="cfg-similarity-group_clustering_method"
                   className={`cc-field${flashAnchor === 'cfg-similarity-group_clustering_method' ? ' is-flash' : ''}`}
                 >
-                  <span className="cc-label">{t('命题分组方法（group_clustering_method）', 'group_clustering_method')}</span>
+                  <span className="cc-label">{t('相似性聚类方法（group_clustering_method）', 'group_clustering_method')}</span>
                   <select
                     className="input"
                     value={profile.modules.similarity.group_clustering_method}
@@ -761,7 +761,7 @@ export default function ConfigCenterPage() {
                     <option value="louvain">{t('Louvain 社区（louvain）', 'louvain')}</option>
                     <option value="agglomerative">{t('层次聚类（agglomerative）', 'agglomerative')}</option>
                   </select>
-                  <span className="cc-help">{t('重建相似性时用于形成命题分组的方法。', 'How proposition groups are formed during similarity rebuild.')}</span>
+                  <span className="cc-help">{t('重建相似性时用于形成相似性簇的方法。', 'How similarity clusters are formed during similarity rebuild.')}</span>
                 </label>
 
                 <label

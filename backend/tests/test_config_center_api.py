@@ -67,6 +67,9 @@ def test_config_center_catalog_and_assistant(monkeypatch, tmp_path):
     assert _is_field(modules["discovery"].get("fields") or [], "max_gaps", "discovery.max_gaps")
     assert _is_field(modules["similarity"].get("fields") or [], "group_clustering_method", "similarity.group_clustering_method")
     assert _is_field(modules["schema"].get("fields") or [], "rules_json", "schema.rules_json")
+    similarity_fields = modules["similarity"].get("fields") or []
+    assert similarity_fields
+    assert not any("proposition" in str(field.get("description") or "").lower() for field in similarity_fields if isinstance(field, dict))
 
     assist_resp = client.post(
         "/config-center/assistant",
@@ -80,6 +83,7 @@ def test_config_center_catalog_and_assistant(monkeypatch, tmp_path):
     assert any(_has_cjk(str(item.get("rationale") or "")) for item in suggestions if isinstance(item, dict))
     anchors = {str(item.get("anchor")) for item in suggestions if isinstance(item, dict)}
     assert "discovery.max_gaps" in anchors or "similarity.group_clustering_threshold" in anchors
+    assert not any("命题" in str(item.get("rationale") or "") for item in suggestions if isinstance(item, dict))
 
 
 def test_config_center_assistant_keeps_extraction_accuracy_goals_off_discovery(monkeypatch, tmp_path):

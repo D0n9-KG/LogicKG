@@ -9,7 +9,6 @@ from app.ingest.upload_actions import commit_ready, replace_with_new
 from app.ingest.textbook_pipeline import ingest_textbook
 from app.discovery.service import run_discovery_batch
 from app.fusion.service import rebuild_fusion_graph
-from app.evolution.service import rebuild_evolution_graph
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
 from app.similarity.service import rebuild_similarity_global, update_similarity_for_paper
@@ -217,19 +216,6 @@ def handle_rebuild_global_communities(
         update(stage, p, msg)
 
     return rebuild_global_communities(progress=progress, log=log)
-
-
-def handle_rebuild_evolution(
-    task_id: str,
-    update: Callable[[str, float, str | None], None],
-    log: Callable[[str], None],
-) -> dict[str, Any]:
-    update("evolution:rebuild", 0.02, "Rebuilding proposition relations and states")
-
-    def progress(stage: str, p: float, msg: str | None = None) -> None:
-        update(stage, p, msg)
-
-    return rebuild_evolution_graph(progress=progress, log=log)
 
 
 def handle_update_similarity_paper(

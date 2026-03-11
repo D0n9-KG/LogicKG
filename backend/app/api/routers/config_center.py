@@ -38,8 +38,8 @@ DISCOVERY_FIELD_HELP: dict[str, str] = {
 }
 
 SIMILARITY_FIELD_HELP: dict[str, str] = {
-    "group_clustering_method": "Grouping method for proposition clusters.",
-    "group_clustering_threshold": "Similarity threshold used when grouping propositions.",
+    "group_clustering_method": "Grouping method for similarity clusters.",
+    "group_clustering_threshold": "Similarity threshold used when forming retrieval clusters.",
 }
 
 
@@ -283,7 +283,7 @@ def _heuristic_suggestions(
             key="group_clustering_threshold",
             anchor="similarity.group_clustering_threshold",
             suggested_value=f"{min(0.95, float(similarity['group_clustering_threshold']) + 0.03):.2f}",
-            rationale=text_by_locale("提高聚类阈值可让命题分组更紧，降低语义漂移。", "Higher threshold creates tighter proposition groups, reducing semantic drift."),
+            rationale=text_by_locale("提高聚类阈值可让相似性簇更紧，降低语义漂移。", "Higher threshold creates tighter similarity clusters, reducing semantic drift."),
         )
         _add_suggestion(
             out,
@@ -403,8 +403,8 @@ def _heuristic_suggestions(
             anchor="similarity.group_clustering_threshold",
             suggested_value=f"{float(similarity['group_clustering_threshold']):.2f}",
             rationale=text_by_locale(
-                "聚类阈值会直接影响命题粒度以及下游 gap 质量。",
-                "Cluster threshold strongly affects proposition granularity and downstream gap quality.",
+                "聚类阈值会直接影响相似性簇粒度以及下游 gap 质量。",
+                "Cluster threshold strongly affects similarity-cluster granularity and downstream gap quality.",
             ),
         )
         _add_suggestion(
@@ -612,7 +612,7 @@ def _heuristic_suggestions(
             key="group_clustering_threshold",
             anchor="similarity.group_clustering_threshold",
             suggested_value=f"{min(0.95, float(similarity['group_clustering_threshold']) + 0.03):.2f}",
-            rationale=text_by_locale("提高聚类阈值，让命题分组更紧，减少语义漂移。", "Higher threshold creates tighter proposition groups, reducing semantic drift."),
+            rationale=text_by_locale("提高聚类阈值，让相似性簇更紧，减少语义漂移。", "Higher threshold creates tighter similarity clusters, reducing semantic drift."),
         )
         _add_suggestion(
             out,
@@ -721,7 +721,7 @@ def _heuristic_suggestions(
             key="group_clustering_threshold",
             anchor="similarity.group_clustering_threshold",
             suggested_value=f"{float(similarity['group_clustering_threshold']):.2f}",
-            rationale=text_by_locale("聚类阈值会直接影响命题粒度以及下游质量。", "Cluster threshold strongly affects proposition granularity and downstream quality."),
+            rationale=text_by_locale("聚类阈值会直接影响相似性簇粒度以及下游质量。", "Cluster threshold strongly affects similarity-cluster granularity and downstream quality."),
         )
         _add_suggestion(
             out,

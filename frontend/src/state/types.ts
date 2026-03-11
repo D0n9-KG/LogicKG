@@ -4,7 +4,6 @@ export type ModuleId =
   | 'overview'
   | 'papers'
   | 'ask'
-  | 'evolution'
   | 'textbooks'
   | 'ops'
 
@@ -201,11 +200,6 @@ export type AskSession = {
   draftK: number
 }
 
-export type EvolutionModuleState = {
-  selectedGroupId: string | null
-  searchQuery: string
-}
-
 export type TextbooksModuleState = {
   selectedTextbookId: string | null
   selectedChapterId: string | null
@@ -224,7 +218,6 @@ export type GlobalState = {
   // Module states
   papers: PapersModuleState
   ask: AskModuleState
-  evolution: EvolutionModuleState
   textbooks: TextbooksModuleState
 }
 
@@ -249,8 +242,5 @@ export type GlobalAction =
   | { type: 'ASK_SET_CURRENT'; id: string | null; sessionId?: string }
   | { type: 'ASK_RESET_SESSION'; keepDraft?: boolean; sessionId?: string }
   | { type: 'ASK_RESTORE'; ask: AskModuleState }
-  // Evolution module
-  | { type: 'EVOLUTION_SELECT_GROUP'; groupId: string | null }
-  | { type: 'EVOLUTION_SEARCH'; query: string }
   // Textbooks module
   | { type: 'TEXTBOOKS_SELECT'; textbookId: string | null; chapterId: string | null }

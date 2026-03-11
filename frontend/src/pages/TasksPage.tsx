@@ -40,7 +40,6 @@ function typeLabel(type: string, locale: UILocale) {
   if (type === 'rebuild_faiss') return locale === 'zh-CN' ? '重建全局 FAISS' : 'Rebuild Global FAISS'
   if (type === 'rebuild_all') return locale === 'zh-CN' ? '全链路重建（所有论文）' : 'Full Pipeline Rebuild'
   if (type === 'rebuild_similarity') return locale === 'zh-CN' ? '重建相似度关系' : 'Rebuild Similarity Links'
-  if (type === 'rebuild_evolution') return locale === 'zh-CN' ? '重算演化关系/状态' : 'Recompute Evolution'
   if (type === 'update_similarity_paper') return locale === 'zh-CN' ? '更新单论文相似度' : 'Update Paper Similarity'
   return type
 }
@@ -53,7 +52,6 @@ function stageLabel(stage: string | null | undefined, locale: UILocale) {
   if (s.includes('neo4j_write')) return locale === 'zh-CN' ? '写入 Neo4j' : 'Write Neo4j'
   if (s.includes('llm')) return locale === 'zh-CN' ? '大模型抽取' : 'LLM Extraction'
   if (s.includes('faiss')) return locale === 'zh-CN' ? '向量索引重建' : 'FAISS Rebuild'
-  if (s.includes('evolution')) return locale === 'zh-CN' ? '演化关系/状态重算' : 'Evolution Recompute'
   if (s === 'done') return locale === 'zh-CN' ? '完成' : 'Done'
   if (s === 'canceled') return locale === 'zh-CN' ? '已取消' : 'Canceled'
   if (s === 'failed') return locale === 'zh-CN' ? '失败' : 'Failed'
@@ -165,25 +163,6 @@ export default function TasksPage() {
     }
   }
 
-  async function submitRebuildEvolution() {
-    setActionBusy('rebuild_evolution')
-    setError('')
-    setInfo('')
-    try {
-      const res = await apiPost<{ task_id: string }>('/tasks/rebuild/evolution', {})
-      setInfo(
-        locale === 'zh-CN'
-          ? `已提交任务：重算演化关系/状态（${res.task_id ?? ''}）`
-          : `Task submitted: Recompute evolution (${res.task_id ?? ''})`,
-      )
-      await refresh()
-    } catch (e: unknown) {
-      setError(String((e as { message?: unknown } | null)?.message ?? e))
-    } finally {
-      setActionBusy('')
-    }
-  }
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return tasks.filter((t) => {
@@ -201,7 +180,7 @@ export default function TasksPage() {
       <div className="pageHeader">
         <div>
           <h2 className="pageTitle">{t('任务', 'Tasks')}</h2>
-          <div className="pageSubtitle">{t('后台队列任务（导入 / 替换 / 重建 / 演化重算）', 'Backend queue tasks (ingest / replace / rebuild / evolution)')}</div>
+          <div className="pageSubtitle">{t('后台队列任务（导入 / 替换 / 重建）', 'Backend queue tasks (ingest / replace / rebuild)')}</div>
         </div>
         <div className="pageActions">
           <span className="pill">
@@ -212,9 +191,6 @@ export default function TasksPage() {
           </button>
           <button className="btn btnDanger" disabled={!!actionBusy} onClick={submitRebuildAll}>
             {actionBusy === 'rebuild_all' ? t('提交中…', 'Submitting...') : t('全链路重建', 'Full Rebuild')}
-          </button>
-          <button className="btn" disabled={!!actionBusy} onClick={submitRebuildEvolution}>
-            {actionBusy === 'rebuild_evolution' ? t('提交中…', 'Submitting...') : t('重算演化关系/状态', 'Recompute Evolution')}
           </button>
           <button className="btn" onClick={() => refresh().catch((e: unknown) => setError(String((e as { message?: unknown } | null)?.message ?? e)))}>
             {t('刷新', 'Refresh')}

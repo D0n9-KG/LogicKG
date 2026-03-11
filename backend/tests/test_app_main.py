@@ -30,7 +30,6 @@ def test_register_task_handlers_registers_all_expected_task_types():
         TaskType.rebuild_all,
         TaskType.rebuild_fusion,
         TaskType.rebuild_global_communities,
-        TaskType.rebuild_evolution,
         TaskType.rebuild_similarity,
         TaskType.update_similarity_paper,
         TaskType.ingest_textbook,
@@ -68,3 +67,4 @@ def test_app_exposes_global_community_routes():
     assert ("/community/list", ("GET",)) in routes
     assert ("/community/{community_id}", ("GET",)) in routes
     assert ("/tasks/rebuild/community", ("POST",)) in routes
+    assert ("/tasks/rebuild/evolution", ("POST",)) not in routes

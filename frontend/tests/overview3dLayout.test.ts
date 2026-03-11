@@ -57,6 +57,24 @@ describe('overview3dLayout', () => {
     expect(state.rightPanelCollapsed).toBe(false)
   })
 
+  test('does not treat removed evolution module as a floating panel mode', () => {
+    const state = resolveOverview3DPanelState({
+      activeModule: 'evolution',
+      overviewMode: '2d',
+      hasGraphData: true,
+      leftCollapsed: false,
+      rightCollapsed: false,
+      leftDrawerOpen: true,
+      rightDrawerOpen: true,
+    })
+
+    expect(state.immersive).toBe(false)
+    expect(state.layoutLeftCollapsed).toBe(false)
+    expect(state.layoutRightCollapsed).toBe(false)
+    expect(state.leftPanelCollapsed).toBe(false)
+    expect(state.rightPanelCollapsed).toBe(false)
+  })
+
   test('falls back to normal sidebar behavior outside immersive 3D mode', () => {
     const state = resolveOverview3DPanelState({
       activeModule: 'overview',

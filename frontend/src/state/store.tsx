@@ -15,7 +15,6 @@ export const INITIAL_STATE: GlobalState = {
 
   papers: { selectedPaperId: null, searchQuery: '' },
   ask: deriveAskModuleState([createAskSession()], null),
-  evolution: { selectedGroupId: null, searchQuery: '' },
   textbooks: { selectedTextbookId: null, selectedChapterId: null },
 }
 
@@ -127,10 +126,6 @@ export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
         ask: deriveAskModuleState(action.ask.sessions, action.ask.currentSessionId),
       }
 
-    case 'EVOLUTION_SELECT_GROUP':
-      return { ...state, evolution: { ...state.evolution, selectedGroupId: action.groupId } }
-    case 'EVOLUTION_SEARCH':
-      return { ...state, evolution: { ...state.evolution, searchQuery: action.query } }
 
     case 'TEXTBOOKS_SELECT':
       return { ...state, textbooks: { ...state.textbooks, selectedTextbookId: action.textbookId, selectedChapterId: action.chapterId } }

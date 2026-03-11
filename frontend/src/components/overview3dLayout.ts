@@ -18,7 +18,7 @@ export type Overview3DPanelState = {
   rightPanelCollapsed: boolean
 }
 
-const FLOATING_PANEL_MODULES = new Set(['papers', 'textbooks', 'evolution'])
+const FLOATING_PANEL_MODULES = new Set(['papers', 'textbooks'])
 
 export function resolveOverview3DPanelState(input: Overview3DPanelStateInput): Overview3DPanelState {
   const immersive =

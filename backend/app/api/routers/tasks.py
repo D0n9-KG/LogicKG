@@ -98,15 +98,6 @@ def submit_rebuild_community(req: RebuildCommunityTaskRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/rebuild/evolution", response_model=SubmitTaskResponse)
-def submit_rebuild_evolution():
-    try:
-        task_id = task_manager.submit(TaskType.rebuild_evolution, {})
-        return SubmitTaskResponse(task_id=task_id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 class UpdateSimilarityPaperRequest(BaseModel):
     paper_id: str = Field(min_length=3)
 

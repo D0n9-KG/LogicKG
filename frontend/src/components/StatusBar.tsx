@@ -6,7 +6,6 @@ const MODULE_LABELS: Record<string, { zh: string; en: string }> = {
   overview: { zh: '全局总览', en: 'Global Overview' },
   papers: { zh: '论文引文网络', en: 'Paper Citation Network' },
   ask: { zh: '图谱增强问答', en: 'GraphRAG QA' },
-  evolution: { zh: '命题演化', en: 'Proposition Evolution' },
   textbooks: { zh: '教材知识图谱', en: 'Textbook Knowledge Graph' },
   ops: { zh: '运维工作台', en: 'Ops Workbench' },
 }
