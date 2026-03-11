@@ -686,7 +686,7 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
             "main_query": "finite element method assumptions",
             "paper_query": "finite element method assumptions in this paper",
             "textbook_query": "finite element method definition assumptions discretization",
-            "proposition_query": "finite element method assumptions proposition",
+            "community_query": "finite element method assumptions community",
             "confidence": 0.88,
         },
         raising=False,
@@ -695,13 +695,13 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
         "app.rag.service.retrieve_structured_evidence",
         lambda *args, **kwargs: [
             {
-                "kind": "proposition",
-                "source_id": "pr-1",
-                "proposition_id": "pr-1",
-                "text": "Finite element discretization stabilizes PDE solving.",
-                "source_kind": "claim",
-                "source_ref_id": "cl-1",
-                "paper_source": "paper-A",
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
+                "text": "Finite element stability community.",
+                "member_ids": ["cl-1", "ke-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
             }
         ],
         raising=False,
@@ -710,8 +710,8 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
         "app.rag.service.ground_structured_evidence",
         lambda *args, **kwargs: [
             {
-                "source_kind": "proposition",
-                "source_id": "pr-1",
+                "source_kind": "claim",
+                "source_id": "cl-1",
                 "quote": (
                     "Finite element method discretizes the domain. "
                     "Additional implementation details should stay out of the prompt-level grounding block."
@@ -749,8 +749,9 @@ def test_prepare_ask_v2_context_includes_query_plan_structured_evidence_and_grou
 
     assert "query_plan" in bundle_dump
     assert bundle_dump["query_plan"]["intent"] == "foundational"
-    assert bundle_dump["structured_evidence"][0]["kind"] == "proposition"
-    assert bundle_dump["grounding"][0]["source_id"] == "pr-1"
+    assert bundle_dump["structured_evidence"][0]["kind"] == "community"
+    assert bundle_dump["structured_evidence"][0]["community_id"] == "gc:demo"
+    assert bundle_dump["grounding"][0]["source_id"] == "cl-1"
     assert "Structured Evidence" in ctx["user"]
     assert "Grounding" in ctx["user"]
     assert "Finite element method discretizes the domain." in ctx["user"]
@@ -826,7 +827,7 @@ def test_prepare_ask_v2_context_textbook_first_uses_textbook_seed_and_prompt_ord
             "main_query": "finite element method assumptions",
             "paper_query": paper_query,
             "textbook_query": textbook_query,
-            "proposition_query": "finite element method assumptions proposition",
+            "community_query": "finite element method assumptions community",
             "confidence": 0.88,
         },
         raising=False,
@@ -963,9 +964,18 @@ def test_retrieve_structured_evidence_claim_first_prefers_claims_and_logic(monke
         raising=False,
     )
     monkeypatch.setattr(
-        "app.rag.service.retrieve_propositions",
+        "app.rag.service.retrieve_communities",
         lambda query, k, allowed_sources=None: [
-            {"kind": "proposition", "source_id": "pr-1", "text": "Canonical FEM proposition.", "score": 0.7}
+            {
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
+                "text": "Canonical FEM stability community.",
+                "member_ids": ["cl-1"],
+                "member_kinds": ["Claim"],
+                "keyword_texts": ["finite element", "stability"],
+                "score": 0.7,
+            }
         ],
         raising=False,
     )
@@ -977,7 +987,7 @@ def test_retrieve_structured_evidence_claim_first_prefers_claims_and_logic(monke
             "retrieval_plan": "claim_first",
             "main_query": "fem method results",
             "paper_query": "fem method results in this paper",
-            "proposition_query": "fem method result proposition",
+            "community_query": "fem method result community",
         },
         evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/example"}],
         allowed_sources={"paper-A"},
@@ -988,18 +998,21 @@ def test_retrieve_structured_evidence_claim_first_prefers_claims_and_logic(monke
     assert [row["kind"] for row in rows[:2]] == ["claim", "logic_step"]
 
 
-def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(monkeypatch):
+def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support_and_communities(monkeypatch):
     monkeypatch.setattr("app.rag.service.retrieve_logic_steps", lambda *args, **kwargs: [], raising=False)
     monkeypatch.setattr("app.rag.service.retrieve_claims", lambda *args, **kwargs: [], raising=False)
     monkeypatch.setattr(
-        "app.rag.service.retrieve_propositions",
+        "app.rag.service.retrieve_communities",
         lambda query, k, allowed_sources=None: [
             {
-                "kind": "proposition",
-                "source_id": "pr-1",
-                "proposition_id": "pr-1",
-                "text": "Finite element discretization stabilizes PDE solving.",
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
+                "text": "Finite element discretization stability community.",
                 "score": 0.79,
+                "member_ids": ["cl-1", "ent-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
                 "textbook_id": "tb:1",
                 "chapter_id": "tb:1:ch001",
             }
@@ -1015,7 +1028,7 @@ def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(mo
             "main_query": "finite element method assumptions",
             "paper_query": "finite element method assumptions in this paper",
             "textbook_query": "finite element method definition assumptions discretization",
-            "proposition_query": "finite element method assumptions proposition",
+            "community_query": "finite element method assumptions community",
         },
         evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/example"}],
         allowed_sources=None,
@@ -1037,10 +1050,10 @@ def test_retrieve_structured_evidence_textbook_first_prefers_textbook_support(mo
         ],
     )
 
-    assert [row["kind"] for row in rows[:2]] == ["textbook", "proposition"]
+    assert [row["kind"] for row in rows[:2]] == ["textbook", "community"]
 
 
-def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(monkeypatch):
+def test_ground_structured_evidence_expands_community_members_and_textbook_fallback(monkeypatch):
     class _FakeNeo4jClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -1052,11 +1065,11 @@ def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(
             return False
 
         def get_grounding_rows_for_structured_ids(self, ids, limit=200):
-            assert ids == [{"kind": "proposition", "source_id": "pr-1"}]
+            assert ids == [{"kind": "claim", "source_id": "cl-1"}]
             return [
                 {
-                    "source_kind": "proposition",
-                    "source_id": "pr-1",
+                    "source_kind": "claim",
+                    "source_id": "cl-1",
                     "quote": (
                         "Finite element method discretizes the domain. "
                         "This chunk also includes a long implementation discussion that should not be echoed wholesale."
@@ -1085,8 +1098,13 @@ def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(
     rows = ground_structured_evidence(
         structured_evidence=[
             {
-                "kind": "proposition",
-                "source_id": "pr-1",
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
+                "text": "Finite element stability community.",
+                "member_ids": ["cl-1", "ent-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
                 "paper_source": "paper-A",
                 "paper_id": "doi:10.1000/in",
             },
@@ -1105,7 +1123,7 @@ def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(
     )
 
     assert len(rows) == 2
-    assert rows[0]["source_id"] == "pr-1"
+    assert rows[0]["source_id"] == "cl-1"
     assert rows[0]["quote"] == "Finite element method discretizes the domain."
     assert rows[0]["chunk_id"] == "c1"
     assert rows[0]["paper_source"] == "paper-A"
@@ -1117,42 +1135,45 @@ def test_ground_structured_evidence_hydrates_graph_quotes_and_textbook_fallback(
     assert rows[1]["quote"] == "Finite element chapter defines discretization over mesh elements."
 
 
-def test_retrieve_structured_evidence_scoped_proposition_first_keeps_textbook_origin(monkeypatch):
+def test_retrieve_structured_evidence_scoped_community_first_keeps_textbook_origin(monkeypatch):
     monkeypatch.setattr("app.rag.service.retrieve_logic_steps", lambda *args, **kwargs: [], raising=False)
     monkeypatch.setattr("app.rag.service.retrieve_claims", lambda *args, **kwargs: [], raising=False)
     monkeypatch.setattr(
-        "app.rag.service.retrieve_propositions",
+        "app.rag.service.retrieve_communities",
         lambda query, k, allowed_sources=None: [
             {
-                "kind": "proposition",
-                "source_id": "pr-textbook",
-                "proposition_id": "pr-textbook",
-                "text": "Textbook FEM definition.",
+                "kind": "community",
+                "source_id": "gc:textbook",
+                "community_id": "gc:textbook",
+                "text": "Textbook FEM definition community.",
                 "score": 0.93,
-                "source_kind": "textbook_entity",
-                "source_ref_id": "ent-1",
+                "member_ids": ["ent-1"],
+                "member_kinds": ["KnowledgeEntity"],
+                "keyword_texts": ["finite element", "definition"],
                 "textbook_id": "tb:1",
                 "chapter_id": "tb:1:ch001",
             },
             {
-                "kind": "proposition",
-                "source_id": "pr-paper-out",
-                "proposition_id": "pr-paper-out",
-                "text": "Out-of-scope paper proposition.",
+                "kind": "community",
+                "source_id": "gc:paper-out",
+                "community_id": "gc:paper-out",
+                "text": "Out-of-scope paper community.",
                 "score": 0.91,
-                "source_kind": "claim",
-                "source_ref_id": "cl-out",
+                "member_ids": ["cl-out"],
+                "member_kinds": ["Claim"],
+                "keyword_texts": ["finite element", "paper-B"],
                 "paper_source": "paper-B",
                 "paper_id": "doi:10.1000/out",
             },
             {
-                "kind": "proposition",
-                "source_id": "pr-paper-in",
-                "proposition_id": "pr-paper-in",
-                "text": "In-scope paper proposition.",
+                "kind": "community",
+                "source_id": "gc:paper-in",
+                "community_id": "gc:paper-in",
+                "text": "In-scope paper community.",
                 "score": 0.89,
-                "source_kind": "claim",
-                "source_ref_id": "cl-in",
+                "member_ids": ["cl-in"],
+                "member_kinds": ["Claim"],
+                "keyword_texts": ["finite element", "paper-A"],
                 "paper_source": "paper-A",
                 "paper_id": "doi:10.1000/in",
             },
@@ -1161,14 +1182,14 @@ def test_retrieve_structured_evidence_scoped_proposition_first_keeps_textbook_or
     )
 
     rows = retrieve_structured_evidence(
-        question="What foundational propositions explain this scoped paper?",
+        question="What foundational communities explain this scoped paper?",
         query_plan={
             "intent": "foundational",
-            "retrieval_plan": "proposition_first",
+            "retrieval_plan": "community_first",
             "main_query": "finite element method assumptions",
             "paper_query": "finite element method assumptions in this paper",
             "textbook_query": "finite element method definition assumptions discretization",
-            "proposition_query": "finite element method assumptions proposition",
+            "community_query": "finite element method assumptions community",
         },
         evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/in"}],
         allowed_sources={"paper-A"},
@@ -1177,9 +1198,9 @@ def test_retrieve_structured_evidence_scoped_proposition_first_keeps_textbook_or
     )
 
     source_ids = [row["source_id"] for row in rows]
-    assert "pr-textbook" in source_ids
-    assert "pr-paper-in" in source_ids
-    assert "pr-paper-out" not in source_ids
+    assert "gc:textbook" in source_ids
+    assert "gc:paper-in" in source_ids
+    assert "gc:paper-out" not in source_ids
 
 
 def test_prepare_ask_v2_context_scope_uses_structured_hits_before_early_return(monkeypatch):

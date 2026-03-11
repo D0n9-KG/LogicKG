@@ -15,7 +15,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_:+./-]+|[\u4e00-\u9fff]+")
 _CORPUS_KIND = {
     "logic_steps": "logic_step",
     "claims": "claim",
-    "propositions": "proposition",
+    "communities": "community",
 }
 
 
@@ -42,21 +42,108 @@ def _score_row(query: str, row: dict[str, Any]) -> float:
     return max((_score_text(query, candidate) for candidate in candidates), default=0.0)
 
 
+def _string_list(values: Any) -> list[str]:
+    if isinstance(values, (list, tuple, set)):
+        return [str(value).strip() for value in values if str(value).strip()]
+    text = str(values or "").strip()
+    return [text] if text else []
+
+
+def _community_text(row: dict[str, Any]) -> str:
+    title = str(row.get("title") or "").strip()
+    summary = str(row.get("summary") or "").strip()
+    keywords = _string_list(row.get("keyword_texts") or row.get("keywords"))
+    parts: list[str] = []
+    if title:
+        parts.append(title)
+    if summary and summary.casefold() not in {part.casefold() for part in parts}:
+        parts.append(summary)
+    if keywords:
+        parts.append("keywords: " + ", ".join(keywords))
+    return "\n".join(parts)
+
+
+def _hydrate_community_row(
+    row: dict[str, Any],
+    *,
+    client: Neo4jClient | None = None,
+    member_limit: int = 200,
+) -> dict[str, Any] | None:
+    community_id = str(row.get("community_id") or row.get("source_id") or row.get("id") or "").strip()
+    if not community_id:
+        return None
+
+    keyword_texts = _string_list(row.get("keyword_texts") or row.get("keywords"))
+    member_ids = _string_list(row.get("member_ids"))
+    member_kinds = _string_list(row.get("member_kinds"))
+
+    if client is not None and (not member_ids or not member_kinds):
+        try:
+            members = list(client.list_global_community_members(community_id, limit=member_limit) or [])
+        except Exception:
+            members = []
+        if not member_ids:
+            member_ids = [str(member.get("member_id") or "").strip() for member in members if str(member.get("member_id") or "").strip()]
+        if not member_kinds:
+            member_kinds = [str(member.get("member_kind") or "").strip() for member in members if str(member.get("member_kind") or "").strip()]
+
+    hydrated = dict(row)
+    hydrated["kind"] = "community"
+    hydrated["source_id"] = community_id
+    hydrated["id"] = str(row.get("id") or community_id).strip() or community_id
+    hydrated["community_id"] = community_id
+    hydrated["member_ids"] = member_ids
+    hydrated["member_kinds"] = member_kinds
+    hydrated["keyword_texts"] = keyword_texts
+    text = str(row.get("text") or "").strip() or _community_text(hydrated)
+    if not text:
+        return None
+    hydrated["text"] = text
+    return hydrated
+
+
+def build_community_corpus_rows(
+    client: Neo4jClient,
+    *,
+    limit: int = 50000,
+    member_limit: int = 200,
+) -> list[dict[str, Any]]:
+    rows = list(client.list_global_community_rows(limit=limit) or [])
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        hydrated = _hydrate_community_row(row, client=client, member_limit=member_limit)
+        if hydrated is not None:
+            out.append(hydrated)
+    return out
+
+
 def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows or []:
         if not isinstance(row, dict):
             continue
         kind = str(row.get("kind") or "").strip() or "structured"
-        source_id = str(row.get("source_id") or row.get("id") or "").strip()
+        source_id = str(row.get("source_id") or row.get("community_id") or row.get("id") or "").strip()
         text = str(row.get("text") or "").strip()
+        if kind == "community" and not text:
+            text = _community_text(row)
         if not source_id or not text:
             continue
+
         normalized = dict(row)
         normalized["kind"] = kind
         normalized["source_id"] = source_id
         normalized["id"] = str(row.get("id") or source_id).strip() or source_id
         normalized["text"] = text
+
+        if kind == "community":
+            normalized["community_id"] = str(row.get("community_id") or source_id).strip() or source_id
+            normalized["member_ids"] = _string_list(row.get("member_ids"))
+            normalized["member_kinds"] = _string_list(row.get("member_kinds"))
+            normalized["keyword_texts"] = _string_list(row.get("keyword_texts") or row.get("keywords"))
+
         if kind == "proposition":
             normalized["proposition_id"] = str(row.get("proposition_id") or source_id).strip() or source_id
         if "source_kind" in row:
@@ -83,6 +170,8 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
             normalized["evidence_event_id"] = str(row.get("evidence_event_id") or "").strip() or None
         if "evidence_event_type" in row:
             normalized["evidence_event_type"] = str(row.get("evidence_event_type") or "").strip() or None
+        if "community_id" in row and kind != "community":
+            normalized["community_id"] = str(row.get("community_id") or "").strip() or None
         if "proposition_id" in row and kind != "proposition":
             normalized["proposition_id"] = str(row.get("proposition_id") or "").strip() or None
         if "start_line" in row:
@@ -105,8 +194,8 @@ def _load_corpus_rows(corpus: str) -> list[dict[str, Any]]:
                 return client.list_logic_step_structured_rows()
             if corpus == "claims":
                 return client.list_claim_structured_rows()
-            if corpus == "propositions":
-                return client.list_proposition_structured_rows()
+            if corpus == "communities":
+                return build_community_corpus_rows(client)
     except Exception:
         return []
     return []
@@ -149,7 +238,7 @@ def _normalize_faiss_hit(corpus: str, doc: Any, score: float) -> dict[str, Any]:
     metadata = dict(getattr(doc, "metadata", {}) or {})
     row = dict(metadata)
     row["kind"] = str(metadata.get("kind") or _CORPUS_KIND.get(corpus) or "structured")
-    row["source_id"] = str(metadata.get("source_id") or metadata.get("id") or "").strip()
+    row["source_id"] = str(metadata.get("source_id") or metadata.get("community_id") or metadata.get("id") or "").strip()
     row["id"] = str(metadata.get("id") or row["source_id"]).strip() or row["source_id"]
     row["text"] = str(getattr(doc, "page_content", "") or metadata.get("text") or "").strip()
     row["score"] = float(score)
@@ -207,8 +296,8 @@ def retrieve_claims(query: str, k: int, allowed_sources: set[str] | None = None)
     return normalize_structured_rows(_search_corpus("claims", query, k, allowed_sources=allowed_sources))
 
 
-def retrieve_propositions(query: str, k: int, allowed_sources: set[str] | None = None) -> list[dict[str, Any]]:
-    return normalize_structured_rows(_search_corpus("propositions", query, k, allowed_sources=allowed_sources))
+def retrieve_communities(query: str, k: int, allowed_sources: set[str] | None = None) -> list[dict[str, Any]]:
+    return normalize_structured_rows(_search_corpus("communities", query, k, allowed_sources=allowed_sources))
 
 
 def _hit_key(row: dict[str, Any]) -> tuple[str, str]:
@@ -232,24 +321,25 @@ def fuse_retrieval_channels(
     chunk_hits: list[dict[str, Any]] | None = None,
     logic_hits: list[dict[str, Any]] | None = None,
     claim_hits: list[dict[str, Any]] | None = None,
-    proposition_hits: list[dict[str, Any]] | None = None,
+    community_hits: list[dict[str, Any]] | None = None,
     textbook_hits: list[dict[str, Any]] | None = None,
     k: int = 8,
 ) -> list[dict[str, Any]]:
     del question
     ordered: dict[str, list[dict[str, Any]]] = {
         "textbook": _sorted_hits(textbook_hits),
-        "proposition": _sorted_hits(proposition_hits),
+        "community": _sorted_hits(community_hits),
         "claim": _sorted_hits(claim_hits),
         "logic_step": _sorted_hits(logic_hits),
         "chunk": _sorted_hits(chunk_hits),
     }
     plan_order = {
-        "textbook_first_then_paper": ["textbook", "proposition", "claim", "logic_step", "chunk"],
-        "claim_first": ["claim", "logic_step", "chunk", "proposition", "textbook"],
-        "proposition_first": ["proposition", "textbook", "claim", "logic_step", "chunk"],
-        "hybrid_parallel": ["claim", "proposition", "logic_step", "textbook", "chunk"],
-        "paper_first_then_textbook": ["chunk", "claim", "logic_step", "proposition", "textbook"],
+        "textbook_first_then_paper": ["textbook", "community", "claim", "logic_step", "chunk"],
+        "claim_first": ["claim", "logic_step", "chunk", "community", "textbook"],
+        "community_first": ["community", "textbook", "claim", "logic_step", "chunk"],
+        "proposition_first": ["community", "textbook", "claim", "logic_step", "chunk"],
+        "hybrid_parallel": ["claim", "community", "logic_step", "textbook", "chunk"],
+        "paper_first_then_textbook": ["chunk", "claim", "logic_step", "community", "textbook"],
     }
     order = plan_order.get(str(retrieval_plan or "").strip(), plan_order["paper_first_then_textbook"])
 

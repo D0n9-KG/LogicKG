@@ -8,14 +8,25 @@ def _structured_module():
     return importlib.import_module("app.rag.structured_retrieval")
 
 
-def test_direct_structured_retrievers_return_logic_claim_and_proposition_hits(monkeypatch) -> None:
+def test_direct_structured_retrievers_return_logic_claim_and_community_hits(monkeypatch) -> None:
     structured = _structured_module()
 
     def _fake_search(corpus: str, query: str, k: int, allowed_sources=None):
+        del query, allowed_sources
         base = {
             "logic_steps": [{"kind": "logic_step", "id": "ls-1", "text": "Uses finite element discretization.", "score": 0.81}],
             "claims": [{"kind": "claim", "id": "cl-1", "text": "FEM improves stability.", "score": 0.82}],
-            "propositions": [{"kind": "proposition", "id": "pr-1", "text": "Finite element discretization stabilizes PDE solving.", "score": 0.79}],
+            "communities": [
+                {
+                    "kind": "community",
+                    "community_id": "gc:demo",
+                    "text": "Finite element stability cluster.",
+                    "member_ids": ["cl-1", "ke-1"],
+                    "member_kinds": ["Claim", "KnowledgeEntity"],
+                    "keyword_texts": ["finite element", "stability"],
+                    "score": 0.79,
+                }
+            ],
         }
         return list(base[corpus])[:k]
 
@@ -23,11 +34,11 @@ def test_direct_structured_retrievers_return_logic_claim_and_proposition_hits(mo
 
     logic_hits = structured.retrieve_logic_steps("finite element method", k=2)
     claim_hits = structured.retrieve_claims("finite element method", k=2)
-    proposition_hits = structured.retrieve_propositions("finite element method", k=2)
+    community_hits = structured.retrieve_communities("finite element method", k=2)
 
     assert logic_hits[0]["kind"] == "logic_step"
     assert claim_hits[0]["kind"] == "claim"
-    assert proposition_hits[0]["kind"] == "proposition"
+    assert community_hits[0]["kind"] == "community"
 
 
 def test_direct_structured_retrievers_return_community_hits(monkeypatch) -> None:
@@ -77,7 +88,6 @@ def test_normalize_structured_rows_preserves_community_membership_metadata() -> 
         [
             {
                 "kind": "community",
-                "source_id": "gc:demo",
                 "community_id": "gc:demo",
                 "text": "Finite element stability cluster.",
                 "member_ids": ["cl-1", "ke-1"],
@@ -103,32 +113,32 @@ def test_normalize_structured_rows_preserves_community_membership_metadata() -> 
     ]
 
 
-def test_paper_scoped_proposition_retrieval_excludes_blank_and_non_matching_sources(monkeypatch) -> None:
+def test_paper_scoped_community_retrieval_excludes_blank_and_non_matching_sources(monkeypatch) -> None:
     structured = _structured_module()
 
     monkeypatch.setattr(
         structured,
         "_load_corpus_rows",
         lambda corpus: [
-            {"kind": "proposition", "id": "pr-blank", "text": "Blank source textbook proposition."},
-            {"kind": "proposition", "id": "pr-other", "text": "Other paper proposition.", "paper_source": "paper-B"},
-            {"kind": "proposition", "id": "pr-allowed", "text": "Allowed paper proposition.", "paper_source": "paper-A"},
+            {"kind": "community", "community_id": "gc:blank", "text": "Blank source textbook community."},
+            {"kind": "community", "community_id": "gc:other", "text": "Other paper community.", "paper_source": "paper-B"},
+            {"kind": "community", "community_id": "gc:allowed", "text": "Allowed paper community.", "paper_source": "paper-A"},
         ]
-        if corpus == "propositions"
+        if corpus == "communities"
         else [],
         raising=False,
     )
 
-    proposition_hits = structured.retrieve_propositions(
+    community_hits = structured.retrieve_communities(
         "finite element method",
         k=4,
         allowed_sources={"paper-A"},
     )
 
-    assert [row["id"] for row in proposition_hits] == ["pr-allowed"]
+    assert [row["id"] for row in community_hits] == ["gc:allowed"]
 
 
-def test_foundational_plan_prefers_textbook_and_proposition_hits_before_chunks() -> None:
+def test_foundational_plan_prefers_textbook_and_community_hits_before_chunks() -> None:
     structured = _structured_module()
 
     ranked = structured.fuse_retrieval_channels(
@@ -137,12 +147,20 @@ def test_foundational_plan_prefers_textbook_and_proposition_hits_before_chunks()
         chunk_hits=[{"kind": "chunk", "id": "c1", "text": "This paper applies FEM.", "score": 0.91}],
         logic_hits=[{"kind": "logic_step", "id": "ls-1", "text": "Uses FEM.", "score": 0.84}],
         claim_hits=[{"kind": "claim", "id": "cl-1", "text": "FEM improves stability.", "score": 0.83}],
-        proposition_hits=[{"kind": "proposition", "id": "pr-1", "text": "Finite element discretization stabilizes PDE solving.", "score": 0.79}],
+        community_hits=[
+            {
+                "kind": "community",
+                "community_id": "gc:demo",
+                "id": "gc:demo",
+                "text": "Finite element stability cluster.",
+                "score": 0.79,
+            }
+        ],
         textbook_hits=[{"kind": "textbook", "id": "tb-1", "text": "Finite element method definition and assumptions.", "score": 0.78}],
         k=4,
     )
 
-    assert [row["kind"] for row in ranked[:2]] == ["textbook", "proposition"]
+    assert [row["kind"] for row in ranked[:2]] == ["textbook", "community"]
 
 
 def test_paper_detail_plan_prefers_claim_and_logic_hits_from_target_paper() -> None:
@@ -154,7 +172,16 @@ def test_paper_detail_plan_prefers_claim_and_logic_hits_from_target_paper() -> N
         chunk_hits=[{"kind": "chunk", "id": "c1", "text": "Chunk summary.", "score": 0.92, "paper_source": "paper-A"}],
         logic_hits=[{"kind": "logic_step", "id": "ls-1", "text": "Method: uses FEM.", "score": 0.84, "paper_source": "paper-A"}],
         claim_hits=[{"kind": "claim", "id": "cl-1", "text": "Result: FEM improves stability.", "score": 0.88, "paper_source": "paper-A"}],
-        proposition_hits=[{"kind": "proposition", "id": "pr-1", "text": "Canonical proposition.", "score": 0.75, "paper_source": "paper-B"}],
+        community_hits=[
+            {
+                "kind": "community",
+                "community_id": "gc:paper-b",
+                "id": "gc:paper-b",
+                "text": "Canonical community.",
+                "score": 0.75,
+                "paper_source": "paper-B",
+            }
+        ],
         textbook_hits=[{"kind": "textbook", "id": "tb-1", "text": "General FEM background.", "score": 0.81}],
         k=4,
     )
@@ -169,65 +196,58 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
     rows = structured.normalize_structured_rows(
         [
             {
-                "kind": "proposition",
-                "id": "pr-1",
-                "text": "Finite element discretization stabilizes PDE solving.",
+                "kind": "community",
+                "community_id": "gc:demo",
+                "text": "Finite element stability cluster.",
                 "score": 0.79,
-                "source_kind": "claim",
-                "source_id": "cl-1",
-                "quote": "Finite element method discretizes the domain.",
+                "member_ids": ["cl-1", "ke-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
+                "paper_source": "paper-A",
+            },
+            {
+                "kind": "claim",
+                "id": "cl-1",
+                "text": "Finite element discretization stabilizes PDE solving.",
+                "score": 0.76,
+                "community_id": "gc:demo",
+                "quote": "The finite element domain is discretized before solving.",
                 "chunk_id": "c1",
                 "start_line": 12,
                 "end_line": 14,
                 "evidence_event_id": "ev-1",
                 "evidence_event_type": "SUPPORTS",
             },
-            {
-                "kind": "proposition",
-                "id": "pr-2",
-                "text": "Textbook proposition.",
-                "score": 0.76,
-                "source_kind": "textbook_entity",
-                "source_id": "ent-7",
-                "quote": "The element basis interpolates the field variable.",
-                "chapter_id": "tb:1:ch001",
-                "evidence_event_id": "ev-2",
-                "evidence_event_type": "SUPPORTS",
-            },
         ]
     )
 
-    assert rows[0]["source_kind"] == "claim"
-    assert rows[0]["source_id"] == "cl-1"
-    assert rows[0]["quote"] == "Finite element method discretizes the domain."
-    assert rows[0]["chunk_id"] == "c1"
-    assert rows[0]["start_line"] == 12
-    assert rows[0]["end_line"] == 14
-    assert rows[0]["evidence_event_id"] == "ev-1"
-    assert rows[0]["evidence_event_type"] == "SUPPORTS"
-    assert rows[1]["source_kind"] == "textbook_entity"
-    assert rows[1]["chapter_id"] == "tb:1:ch001"
-    assert rows[1]["evidence_event_id"] == "ev-2"
+    assert rows[0]["community_id"] == "gc:demo"
+    assert rows[0]["member_ids"] == ["cl-1", "ke-1"]
+    assert rows[0]["keyword_texts"] == ["finite element", "stability"]
+    assert rows[1]["community_id"] == "gc:demo"
+    assert rows[1]["quote"] == "The finite element domain is discretized before solving."
+    assert rows[1]["chunk_id"] == "c1"
+    assert rows[1]["start_line"] == 12
+    assert rows[1]["end_line"] == 14
+    assert rows[1]["evidence_event_id"] == "ev-1"
+    assert rows[1]["evidence_event_type"] == "SUPPORTS"
 
 
-def test_retrieve_propositions_prefers_faiss_hits_and_preserves_provenance_fields(monkeypatch) -> None:
+def test_retrieve_communities_prefers_faiss_hits_and_preserves_membership_fields(monkeypatch) -> None:
     structured = _structured_module()
 
     class _Doc:
         def __init__(self) -> None:
             self.page_content = "Finite element discretization stabilizes PDE solving."
             self.metadata = {
-                "kind": "proposition",
-                "source_id": "pr-1",
-                "proposition_id": "pr-1",
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
                 "paper_source": "paper-A",
                 "paper_id": "doi:10.1000/example",
-                "source_kind": "claim",
-                "source_ref_id": "cl-1",
-                "textbook_id": "tb:1",
-                "chapter_id": "tb:1:ch001",
-                "evidence_event_id": "ev-9",
-                "evidence_event_type": "SUPPORTS",
+                "member_ids": ["cl-1", "ke-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
             }
 
     class _FakeStore:
@@ -243,24 +263,21 @@ def test_retrieve_propositions_prefers_faiss_hits_and_preserves_provenance_field
         raising=False,
     )
 
-    hits = structured.retrieve_propositions("finite element method", k=2)
+    hits = structured.retrieve_communities("finite element method", k=2)
 
     assert hits == [
         {
-            "kind": "proposition",
-            "source_id": "pr-1",
-            "proposition_id": "pr-1",
-            "id": "pr-1",
+            "kind": "community",
+            "source_id": "gc:demo",
+            "community_id": "gc:demo",
+            "id": "gc:demo",
             "text": "Finite element discretization stabilizes PDE solving.",
             "score": 0.23,
             "paper_source": "paper-A",
             "paper_id": "doi:10.1000/example",
-            "source_kind": "claim",
-            "source_ref_id": "cl-1",
-            "textbook_id": "tb:1",
-            "chapter_id": "tb:1:ch001",
-            "evidence_event_id": "ev-9",
-            "evidence_event_type": "SUPPORTS",
+            "member_ids": ["cl-1", "ke-1"],
+            "member_kinds": ["Claim", "KnowledgeEntity"],
+            "keyword_texts": ["finite element", "stability"],
         }
     ]
 
@@ -285,7 +302,7 @@ def test_retrieve_claims_calls_faiss_then_falls_back_to_lexical_rows(monkeypatch
                 "text": "FEM improves stability.",
                 "paper_source": "paper-A",
                 "paper_id": "doi:10.1000/example",
-                "proposition_id": "pr-1",
+                "community_id": "gc:demo",
                 "evidence_quote": "Finite element method discretizes the domain.",
             }
         ]
@@ -305,7 +322,7 @@ def test_retrieve_claims_calls_faiss_then_falls_back_to_lexical_rows(monkeypatch
             "text": "FEM improves stability.",
             "paper_source": "paper-A",
             "paper_id": "doi:10.1000/example",
-            "proposition_id": "pr-1",
+            "community_id": "gc:demo",
             "evidence_quote": "Finite element method discretizes the domain.",
             "score": 0.6666666666666666,
         }

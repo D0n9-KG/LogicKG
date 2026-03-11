@@ -21,6 +21,7 @@ from app.ingest.paper_meta import load_canonical_meta
 from app.ingest.parse_md import find_mineru_markdowns, parse_mineru_markdown
 from app.llm.citation_purpose import classify_citation_purposes_batch
 from app.llm.reference_recovery import recover_references_with_agent
+from app.rag.structured_retrieval import build_community_corpus_rows
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
 from app.vector.faiss_store import build_faiss_for_chunks, build_faiss_for_rows
@@ -416,7 +417,7 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
             "llm_out": llm_out,
         }
 
-    def _write_llm_to_neo4j(item: dict[str, Any]) -> int:
+    def _write_llm_to_neo4j(item: dict[str, Any]) -> None:
         paper_id = str(item["paper_id"])
         logic_claims = dict(item.get("logic_claims") or {})
         claims = list(logic_claims.get("claims") or [])
@@ -424,7 +425,6 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
         purposes = list(item.get("citation_purposes") or [])
         quality_report = logic_claims.get("quality_report") or {}
         gate_passed = bool(quality_report.get("gate_passed"))
-        propositions_written = 0
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
             if not gate_passed:
                 try:
@@ -440,7 +440,7 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                     )
                 except Exception:
                     pass
-                return 0
+                return
             client.upsert_logic_steps_and_claims(
                 paper_id=paper_id,
                 logic=logic_claims.get("logic") or {},
@@ -458,15 +458,6 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                         "phase1_quality_tier_score": float(quality_report.get("quality_tier_score") or 0.0),
                     },
                 )
-            except Exception:
-                pass
-            try:
-                mention_stats = client.upsert_proposition_mentions_for_claims(
-                    paper_id=paper_id,
-                    claims=claims,
-                    paper_year=item.get("paper_year"),
-                )
-                propositions_written = int((mention_stats or {}).get("propositions") or 0)
             except Exception:
                 pass
             try:
@@ -508,9 +499,7 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                     str(e),
                     exc_info=True,  # Include stack trace for debugging
                 )
-        return propositions_written
 
-    propositions_written = 0
     try:
         jobs = [(idx, doc, rec) for idx, (doc, rec) in enumerate(zip(parsed, cite_records)) if rec.get("paper_id")]
         total_jobs = len(jobs)
@@ -618,7 +607,7 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
 
                         if neo4j_written:
                             try:
-                                propositions_written += _write_llm_to_neo4j(item)
+                                _write_llm_to_neo4j(item)
                             except Exception as exc:
                                 llm_failures.append(f"{paper_id}: neo4j write failed: {exc}")
                                 ratio = completed / total_jobs
@@ -673,26 +662,26 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                             "paper_source",
                             "step_type",
                             "confidence",
-                            "proposition_id",
+                            "community_id",
                             "evidence_chunk_ids",
                             "evidence_quote",
                         ],
                     ),
-                    "propositions": (
-                        client.list_proposition_structured_rows(limit=50000),
+                    "communities": (
+                        build_community_corpus_rows(client, limit=50000, member_limit=200),
                         [
                             "kind",
                             "source_id",
-                            "proposition_id",
+                            "community_id",
+                            "title",
+                            "summary",
+                            "keyword_texts",
+                            "member_ids",
+                            "member_kinds",
                             "paper_id",
                             "paper_source",
-                            "source_kind",
-                            "source_ref_id",
                             "textbook_id",
                             "chapter_id",
-                            "evidence_quote",
-                            "evidence_event_id",
-                            "evidence_event_type",
                         ],
                     ),
                 }
@@ -709,33 +698,11 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
     except Exception as exc:  # noqa: BLE001
         faiss_error = str(exc)
 
-    # Trigger proposition clustering (Task 3.6: Group Layer integration)
-    proposition_candidates = sum(len(o.get("claims") or []) for o in llm_outputs)
     clustering: dict[str, Any] = {
         "triggered": False,
-        "status": "skipped",
-        "proposition_candidates": proposition_candidates,
-        "propositions_written": propositions_written,
+        "status": "disabled",
+        "reason": "community_corpus_replaces_proposition_clustering",
     }
-    if neo4j_written and propositions_written > 0:
-        notify("ingest:clustering", 0.96, "Clustering propositions into groups")
-        clustering["triggered"] = True
-        clustering_task_id = f"cluster_{run_id}"
-        clustering["task_id"] = clustering_task_id
-        try:
-            from app.tasks.clustering_task import run_proposition_clustering
-
-            result = run_proposition_clustering(task_id=clustering_task_id)
-            clustering.update(result)
-            logger.info("Proposition clustering result: %s", result)
-        except Exception as exc:  # noqa: BLE001
-            clustering.update(
-                {
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
-            logger.exception("Failed to trigger proposition clustering")
 
     notify("ingest:done", 1.0, "Done")
     return {

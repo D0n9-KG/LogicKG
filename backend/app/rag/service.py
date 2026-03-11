@@ -23,8 +23,8 @@ from app.rag.retrieval import latest_run_dir, load_chunks_from_run, lexical_retr
 from app.rag.structured_retrieval import (
     normalize_structured_rows,
     retrieve_claims,
+    retrieve_communities,
     retrieve_logic_steps,
-    retrieve_propositions,
 )
 from app.rag.tree_router import route_query
 from app.retrieval.pageindex_adapter import PageIndexAdapter
@@ -698,20 +698,20 @@ def _structured_channel_limits(plan_name: str, want: int) -> dict[str, int]:
     limits = {
         "logic_step": base,
         "claim": base,
-        "proposition": base,
+        "community": base,
         "textbook": base,
     }
     if plan_name == "paper_first_then_textbook":
         limits["logic_step"] = boosted
         limits["claim"] = boosted
     elif plan_name == "textbook_first_then_paper":
-        limits["proposition"] = boosted
+        limits["community"] = boosted
         limits["textbook"] = boosted
     elif plan_name == "claim_first":
         limits["claim"] = boosted
         limits["logic_step"] = max(base, want + 2)
-    elif plan_name == "proposition_first":
-        limits["proposition"] = boosted
+    elif plan_name in {"community_first", "proposition_first"}:
+        limits["community"] = boosted
         limits["textbook"] = max(base, want + 2)
     elif plan_name == "hybrid_parallel":
         limits = {key: max(base, want + 2) for key in limits}
@@ -750,14 +750,14 @@ def _attach_paper_metadata(
     return hydrated
 
 
-def _is_textbook_origin_proposition(row: dict[str, Any]) -> bool:
-    source_kind = str(row.get("source_kind") or "").strip().lower()
-    return source_kind == "textbook_entity" or bool(
-        str(row.get("textbook_id") or "").strip() or str(row.get("chapter_id") or "").strip()
-    )
+def _is_textbook_origin_community(row: dict[str, Any]) -> bool:
+    member_kinds = [str(kind).strip().lower() for kind in (row.get("member_kinds") or []) if str(kind).strip()]
+    if str(row.get("textbook_id") or "").strip() or str(row.get("chapter_id") or "").strip():
+        return True
+    return any(kind in {"knowledgeentity", "entity", "textbook_entity"} for kind in member_kinds)
 
 
-def _filter_scoped_proposition_hits(
+def _filter_scoped_community_hits(
     rows: list[dict[str, Any]] | None,
     allowed_sources: set[str] | None,
 ) -> list[dict[str, Any]]:
@@ -773,9 +773,55 @@ def _filter_scoped_proposition_hits(
             if paper_source in allowed:
                 filtered.append(row)
             continue
-        if _is_textbook_origin_proposition(row):
+        if _is_textbook_origin_community(row):
             filtered.append(row)
     return filtered
+
+
+def _member_kind_to_structured_kind(member_kind: str | None) -> str | None:
+    kind = str(member_kind or "").strip().lower()
+    if kind == "claim":
+        return "claim"
+    if kind in {"logicstep", "logic_step", "logic"}:
+        return "logic_step"
+    if kind in {"knowledgeentity", "entity", "textbook_entity"}:
+        return "textbook"
+    return None
+
+
+def _expand_community_grounding_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("kind") or "").strip() != "community":
+            continue
+        community_id = str(row.get("community_id") or row.get("source_id") or "").strip() or None
+        member_ids = [str(member_id).strip() for member_id in (row.get("member_ids") or []) if str(member_id).strip()]
+        member_kinds = [str(member_kind).strip() for member_kind in (row.get("member_kinds") or []) if str(member_kind).strip()]
+        for index, member_id in enumerate(member_ids):
+            row_kind = _member_kind_to_structured_kind(member_kinds[index] if index < len(member_kinds) else None)
+            if not row_kind:
+                continue
+            key = (row_kind, member_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            expanded.append(
+                {
+                    "kind": row_kind,
+                    "source_id": member_id,
+                    "id": member_id,
+                    "text": str(row.get("text") or member_id).strip() or member_id,
+                    "community_id": community_id,
+                    "paper_source": str(row.get("paper_source") or "").strip() or None,
+                    "paper_id": str(row.get("paper_id") or "").strip() or None,
+                    "textbook_id": str(row.get("textbook_id") or "").strip() or None,
+                    "chapter_id": str(row.get("chapter_id") or "").strip() or None,
+                }
+            )
+    return expanded
 
 
 def _normalize_structured_rows_preserving_extras(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -922,7 +968,7 @@ def _normalize_grounding_seed_rows(rows: list[dict[str, Any]] | None) -> list[di
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        source_id = str(row.get("source_id") or row.get("id") or "").strip()
+        source_id = str(row.get("source_id") or row.get("community_id") or row.get("id") or "").strip()
         kind = str(row.get("kind") or row.get("source_kind") or "").strip() or "structured"
         if not source_id:
             continue
@@ -951,7 +997,11 @@ def retrieve_structured_evidence(
 
     paper_query = _plan_text(plan, "paper_query", fallback=plan.main_query)
     textbook_query = _plan_text(plan, "textbook_query", fallback=plan.main_query)
-    proposition_query = _plan_text(plan, "proposition_query", fallback=textbook_query or plan.main_query)
+    community_query = _plan_text(
+        plan,
+        "community_query",
+        fallback=_plan_text(plan, "proposition_query", fallback=textbook_query or plan.main_query),
+    )
 
     logic_hits = _attach_paper_metadata(
         retrieve_logic_steps(paper_query, limits["logic_step"], allowed_sources=allowed_sources),
@@ -962,9 +1012,9 @@ def retrieve_structured_evidence(
         evidence,
     )
 
-    proposition_hits = _attach_paper_metadata(
-        _filter_scoped_proposition_hits(
-            retrieve_propositions(proposition_query, limits["proposition"], allowed_sources=None),
+    community_hits = _attach_paper_metadata(
+        _filter_scoped_community_hits(
+            retrieve_communities(community_query, limits["community"], allowed_sources=None),
             allowed_sources,
         ),
         evidence,
@@ -974,17 +1024,18 @@ def retrieve_structured_evidence(
     textbook_hits = _attach_paper_metadata(fusion_rows_to_structured_hits(ranked_textbook_rows), evidence)
 
     channel_order = {
-        "textbook_first_then_paper": ["textbook", "proposition", "claim", "logic_step"],
-        "claim_first": ["claim", "logic_step", "proposition", "textbook"],
-        "proposition_first": ["proposition", "textbook", "claim", "logic_step"],
-        "hybrid_parallel": ["claim", "proposition", "logic_step", "textbook"],
-        "paper_first_then_textbook": ["claim", "logic_step", "textbook", "proposition"],
-    }.get(plan_name, ["claim", "logic_step", "textbook", "proposition"])
+        "textbook_first_then_paper": ["textbook", "community", "claim", "logic_step"],
+        "claim_first": ["claim", "logic_step", "community", "textbook"],
+        "community_first": ["community", "textbook", "claim", "logic_step"],
+        "proposition_first": ["community", "textbook", "claim", "logic_step"],
+        "hybrid_parallel": ["claim", "community", "logic_step", "textbook"],
+        "paper_first_then_textbook": ["claim", "logic_step", "textbook", "community"],
+    }.get(plan_name, ["claim", "logic_step", "textbook", "community"])
 
     channel_map = {
         "logic_step": logic_hits,
         "claim": claim_hits,
-        "proposition": proposition_hits,
+        "community": community_hits,
         "textbook": textbook_hits,
     }
     merged = merge_structured_channels(
@@ -996,17 +1047,19 @@ def retrieve_structured_evidence(
 
 def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa: ANN002, ANN003
     structured_rows = _normalize_grounding_seed_rows(kwargs.get("structured_evidence") or [])
-    if not structured_rows:
+    expanded_rows = _normalize_grounding_seed_rows(_expand_community_grounding_rows(structured_rows))
+    grounding_seed_rows = _normalize_grounding_seed_rows([*structured_rows, *expanded_rows])
+    if not grounding_seed_rows:
         return []
 
-    limit = max(1, min(200, int(kwargs.get("k") or len(structured_rows) or 1) * 3))
-    structured_index = _structured_row_by_source_id(structured_rows)
+    limit = max(1, min(200, int(kwargs.get("k") or len(grounding_seed_rows) or 1) * 3))
+    structured_index = _structured_row_by_source_id(grounding_seed_rows)
     paper_identity = _paper_identity_by_source(kwargs.get("evidence") or [])
 
     graph_rows: list[dict[str, Any]] = []
     graph_targets = [
         {"kind": str(row.get("kind") or "").strip(), "source_id": str(row.get("source_id") or "").strip()}
-        for row in structured_rows
+        for row in grounding_seed_rows
         if str(row.get("kind") or "").strip() in {"claim", "logic_step", "proposition"}
         and str(row.get("source_id") or "").strip()
     ]
@@ -1022,7 +1075,7 @@ def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa
         _hydrate_grounding_row(row, structured_index.get(str(row.get("source_id") or "").strip()), paper_identity)
         for row in graph_rows
     ]
-    fallback_rows = _fallback_grounding_rows(structured_rows, paper_identity)
+    fallback_rows = _fallback_grounding_rows(grounding_seed_rows, paper_identity)
     return _dedupe_grounding_rows([*hydrated, *fallback_rows], limit=limit)
 
 
@@ -1054,13 +1107,13 @@ def _prepare_ask_v2_context(
     plan_name = str(getattr(query_plan.retrieval_plan, "value", query_plan.retrieval_plan) or "").strip()
     paper_query = _plan_text(query_plan, "paper_query", fallback=query_plan.main_query)
     textbook_query = _plan_text(query_plan, "textbook_query", fallback=query_plan.main_query)
-    seed_query = textbook_query if plan_name == "textbook_first_then_paper" else paper_query
+    seed_query = textbook_query if plan_name in {"textbook_first_then_paper", "community_first", "proposition_first"} else paper_query
     retrieval_query = _build_retrieval_query(seed_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
     if plan_name == "claim_first":
         oversample = min(100, max(oversample, want * 6))
-    elif plan_name == "proposition_first":
+    elif plan_name in {"community_first", "proposition_first"}:
         oversample = min(100, max(oversample, want * 4))
     route = route_query(
         retrieval_query,
@@ -1219,6 +1272,7 @@ def _prepare_ask_v2_context(
                         fusion_rows = client.list_fusion_basics_by_paper_sources(paper_sources, limit=200)
                         fusion_query = textbook_query if plan_name in {
                             "textbook_first_then_paper",
+                            "community_first",
                             "proposition_first",
                             "hybrid_parallel",
                         } else retrieval_query
