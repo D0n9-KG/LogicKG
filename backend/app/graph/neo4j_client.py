@@ -226,6 +226,8 @@ class Neo4jClient:
             "CREATE CONSTRAINT textbook_id_unique IF NOT EXISTS FOR (t:Textbook) REQUIRE t.textbook_id IS UNIQUE",
             "CREATE CONSTRAINT chapter_id_unique IF NOT EXISTS FOR (tc:TextbookChapter) REQUIRE tc.chapter_id IS UNIQUE",
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (ke:KnowledgeEntity) REQUIRE ke.entity_id IS UNIQUE",
+            "CREATE CONSTRAINT global_community_id_unique IF NOT EXISTS FOR (gc:GlobalCommunity) REQUIRE gc.community_id IS UNIQUE",
+            "CREATE CONSTRAINT global_keyword_id_unique IF NOT EXISTS FOR (gk:GlobalKeyword) REQUIRE gk.keyword_id IS UNIQUE",
             "CREATE CONSTRAINT rq_candidate_id_unique IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) REQUIRE rq.candidate_id IS UNIQUE",
             "CREATE CONSTRAINT feedback_id_unique IF NOT EXISTS FOR (fb:FeedbackRecord) REQUIRE fb.feedback_id IS UNIQUE",
             "CREATE CONSTRAINT knowledge_gap_id_unique IF NOT EXISTS FOR (kg:KnowledgeGap) REQUIRE kg.gap_id IS UNIQUE",
@@ -233,6 +235,8 @@ class Neo4jClient:
             "CREATE CONSTRAINT knowledge_gap_seed_id_unique IF NOT EXISTS FOR (gs:KnowledgeGapSeed) REQUIRE gs.seed_id IS UNIQUE",
             "CREATE INDEX entity_name IF NOT EXISTS FOR (ke:KnowledgeEntity) ON (ke.name)",
             "CREATE INDEX entity_type IF NOT EXISTS FOR (ke:KnowledgeEntity) ON (ke.entity_type)",
+            "CREATE INDEX global_community_version IF NOT EXISTS FOR (gc:GlobalCommunity) ON (gc.version)",
+            "CREATE INDEX global_keyword_text IF NOT EXISTS FOR (gk:GlobalKeyword) ON (gk.keyword)",
             "CREATE INDEX rq_status IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) ON (rq.status)",
             "CREATE INDEX rq_quality_score IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) ON (rq.quality_score)",
             "CREATE INDEX feedback_candidate_id IF NOT EXISTS FOR (fb:FeedbackRecord) ON (fb.candidate_id)",
@@ -4002,6 +4006,233 @@ RETURN count(DISTINCT fc) AS cnt
             result = session.run(cypher, rows=rows)
             row = result.single()
         return int(row["cnt"]) if row else 0
+
+    def clear_global_communities(self) -> dict[str, int]:
+        cypher = """
+CALL {
+    MATCH (gc:GlobalCommunity)
+    RETURN count(gc) AS deleted_communities, collect(gc) AS communities
+}
+CALL {
+    MATCH (gk:GlobalKeyword)
+    RETURN count(gk) AS deleted_keywords, collect(gk) AS keywords
+}
+CALL {
+    MATCH ()-[im:IN_GLOBAL_COMMUNITY]->(:GlobalCommunity)
+    RETURN count(im) AS deleted_memberships, collect(im) AS memberships
+}
+CALL {
+    MATCH (:GlobalCommunity)-[hk:HAS_GLOBAL_KEYWORD]->(:GlobalKeyword)
+    RETURN count(hk) AS deleted_keyword_edges, collect(hk) AS keyword_edges
+}
+FOREACH (rel IN memberships | DELETE rel)
+FOREACH (rel IN keyword_edges | DELETE rel)
+FOREACH (node IN keywords | DETACH DELETE node)
+FOREACH (node IN communities | DETACH DELETE node)
+RETURN deleted_communities,
+       deleted_keywords,
+       deleted_memberships,
+       deleted_keyword_edges
+"""
+        with self._driver.session() as session:
+            row = session.run(cypher).single()
+        return {
+            "deleted_communities": int((row or {}).get("deleted_communities") or 0),
+            "deleted_keywords": int((row or {}).get("deleted_keywords") or 0),
+            "deleted_memberships": int((row or {}).get("deleted_memberships") or 0),
+            "deleted_keyword_edges": int((row or {}).get("deleted_keyword_edges") or 0),
+        }
+
+    def upsert_global_communities(self, items: list[dict]) -> int:
+        if not items:
+            return 0
+        cypher = """
+UNWIND $rows AS r
+MERGE (gc:GlobalCommunity {community_id: r.community_id})
+SET gc.title = r.title,
+    gc.summary = r.summary,
+    gc.confidence = r.confidence,
+    gc.member_count = r.member_count,
+    gc.version = r.version,
+    gc.built_at = r.built_at,
+    gc.updated_at = datetime()
+RETURN count(DISTINCT gc) AS cnt
+"""
+        rows = []
+        for item in items:
+            community_id = str(item.get("community_id") or "").strip()
+            if not community_id:
+                continue
+            rows.append(
+                {
+                    "community_id": community_id,
+                    "title": str(item.get("title") or community_id).strip() or community_id,
+                    "summary": str(item.get("summary") or "").strip(),
+                    "confidence": float(item.get("confidence") or 0.0),
+                    "member_count": int(item.get("member_count") or 0),
+                    "version": str(item.get("version") or settings.global_community_version).strip() or settings.global_community_version,
+                    "built_at": str(item.get("built_at") or "").strip() or None,
+                }
+            )
+        if not rows:
+            return 0
+        with self._driver.session() as session:
+            row = session.run(cypher, rows=rows).single()
+        return int((row or {}).get("cnt") or 0)
+
+    def upsert_global_keywords(self, items: list[dict]) -> int:
+        if not items:
+            return 0
+        cypher = """
+UNWIND $rows AS r
+MATCH (gc:GlobalCommunity {community_id: r.community_id})
+MERGE (gk:GlobalKeyword {keyword_id: r.keyword_id})
+SET gk.keyword = r.keyword,
+    gk.weight = r.weight,
+    gk.community_id = r.community_id,
+    gk.updated_at = datetime()
+MERGE (gc)-[hk:HAS_GLOBAL_KEYWORD]->(gk)
+SET hk.rank = r.rank,
+    hk.weight = r.weight
+RETURN count(hk) AS cnt
+"""
+        rows = []
+        for item in items:
+            community_id = str(item.get("community_id") or "").strip()
+            keyword_id = str(item.get("keyword_id") or "").strip()
+            keyword = str(item.get("keyword") or "").strip()
+            if not community_id or not keyword_id or not keyword:
+                continue
+            rows.append(
+                {
+                    "community_id": community_id,
+                    "keyword_id": keyword_id,
+                    "keyword": keyword,
+                    "rank": int(item.get("rank") or 0),
+                    "weight": float(item.get("weight") or 0.0),
+                }
+            )
+        if not rows:
+            return 0
+        with self._driver.session() as session:
+            row = session.run(cypher, rows=rows).single()
+        return int((row or {}).get("cnt") or 0)
+
+    def replace_global_memberships(self, items: list[dict]) -> int:
+        if not items:
+            return 0
+
+        rows = []
+        community_ids: list[str] = []
+        seen_community_ids: set[str] = set()
+        for item in items:
+            community_id = str(item.get("community_id") or "").strip()
+            member_id = str(item.get("member_id") or "").strip()
+            member_kind = str(item.get("member_kind") or "").strip()
+            if not community_id or not member_id:
+                continue
+            normalized_kind = member_kind.casefold()
+            if normalized_kind in {"claim"}:
+                member_kind = "Claim"
+            elif normalized_kind in {"logicstep", "logic_step", "logic"}:
+                member_kind = "LogicStep"
+            elif normalized_kind in {"knowledgeentity", "knowledge_entity", "entity"}:
+                member_kind = "KnowledgeEntity"
+            rows.append(
+                {
+                    "community_id": community_id,
+                    "member_id": member_id,
+                    "member_kind": member_kind,
+                    "weight": float(item.get("weight") or 0.0),
+                }
+            )
+            if community_id not in seen_community_ids:
+                seen_community_ids.add(community_id)
+                community_ids.append(community_id)
+
+        if not rows:
+            return 0
+
+        delete_cypher = """
+MATCH (gc:GlobalCommunity)
+WHERE gc.community_id IN $community_ids
+OPTIONAL MATCH ()-[old:IN_GLOBAL_COMMUNITY]->(gc)
+WITH collect(old) AS stale_edges
+FOREACH (rel IN [edge IN stale_edges WHERE edge IS NOT NULL] | DELETE rel)
+"""
+        write_cypher = """
+UNWIND $rows AS r
+MATCH (gc:GlobalCommunity {community_id: r.community_id})
+OPTIONAL MATCH (ls:LogicStep {logic_step_id: r.member_id})
+OPTIONAL MATCH (cl:Claim {claim_id: r.member_id})
+OPTIONAL MATCH (ke:KnowledgeEntity {entity_id: r.member_id})
+WITH gc, r, coalesce(
+    CASE WHEN r.member_kind = 'LogicStep' THEN ls END,
+    CASE WHEN r.member_kind = 'Claim' THEN cl END,
+    CASE WHEN r.member_kind = 'KnowledgeEntity' THEN ke END,
+    ls,
+    cl,
+    ke
+) AS member
+WHERE member IS NOT NULL
+MERGE (member)-[im:IN_GLOBAL_COMMUNITY]->(gc)
+SET im.weight = r.weight,
+    im.member_kind = r.member_kind
+RETURN count(im) AS cnt
+"""
+        with self._driver.session() as session:
+            session.run(delete_cypher, community_ids=community_ids)
+            row = session.run(write_cypher, rows=rows).single()
+        return int((row or {}).get("cnt") or 0)
+
+    def list_global_community_rows(self, limit: int = 50000) -> list[dict]:
+        cypher = """
+MATCH (gc:GlobalCommunity)
+OPTIONAL MATCH (gc)-[hk:HAS_GLOBAL_KEYWORD]->(gk:GlobalKeyword)
+RETURN gc.community_id AS community_id,
+       gc.title AS title,
+       gc.summary AS summary,
+       gc.confidence AS confidence,
+       gc.member_count AS member_count,
+       gc.version AS version,
+       gc.built_at AS built_at,
+       collect(DISTINCT gk.keyword) AS keywords
+ORDER BY coalesce(gc.member_count, 0) DESC, gc.community_id ASC
+LIMIT $limit
+"""
+        safe_limit = max(1, min(50000, int(limit)))
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, limit=safe_limit)]
+
+    def list_global_community_members(self, community_id: str, limit: int = 200) -> list[dict]:
+        cypher = """
+MATCH (gc:GlobalCommunity {community_id: $community_id})<-[:IN_GLOBAL_COMMUNITY]-(member)
+WITH member,
+     CASE
+       WHEN member:LogicStep THEN member.logic_step_id
+       WHEN member:Claim THEN member.claim_id
+       WHEN member:KnowledgeEntity THEN member.entity_id
+       ELSE toString(id(member))
+     END AS member_id,
+     CASE
+       WHEN member:LogicStep THEN 'LogicStep'
+       WHEN member:Claim THEN 'Claim'
+       WHEN member:KnowledgeEntity THEN 'KnowledgeEntity'
+       ELSE 'Node'
+     END AS member_kind,
+     coalesce(member.summary, member.text, member.name, member.title, '') AS text
+RETURN member_id AS member_id,
+       member_kind AS member_kind,
+       text AS text
+ORDER BY member_kind ASC, member_id ASC
+LIMIT $limit
+"""
+        cid = str(community_id or "").strip()
+        if not cid:
+            return []
+        safe_limit = max(1, min(2000, int(limit)))
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, community_id=cid, limit=safe_limit)]
 
     def upsert_fusion_keywords(self, keyword_rows: list[dict]) -> int:
         """Write FusionKeyword nodes and HAS_KEYWORD edges from FusionCommunity."""

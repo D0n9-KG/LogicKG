@@ -187,6 +187,28 @@ class Settings(BaseSettings):
         default="storage/discovery/prompt_policy_bandit.json",
         validation_alias=AliasChoices("DISCOVERY_PROMPT_POLICY_PATH"),
     )
+    global_community_version: str = Field(
+        default="v1",
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_VERSION"),
+    )
+    global_community_max_nodes: int = Field(
+        default=50000,
+        ge=100,
+        le=500000,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_MAX_NODES"),
+    )
+    global_community_max_edges: int = Field(
+        default=100000,
+        ge=100,
+        le=1000000,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_MAX_EDGES"),
+    )
+    global_community_top_keywords: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_TOP_KEYWORDS"),
+    )
 
     def effective_llm_api_key(self) -> str | None:
         if self.llm_api_key:
