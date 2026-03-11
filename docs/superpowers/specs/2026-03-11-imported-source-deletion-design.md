@@ -285,6 +285,14 @@ Textbook deletion must remove:
 - textbook-owned knowledge entities
 - persisted textbook-derived artifacts under `backend/storage/textbooks/<safe-textbook-name>/`
 
+For v1, a `KnowledgeEntity` is considered textbook-owned when all inbound `HAS_ENTITY` relationships come from chapters that belong to the textbook being deleted.
+
+This means:
+
+- if an entity is attached only to chapters of the target textbook, it is deleted
+- if an entity is also attached to a chapter of another textbook, it is preserved
+- incidental relationships such as `EXPLAINS`, community membership edges, or other non-`HAS_ENTITY` links do not make the entity shared; they are removed by detach-delete only when the entity itself qualifies as textbook-owned
+
 Textbook deletion must not remove:
 
 - original source markdown files
@@ -306,12 +314,40 @@ The task should only be marked `failed` when the batch itself could not run mean
 - empty ID list after normalization
 - unexpected infrastructure failure before iteration begins
 
+### Per-item outcome rules
+
+The task result must use deterministic per-item rules so planning and frontend messaging stay stable.
+
+Suggested v1 outcome matrix:
+
+- duplicate ID in the same request after the first occurrence: `skipped`
+- metadata-only paper submitted to the paper delete API: `skipped`
+- item exists but is outside v1 deletable scope: `skipped`
+- requested ID does not exist: `failed`
+- delete attempt throws an execution error: `failed`
+- delete completes successfully: `deleted`
+
+This gives `skipped` a clear meaning: the item was intentionally not acted on due to normalization or business rules. `failed` means the request targeted something that should have been actionable but could not be completed safely.
+
 ### Rebuild trigger conditions
 
 - if `deleted_count > 0`, run one rebuild sequence
 - if `deleted_count == 0`, do not rebuild
 
 This prevents unnecessary rebuild work when the whole batch was rejected or failed item-by-item.
+
+### Rebuild failure semantics
+
+Automatic rebuild is part of the delete contract in v1, so rebuild failure cannot be treated as a silent warning.
+
+If at least one item was deleted but the follow-up rebuild fails:
+
+- the task should be marked `failed`
+- the task `result` must still include the completed delete summary and per-item outcomes
+- the `rebuild` block must explicitly report `status = failed` plus the stage or error
+- the frontend should show that deletion completed but post-delete rebuild did not, so the user understands the graph and retrieval state may be temporarily inconsistent
+
+If no items were deleted, rebuild is skipped and cannot fail.
 
 ### File cleanup should be best-effort after graph deletion
 
