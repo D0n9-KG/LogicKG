@@ -69,3 +69,28 @@ def test_chapter_graph_snapshot_endpoint_returns_payload(monkeypatch) -> None:
     assert payload["chapter"]["chapter_id"] == "ch-1"
     assert payload["stats"]["entity_total"] == 8
     assert payload["stats"]["relation_total"] == 10
+
+
+def test_textbook_fusion_link_endpoint_submits_global_community_rebuild_task(monkeypatch) -> None:
+    monkeypatch.setattr(textbooks_router, "create_propositions_for_textbook", lambda textbook_id: {"textbook_id": textbook_id})
+
+    captured: dict[str, object] = {}
+
+    def _fake_submit(task_type, payload):
+        captured["task_type"] = task_type
+        captured["payload"] = dict(payload)
+        return "task-community-1"
+
+    monkeypatch.setattr(textbooks_router.task_manager, "submit", _fake_submit)
+
+    app = FastAPI()
+    app.include_router(textbooks_router.router)
+    client = TestClient(app)
+
+    res = client.post("/textbooks/fusion/link", json={"textbook_id": "tb-1"})
+    assert res.status_code == 200, res.text
+
+    payload = res.json()
+    assert payload == {"task_id": "task-community-1", "task_type": "rebuild_global_communities"}
+    assert str(getattr(captured["task_type"], "value", captured["task_type"])) == "rebuild_global_communities"
+    assert captured["payload"] == {"textbook_id": "tb-1"}

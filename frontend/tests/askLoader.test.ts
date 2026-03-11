@@ -71,6 +71,42 @@ describe('ask loader graph builder', () => {
     expect(edges.some((item) => item.data.kind === 'evidenced_by')).toBe(true)
   })
 
+  test('resolveAskGraph prefers a community-first ask graph over the fallback graph', () => {
+    const fallbackGraph = [
+      {
+        group: 'nodes' as const,
+        data: { id: 'paper:seed', label: 'Seed Paper', kind: 'paper' },
+      },
+    ]
+
+    const graph = resolveAskGraph(
+      {
+        answer: 'ok',
+        evidence: [],
+        graph_context: [],
+        fusion_evidence: [],
+        structured_knowledge: null,
+        grounding: [],
+        structured_evidence: [
+          {
+            kind: 'community',
+            source_id: 'gc:demo',
+            community_id: 'gc:demo',
+            text: 'Finite element stability community.',
+            member_ids: ['cl-1', 'ke-1'],
+            member_kinds: ['claim', 'entity'],
+            keyword_texts: ['finite element', 'stability'],
+            score: 0.82,
+          },
+        ],
+      } as any,
+      fallbackGraph,
+    )
+
+    expect(graph).not.toBe(fallbackGraph)
+    expect(graph.some((item) => item.group === 'nodes' && item.data.kind === 'community')).toBe(true)
+  })
+
   test('buildAskGraph keeps full description text for claim/logic/citation/entity node details', () => {
     const longClaim =
       'Mixing performance strongly correlates with impeller speed and fill level, and the effect remains stable across repeated trials without significant drift.'

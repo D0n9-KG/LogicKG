@@ -30,6 +30,79 @@ def test_direct_structured_retrievers_return_logic_claim_and_proposition_hits(mo
     assert proposition_hits[0]["kind"] == "proposition"
 
 
+def test_direct_structured_retrievers_return_community_hits(monkeypatch) -> None:
+    structured = _structured_module()
+    assert hasattr(structured, "retrieve_communities"), "Expected retrieve_communities() to be implemented."
+
+    def _fake_search(corpus: str, query: str, k: int, allowed_sources=None):
+        del query, allowed_sources
+        if corpus == "communities":
+            return [
+                {
+                    "kind": "community",
+                    "source_id": "gc:demo",
+                    "community_id": "gc:demo",
+                    "text": "Finite element stability cluster.",
+                    "member_ids": ["cl-1", "ke-1"],
+                    "member_kinds": ["Claim", "KnowledgeEntity"],
+                    "keyword_texts": ["finite element", "stability"],
+                    "score": 0.88,
+                }
+            ][:k]
+        return []
+
+    monkeypatch.setattr(structured, "_search_corpus", _fake_search, raising=False)
+
+    community_hits = structured.retrieve_communities("finite element stability", k=2)
+
+    assert community_hits == [
+        {
+            "kind": "community",
+            "source_id": "gc:demo",
+            "community_id": "gc:demo",
+            "id": "gc:demo",
+            "text": "Finite element stability cluster.",
+            "member_ids": ["cl-1", "ke-1"],
+            "member_kinds": ["Claim", "KnowledgeEntity"],
+            "keyword_texts": ["finite element", "stability"],
+            "score": 0.88,
+        }
+    ]
+
+
+def test_normalize_structured_rows_preserves_community_membership_metadata() -> None:
+    structured = _structured_module()
+
+    rows = structured.normalize_structured_rows(
+        [
+            {
+                "kind": "community",
+                "source_id": "gc:demo",
+                "community_id": "gc:demo",
+                "text": "Finite element stability cluster.",
+                "member_ids": ["cl-1", "ke-1"],
+                "member_kinds": ["Claim", "KnowledgeEntity"],
+                "keyword_texts": ["finite element", "stability"],
+                "score": 0.88,
+            }
+        ]
+    )
+
+    assert rows == [
+        {
+            "kind": "community",
+            "source_id": "gc:demo",
+            "community_id": "gc:demo",
+            "id": "gc:demo",
+            "text": "Finite element stability cluster.",
+            "member_ids": ["cl-1", "ke-1"],
+            "member_kinds": ["Claim", "KnowledgeEntity"],
+            "keyword_texts": ["finite element", "stability"],
+            "score": 0.88,
+        }
+    ]
+
+
 def test_paper_scoped_proposition_retrieval_excludes_blank_and_non_matching_sources(monkeypatch) -> None:
     structured = _structured_module()
 
