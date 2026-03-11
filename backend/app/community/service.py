@@ -33,7 +33,11 @@ def rebuild_global_communities(
         client.ensure_schema()
 
         progress("community:projection", 0.25, "Building whole-graph community projection")
-        graph = build_global_projection(client=client)
+        graph = build_global_projection(
+            client=client,
+            node_limit=settings.global_community_max_nodes,
+            edge_limit=settings.global_community_max_edges,
+        )
         projection_nodes = int(getattr(graph, "number_of_nodes", lambda: 0)())
         projection_edges = int(getattr(graph, "number_of_edges", lambda: 0)())
         log(f"global community projection: nodes={projection_nodes}, edges={projection_edges}")

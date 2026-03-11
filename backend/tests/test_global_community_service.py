@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 from app.graph.neo4j_client import Neo4jClient
 
 
@@ -193,3 +195,102 @@ def test_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() ->
     assert "SUPPORTS" in queries
     assert "CHALLENGES" in queries
     assert "SUPERSEDES" in queries
+
+
+def test_rebuild_global_communities_passes_projection_limits_from_settings(monkeypatch) -> None:
+    service = importlib.import_module("app.community.service")
+
+    captured: dict[str, object] = {}
+
+    class _Graph:
+        def number_of_nodes(self) -> int:
+            return 2
+
+        def number_of_edges(self) -> int:
+            return 1
+
+    class _FakeClient:
+        def ensure_schema(self) -> None:
+            captured["ensure_schema"] = True
+
+        def clear_global_communities(self) -> dict[str, int]:
+            return {"deleted_communities": 0}
+
+        def upsert_global_communities(self, items: list[dict]) -> int:
+            captured["communities"] = list(items)
+            return len(items)
+
+        def upsert_global_keywords(self, items: list[dict]) -> int:
+            captured["keywords"] = list(items)
+            return len(items)
+
+        def replace_global_memberships(self, items: list[dict]) -> int:
+            captured["memberships"] = list(items)
+            return len(items)
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            self.client = _FakeClient()
+
+        def __enter__(self):
+            return self.client
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_projection(*, client, node_limit, edge_limit):  # noqa: ANN001
+        captured["projection_client"] = client
+        captured["node_limit"] = node_limit
+        captured["edge_limit"] = edge_limit
+        return _Graph()
+
+    def _fake_run_tree_comm(graph, *, top_keywords, version):  # noqa: ANN001
+        captured["run_tree_comm_graph"] = graph
+        captured["top_keywords"] = top_keywords
+        captured["version"] = version
+        return {
+            "communities": [
+                {
+                    "community_id": "gc:demo",
+                    "title": "Finite element stability",
+                    "summary": "TreeComm summary",
+                    "confidence": 1.0,
+                    "member_count": 2,
+                    "member_ids": ["ke-1", "cl-1"],
+                    "version": version,
+                    "built_at": "2026-03-11T00:00:00+00:00",
+                }
+            ],
+            "keywords": [
+                {
+                    "community_id": "gc:demo",
+                    "keyword_id": "gk:demo:1",
+                    "keyword": "finite element",
+                    "rank": 1,
+                    "weight": 1.0,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(service, "Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(service, "build_global_projection", _fake_projection)
+    monkeypatch.setattr(service, "run_tree_comm", _fake_run_tree_comm)
+    monkeypatch.setattr(service.settings, "global_community_max_nodes", 12)
+    monkeypatch.setattr(service.settings, "global_community_max_edges", 34)
+    monkeypatch.setattr(service.settings, "global_community_top_keywords", 3)
+    monkeypatch.setattr(service.settings, "global_community_version", "vtest")
+
+    summary = service.rebuild_global_communities()
+
+    assert captured["node_limit"] == 12
+    assert captured["edge_limit"] == 34
+    assert captured["top_keywords"] == 3
+    assert captured["version"] == "vtest"
+    assert len(captured["communities"]) == 1
+    assert len(captured["keywords"]) == 1
+    assert len(captured["memberships"]) == 2
+    assert summary["projection_nodes"] == 2
+    assert summary["projection_edges"] == 1
+    assert summary["communities_written"] == 1
+    assert summary["keywords_written"] == 1
+    assert summary["memberships_written"] == 2

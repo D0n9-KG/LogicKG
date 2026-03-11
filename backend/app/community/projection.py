@@ -17,11 +17,18 @@ def _node_payload(label: str, text: str, **extra: Any) -> dict[str, Any]:
     return payload
 
 
-def build_global_projection(*, client: Any) -> MultiDiGraph:
+def build_global_projection(
+    *,
+    client: Any,
+    node_limit: int = 50000,
+    edge_limit: int = 100000,
+) -> MultiDiGraph:
     graph = MultiDiGraph()
+    safe_node_limit = max(1, int(node_limit or 1))
+    safe_edge_limit = max(1, int(edge_limit or 1))
 
     entity_ids: set[str] = set()
-    for row in client.list_textbook_entities_for_fusion(limit=50000) or []:
+    for row in client.list_textbook_entities_for_fusion(limit=safe_node_limit) or []:
         entity_id = str(row.get("entity_id") or "").strip()
         text = str(row.get("name") or row.get("description") or "").strip()
         if not entity_id or not text:
@@ -37,7 +44,7 @@ def build_global_projection(*, client: Any) -> MultiDiGraph:
             ),
         )
 
-    for row in client.list_textbook_relations_for_fusion(limit=100000) or []:
+    for row in client.list_textbook_relations_for_fusion(limit=safe_edge_limit) or []:
         source_id = str(row.get("start_id") or "").strip()
         target_id = str(row.get("end_id") or "").strip()
         relation = str(row.get("rel_type") or "RELATES_TO").strip() or "RELATES_TO"
@@ -46,7 +53,7 @@ def build_global_projection(*, client: Any) -> MultiDiGraph:
         graph.add_edge(source_id, target_id, relation=relation)
 
     logic_by_key: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for row in client.list_logic_steps_for_fusion(limit=50000) or []:
+    for row in client.list_logic_steps_for_fusion(limit=safe_node_limit) or []:
         logic_step_id = str(row.get("logic_step_id") or "").strip()
         text = str(row.get("summary") or "").strip()
         paper_id = str(row.get("paper_id") or "").strip()
@@ -66,7 +73,7 @@ def build_global_projection(*, client: Any) -> MultiDiGraph:
             ),
         )
 
-    for row in client.list_claims_for_fusion(limit=50000) or []:
+    for row in client.list_claims_for_fusion(limit=safe_node_limit) or []:
         claim_id = str(row.get("claim_id") or "").strip()
         text = str(row.get("text") or "").strip()
         paper_id = str(row.get("paper_id") or "").strip()
