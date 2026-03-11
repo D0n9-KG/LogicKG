@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.community.service import rebuild_global_communities
+from app.delete_assets import delete_paper_asset, delete_textbook_asset
 from app.ingest.pipeline import ingest_path
 from app.ingest.rebuild import cleanup_legacy_proposition_artifacts, rebuild_global_faiss, rebuild_paper
 from app.ingest.upload_actions import commit_ready, replace_with_new
@@ -12,6 +13,7 @@ from app.fusion.service import rebuild_fusion_graph
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
 from app.similarity.service import rebuild_similarity_global, update_similarity_for_paper
+from app.tasks.manager import PartialTaskFailure
 
 
 def handle_ingest_path(
@@ -53,6 +55,166 @@ def handle_ingest_upload_ready(
         raise ValueError("Missing upload_id")
     update("upload:commit", 0.02, f"Committing ready units for upload {upload_id}")
     return commit_ready(upload_id, progress=update, log=log)
+
+
+def _normalize_id_list(values: list[Any] | None) -> list[str]:
+    out: list[str] = []
+    for value in values or []:
+        item = str(value or "").strip()
+        if item:
+            out.append(item)
+    return out
+
+
+def _append_item_result(result: dict[str, Any], item: dict[str, Any]) -> None:
+    result["items"].append(item)
+    status = item.get("status")
+    if status == "deleted":
+        result["deleted_count"] += 1
+    elif status == "failed":
+        result["failed_count"] += 1
+    else:
+        result["skipped_count"] += 1
+
+
+def _run_post_delete_rebuild(
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    update("delete:rebuild:community", 0.9, "Rebuilding global communities")
+    community = rebuild_global_communities(progress=update, log=log)
+    update("delete:rebuild:faiss", 0.96, "Rebuilding global FAISS index")
+    faiss = rebuild_global_faiss(progress=update, log=log)
+    return {
+        "status": "succeeded",
+        "community": community,
+        "faiss": faiss,
+    }
+
+
+def run_delete_papers_batch(
+    payload: dict[str, Any],
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    paper_ids = _normalize_id_list(payload.get("paper_ids"))
+    if not paper_ids:
+        raise ValueError("Missing paper_ids after normalization")
+    trigger_rebuild = bool(payload.get("trigger_rebuild", True))
+    result: dict[str, Any] = {
+        "items": [],
+        "deleted_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+        "rebuild": {"status": "skipped"},
+    }
+    seen: set[str] = set()
+    total = max(1, len(paper_ids))
+
+    for index, paper_id in enumerate(paper_ids, start=1):
+        update("delete:papers", min(0.85, 0.1 + 0.7 * index / total), f"Deleting {paper_id}")
+        if paper_id in seen:
+            _append_item_result(result, {"id": paper_id, "status": "skipped", "reason": "duplicate"})
+            continue
+        seen.add(paper_id)
+        try:
+            delete_result = delete_paper_asset(paper_id, hard_delete=True)
+        except KeyError:
+            _append_item_result(result, {"id": paper_id, "status": "failed", "reason": "not_found"})
+            continue
+        except Exception as exc:
+            log(f"FAILED {paper_id}: {exc}")
+            _append_item_result(result, {"id": paper_id, "status": "failed", "reason": str(exc)})
+            continue
+
+        if delete_result.get("skipped"):
+            _append_item_result(
+                result,
+                {"id": paper_id, "status": "skipped", "reason": str(delete_result.get("reason") or "skipped")},
+            )
+        else:
+            _append_item_result(result, {"id": paper_id, "status": "deleted"})
+
+    if result["deleted_count"] > 0 and trigger_rebuild:
+        try:
+            result["rebuild"] = _run_post_delete_rebuild(update, log)
+        except Exception as exc:
+            result["rebuild"] = {"status": "failed", "error": str(exc)}
+            raise PartialTaskFailure(str(exc), result) from exc
+    elif trigger_rebuild:
+        result["rebuild"] = {"status": "skipped", "reason": "no_deletions"}
+    else:
+        result["rebuild"] = {"status": "not_requested"}
+
+    return result
+
+
+def run_delete_textbooks_batch(
+    payload: dict[str, Any],
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    textbook_ids = _normalize_id_list(payload.get("textbook_ids"))
+    if not textbook_ids:
+        raise ValueError("Missing textbook_ids after normalization")
+    trigger_rebuild = bool(payload.get("trigger_rebuild", True))
+    result: dict[str, Any] = {
+        "items": [],
+        "deleted_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+        "rebuild": {"status": "skipped"},
+    }
+    seen: set[str] = set()
+    total = max(1, len(textbook_ids))
+
+    for index, textbook_id in enumerate(textbook_ids, start=1):
+        update("delete:textbooks", min(0.85, 0.1 + 0.7 * index / total), f"Deleting {textbook_id}")
+        if textbook_id in seen:
+            _append_item_result(result, {"id": textbook_id, "status": "skipped", "reason": "duplicate"})
+            continue
+        seen.add(textbook_id)
+        try:
+            delete_textbook_asset(textbook_id)
+        except KeyError:
+            _append_item_result(result, {"id": textbook_id, "status": "failed", "reason": "not_found"})
+            continue
+        except Exception as exc:
+            log(f"FAILED {textbook_id}: {exc}")
+            _append_item_result(result, {"id": textbook_id, "status": "failed", "reason": str(exc)})
+            continue
+        _append_item_result(result, {"id": textbook_id, "status": "deleted"})
+
+    if result["deleted_count"] > 0 and trigger_rebuild:
+        try:
+            result["rebuild"] = _run_post_delete_rebuild(update, log)
+        except Exception as exc:
+            result["rebuild"] = {"status": "failed", "error": str(exc)}
+            raise PartialTaskFailure(str(exc), result) from exc
+    elif trigger_rebuild:
+        result["rebuild"] = {"status": "skipped", "reason": "no_deletions"}
+    else:
+        result["rebuild"] = {"status": "not_requested"}
+
+    return result
+
+
+def handle_delete_papers_batch(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    payload = _load_payload(task_id)
+    return run_delete_papers_batch(payload, update, log)
+
+
+def handle_delete_textbooks_batch(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    payload = _load_payload(task_id)
+    return run_delete_textbooks_batch(payload, update, log)
 
 
 def handle_upload_replace(

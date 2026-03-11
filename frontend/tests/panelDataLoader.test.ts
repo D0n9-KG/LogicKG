@@ -45,6 +45,8 @@ vi.mock('../src/api', () => ({
 import { apiGet } from '../src/api'
 import {
   invalidatePanelDataCache,
+  invalidatePaperDataCache,
+  invalidateTextbookCatalogCache,
   loadOverviewStatsSnapshot,
   loadPaperCatalog,
   loadPaperCollections,
@@ -83,5 +85,21 @@ describe('panelData loader cache', () => {
     expect(first[0]?.textbook_id).toBe('t1')
     expect(second[0]?.entity_count).toBe(80)
     expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1)
+  })
+
+  test('refetches paper catalog after paper cache invalidation', async () => {
+    await loadPaperCatalog('all')
+    invalidatePaperDataCache()
+    await loadPaperCatalog('all')
+
+    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(2)
+  })
+
+  test('refetches textbook catalog after textbook cache invalidation', async () => {
+    await loadTextbookCatalog()
+    invalidateTextbookCatalogCache()
+    await loadTextbookCatalog()
+
+    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(2)
   })
 })

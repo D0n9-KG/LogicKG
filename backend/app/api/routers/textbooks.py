@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.delete_assets import delete_textbook_asset
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
 from app.tasks.manager import task_manager
@@ -131,9 +132,9 @@ def get_textbook_entities(textbook_id: str, limit: int = 2000):
 def delete_textbook(textbook_id: str):
     """Delete a textbook and all its chapters/entities."""
     try:
-        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
-            result = client.delete_textbook(textbook_id)
-        return {"ok": True, **result}
+        return delete_textbook_asset(textbook_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Textbook not found: {textbook_id}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

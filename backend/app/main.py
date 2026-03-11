@@ -19,6 +19,8 @@ from app.api.routers.fusion import router as fusion_router
 from app.api.routers.textbooks import router as textbooks_router
 
 from app.tasks.handlers import (
+    handle_delete_papers_batch,
+    handle_delete_textbooks_batch,
     handle_cleanup_legacy_propositions,
     handle_ingest_path,
     handle_ingest_textbook,
@@ -41,6 +43,8 @@ def register_task_handlers(manager: TaskManager) -> None:
     manager.register(TaskType.ingest_path, handle_ingest_path)
     manager.register(TaskType.ingest_upload_ready, handle_ingest_upload_ready)
     manager.register(TaskType.upload_replace, handle_upload_replace)
+    manager.register(TaskType.delete_papers_batch, handle_delete_papers_batch)
+    manager.register(TaskType.delete_textbooks_batch, handle_delete_textbooks_batch)
     manager.register(TaskType.rebuild_paper, handle_rebuild_paper)
     manager.register(TaskType.rebuild_faiss, handle_rebuild_faiss)
     manager.register(TaskType.rebuild_all, handle_rebuild_all)

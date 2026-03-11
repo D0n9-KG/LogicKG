@@ -12,6 +12,12 @@ from app.tasks.store import list_tasks, load_task, save_task
 TaskHandler = Callable[[str, Callable[[str, float, str | None], None], Callable[[str], None]], dict[str, Any]]
 
 
+class PartialTaskFailure(Exception):
+    def __init__(self, message: str, partial_result: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.partial_result = partial_result or {}
+
+
 class TaskManager:
     def __init__(self):
         self._q: "queue.Queue[str]" = queue.Queue()
@@ -138,6 +144,9 @@ class TaskManager:
                 t2.status = TaskStatus.failed
                 t2.stage = "failed"
                 t2.error = str(exc)
+                partial_result = getattr(exc, "partial_result", None)
+                if partial_result is not None:
+                    t2.result = partial_result
                 t2.finished_at = utc_now_iso()
                 save_task(t2)
 

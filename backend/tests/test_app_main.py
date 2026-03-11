@@ -25,6 +25,8 @@ def test_register_task_handlers_registers_all_expected_task_types():
         TaskType.ingest_path,
         TaskType.ingest_upload_ready,
         TaskType.upload_replace,
+        TaskType.delete_papers_batch,
+        TaskType.delete_textbooks_batch,
         TaskType.rebuild_paper,
         TaskType.rebuild_faiss,
         TaskType.rebuild_all,
@@ -67,6 +69,8 @@ def test_app_exposes_global_community_routes():
 
     assert ("/community/list", ("GET",)) in routes
     assert ("/community/{community_id}", ("GET",)) in routes
+    assert ("/tasks/delete/papers", ("POST",)) in routes
+    assert ("/tasks/delete/textbooks", ("POST",)) in routes
     assert ("/tasks/rebuild/community", ("POST",)) in routes
     assert ("/tasks/cleanup/propositions", ("POST",)) in routes
     assert ("/tasks/rebuild/evolution", ("POST",)) not in routes

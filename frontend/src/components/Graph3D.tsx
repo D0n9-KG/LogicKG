@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import ForceGraph3D from '3d-force-graph'
 import * as THREE from 'three'
 import { useI18n } from '../i18n'
@@ -325,8 +325,9 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
     seedClusteredPositions(nextNodes)
     return { nodes: nextNodes, links: nextLinks }
   }, [elements])
+  const initialNodeCountRef = useRef(nodes.length)
 
-  const applyGraphFit = (fg: Graph3DHandle, animateMs: number) => {
+  const applyGraphFit = useCallback((fg: Graph3DHandle, animateMs: number) => {
     const container = containerRef.current
     const graphData = fg.graphData() as { nodes: FGNode[]; links: FGLink[] } | void
     const nodeCount = graphData?.nodes.length ?? nodes.length
@@ -375,7 +376,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
 
     fg.scene().fog = new THREE.FogExp2(0x01030a, sceneConfig.fogDensity)
     fg.cameraPosition(fitTarget.position, fitTarget.lookAt, animateMs)
-  }
+  }, [nodes.length])
 
   useEffect(() => {
     const container = containerRef.current
@@ -383,7 +384,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
 
     const labelSprites = labelSpritesRef.current
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    viewConfigRef.current = buildGraph3DViewConfig(nodes.length)
+    viewConfigRef.current = buildGraph3DViewConfig(initialNodeCountRef.current)
     const fg = (() => {
       const originalWarn = console.warn
       const suppressClockWarning = (message: unknown) =>
@@ -594,7 +595,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
       }
       graphRef.current = null
     }
-  }, [t])
+  }, [applyGraphFit, t])
 
   useEffect(() => {
     applyNavHint(
@@ -623,7 +624,7 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         applyGraphFit(graphRef.current, viewConfigRef.current.autoFitMs)
       }, 720)
     }
-  }, [links, nodes])
+  }, [applyGraphFit, links, nodes])
 
   return (
     <div

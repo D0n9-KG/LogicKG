@@ -18,6 +18,8 @@ class TaskType(str, Enum):
     ingest_path = "ingest_path"
     ingest_upload_ready = "ingest_upload_ready"
     upload_replace = "upload_replace"
+    delete_papers_batch = "delete_papers_batch"
+    delete_textbooks_batch = "delete_textbooks_batch"
     rebuild_paper = "rebuild_paper"
     rebuild_faiss = "rebuild_faiss"
     rebuild_all = "rebuild_all"

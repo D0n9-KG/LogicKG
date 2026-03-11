@@ -58,6 +58,15 @@ def _source_dir_from_neo4j(paper_id: str) -> Path:
     return p.parent
 
 
+@router.get("/manage")
+def list_papers_for_management(limit: int = Query(default=200, ge=1, le=2000), q: str | None = Query(default=None)):
+    try:
+        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+            return {"papers": client.list_papers_for_management(limit=limit, query=q)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def _safe_rel(rel: str) -> str:
     s = (rel or "").strip().replace("\\", "/")
     if not s or s.startswith("/") or ":" in s.split("/")[0]:

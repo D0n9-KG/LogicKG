@@ -739,6 +739,47 @@ LIMIT $limit
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, **params)]
 
+    def list_papers_for_management(self, limit: int = 200, query: str | None = None) -> list[dict]:
+        cypher = """
+MATCH (p:Paper)
+WHERE $query = ''
+   OR toLower(coalesce(p.title, '')) CONTAINS $query
+   OR toLower(coalesce(p.paper_source, '')) CONTAINS $query
+   OR toLower(coalesce(p.doi, '')) CONTAINS $query
+   OR toLower(coalesce(p.paper_id, '')) CONTAINS $query
+OPTIONAL MATCH (co:Collection)-[:HAS_PAPER]->(p)
+WITH p, collect(DISTINCT co) AS cos
+RETURN p.paper_id AS paper_id,
+       p.paper_source AS paper_source,
+       p.title AS title,
+       p.doi AS doi,
+       p.year AS year,
+       coalesce(p.ingested, false) AS ingested,
+       CASE
+         WHEN trim(coalesce(p.title, '')) <> '' THEN p.title
+         WHEN trim(coalesce(p.paper_source, '')) <> '' THEN p.paper_source
+         ELSE p.paper_id
+       END AS display_title,
+       coalesce(p.ingested, false) AS deletable,
+       [x IN cos WHERE x IS NOT NULL | {collection_id: x.collection_id, name: x.name}] AS collections
+ORDER BY coalesce(p.ingested, false) DESC,
+         coalesce(p.year, 0) DESC,
+         toLower(
+           CASE
+             WHEN trim(coalesce(p.title, '')) <> '' THEN p.title
+             WHEN trim(coalesce(p.paper_source, '')) <> '' THEN p.paper_source
+             ELSE p.paper_id
+           END
+         ) ASC
+LIMIT $limit
+"""
+        params = {
+            "limit": int(limit),
+            "query": str(query or "").strip().lower(),
+        }
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, **params)]
+
     def list_collections(self, limit: int = 200) -> list[dict]:
         cypher = """
 MATCH (co:Collection)

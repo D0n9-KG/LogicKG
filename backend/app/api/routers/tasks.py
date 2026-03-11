@@ -23,6 +23,16 @@ class IngestPathTaskRequest(BaseModel):
     path: str = Field(min_length=1)
 
 
+class DeletePapersTaskRequest(BaseModel):
+    paper_ids: list[str] = Field(default_factory=list, min_length=1)
+    trigger_rebuild: bool = True
+
+
+class DeleteTextbooksTaskRequest(BaseModel):
+    textbook_ids: list[str] = Field(default_factory=list, min_length=1)
+    trigger_rebuild: bool = True
+
+
 @router.post("/ingest/path", response_model=SubmitTaskResponse)
 def submit_ingest_path(req: IngestPathTaskRequest):
     try:
@@ -71,6 +81,36 @@ def submit_rebuild_all():
 def submit_rebuild_similarity():
     try:
         task_id = task_manager.submit(TaskType.rebuild_similarity, {})
+        return SubmitTaskResponse(task_id=task_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/delete/papers", response_model=SubmitTaskResponse)
+def submit_delete_papers(req: DeletePapersTaskRequest):
+    try:
+        task_id = task_manager.submit(
+            TaskType.delete_papers_batch,
+            {
+                "paper_ids": req.paper_ids,
+                "trigger_rebuild": bool(req.trigger_rebuild),
+            },
+        )
+        return SubmitTaskResponse(task_id=task_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/delete/textbooks", response_model=SubmitTaskResponse)
+def submit_delete_textbooks(req: DeleteTextbooksTaskRequest):
+    try:
+        task_id = task_manager.submit(
+            TaskType.delete_textbooks_batch,
+            {
+                "textbook_ids": req.textbook_ids,
+                "trigger_rebuild": bool(req.trigger_rebuild),
+            },
+        )
         return SubmitTaskResponse(task_id=task_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

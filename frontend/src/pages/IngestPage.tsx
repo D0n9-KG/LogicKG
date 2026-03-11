@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPostForm } from '../api'
+import ImportedSourceManagement from './ImportedSourceManagement'
 import { TERMS } from '../ui/terms'
 
 type TaskInfo = {
@@ -900,6 +901,7 @@ export default function IngestPage() {
           </div>
         </div>
       )}
+      <ImportedSourceManagement />
     </div>
   )
 }

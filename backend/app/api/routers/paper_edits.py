@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.delete_assets import delete_paper_asset
 from app.graph.neo4j_client import Neo4jClient
 from app.schema_store import load_active, load_version, normalize_paper_type
 from app.settings import settings
@@ -21,7 +21,6 @@ from app.tasks.models import TaskType
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 _WS_RE = re.compile(r"\s+")
-_DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 
 
 def _norm_claim_text(text: str) -> str:
@@ -75,38 +74,12 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _storage_root() -> Path:
-    p = _backend_root() / settings.storage_dir
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 def _utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
 def _safe_id(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", s)
-
-
-def _doi_sanitized(doi: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", doi.strip().lower())
-
-
-def _safe_rmtree(p: Path, allowed_root: Path) -> bool:
-    try:
-        rp = p.resolve()
-        root = allowed_root.resolve()
-        rp.relative_to(root)
-    except Exception:
-        return False
-    if not rp.exists() or not rp.is_dir():
-        return False
-    try:
-        shutil.rmtree(rp, ignore_errors=True)
-        return True
-    except Exception:
-        return False
 
 
 class UpdateMetadataRequest(BaseModel):
@@ -192,62 +165,7 @@ def delete_ingested_paper(paper_id: str, hard_delete: bool = True):
     - Remove canonical storage (for DOI papers) and derived artifacts when safely resolvable.
     """
     try:
-        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
-            client.ensure_schema()
-            paper = client.get_paper_basic(paper_id)
-            if not bool(paper.get("ingested")) and not hard_delete:
-                return {"ok": True, "already_stub": True, "hard_delete": False}
-
-            client.delete_paper_subgraph(paper_id)
-            try:
-                client.remove_paper_from_all_collections(paper_id)
-            except Exception:
-                pass
-
-            if hard_delete:
-                client.delete_paper_node(paper_id)
-            else:
-                props = {
-                    "ingested": False,
-                    "source_md_path": "",
-                    "storage_dir": None,
-                    "review_pending_task_id": None,
-                    "review_resolved_task_id": None,
-                    "human_meta_json": _dump({}),
-                    "human_meta_cleared_json": _dump([]),
-                    "human_logic_json": _dump({}),
-                    "human_logic_cleared_json": _dump([]),
-                    "human_claims_json": _dump({}),
-                    "human_claims_cleared_json": _dump([]),
-                    "human_cites_purpose_json": _dump({}),
-                    "human_cites_purpose_cleared_json": _dump([]),
-                    "deleted_at": _utc_now_iso(),
-                    "deleted_reason": "user_deleted",
-                }
-                props.update(_append_log(paper, "paper:delete:user_deleted"))
-                client.update_paper_props(paper_id, props)
-
-        storage = _storage_root()
-        removed = {"canonical_dir": False, "derived_dir": False}
-
-        storage_dir = str(paper.get("storage_dir") or "").strip()
-        if storage_dir:
-            can = Path(storage_dir)
-            allowed = storage / "papers" / "doi"
-            removed["canonical_dir"] = _safe_rmtree(can, allowed_root=allowed)
-        else:
-            doi = str(paper.get("doi") or "").strip().lower()
-            if not doi and paper_id.startswith("doi:"):
-                doi = paper_id[4:]
-            if doi and _DOI_RE.match(doi):
-                can = storage / "papers" / "doi" / _doi_sanitized(doi)
-                allowed = storage / "papers" / "doi"
-                removed["canonical_dir"] = _safe_rmtree(can, allowed_root=allowed)
-
-        derived = storage / "derived" / "papers" / _safe_id(paper_id)
-        removed["derived_dir"] = _safe_rmtree(derived, allowed_root=(storage / "derived" / "papers"))
-
-        return {"ok": True, "removed": removed, "hard_delete": bool(hard_delete)}
+        return delete_paper_asset(paper_id, hard_delete=hard_delete)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:

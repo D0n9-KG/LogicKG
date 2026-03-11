@@ -15,7 +15,23 @@ import { saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import { loadPaperNeighborhood } from '../loaders/papers'
 import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
+import { loadDeleteTask, submitPaperDeleteTask, type DeleteTaskRecord } from '../loaders/sourceManagement'
 import { derivePapersEntryGraph, shouldHydratePapersOverviewGraph } from './papersPanelModel'
+
+const TERMINAL_TASK_STATUSES = new Set(['succeeded', 'failed', 'canceled'])
+
+async function waitForDeleteTask(taskId: string, pollMs = 250, maxPolls = 80): Promise<DeleteTaskRecord> {
+  let task = await loadDeleteTask(taskId)
+  let attempts = 0
+
+  while (!TERMINAL_TASK_STATUSES.has(String(task.status ?? '')) && attempts < maxPolls) {
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+    task = await loadDeleteTask(taskId)
+    attempts += 1
+  }
+
+  return task
+}
 
 export default function PapersPanel() {
   const { state, dispatch, switchModule } = useGlobalState()
@@ -150,14 +166,49 @@ export default function PapersPanel() {
   }
 
   async function confirmDelete() {
+    if (!deleteConfirmId) return
     setDeleteBusy(true)
+    setError('')
     try {
-      await apiDelete(`/papers/${encodeURIComponent(deleteConfirmId)}`)
-      invalidatePaperDataCache()
-      invalidateOverviewStatsCache()
-      invalidateOverviewGraphCache()
+      const paperId = deleteConfirmId
+      const wasSelected = papers.selectedPaperId === paperId
+      const submitted = await submitPaperDeleteTask([paperId])
+      const task = await waitForDeleteTask(submitted.task_id)
+      const deletedCount = Number(task.result?.deleted_count ?? 0)
+      const deleted = deletedCount > 0
+
+      if (deleted) {
+        invalidatePaperDataCache()
+        invalidateOverviewStatsCache()
+        invalidateOverviewGraphCache()
+      }
+
       setDeleteConfirmId('')
-      await reloadPapers()
+
+      if (deleted && wasSelected) {
+        selectReqRef.current = null
+        dispatch({ type: 'PAPERS_SELECT', paperId: null })
+        dispatch({ type: 'SET_TRANSITIONING', value: false })
+        const els = await loadOverviewGraph(200, 600, { includeTextbooks: false })
+        dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
+      }
+
+      if (deleted) {
+        await reloadPapers()
+      }
+
+      if (String(task.status ?? '') === 'failed') {
+        if (deleted) {
+          setError(t('论文已删除，但重建失败。', 'Paper deleted, but rebuild failed.'))
+        } else {
+          setError(task.error || task.message || t('删除论文失败。', 'Failed to delete paper.'))
+        }
+        return
+      }
+
+      if (!deleted) {
+        setError(t('没有可删除的已导入论文。', 'No imported paper was deleted.'))
+      }
     } catch (e: unknown) {
       setError(String((e as { message?: unknown })?.message ?? e))
     } finally {
@@ -370,7 +421,7 @@ export default function PapersPanel() {
               <div className="hint">
                 {t(
                   '确认删除该论文？将删除 Neo4j 图数据及所有派生文件。',
-                  'Delete this paper? This will remove Neo4j graph data and derived files.',
+                  'Delete this paper? This removes Neo4j graph data, derived files, and automatically rebuilds global indexes afterward.',
                 )}
               </div>
               <div className="row" style={{ marginTop: 12 }}>
