@@ -43,4 +43,33 @@ describe('graphRenderPlan', () => {
     expect(repeated).toBe(withGraph)
     expect(repeated.layoutTrigger).toBe(previousTrigger)
   })
+
+  test('switching from overview to papers immediately projects the graph to paper-only elements', () => {
+    const overviewGraph = [
+      { group: 'nodes', data: { id: 'paper:1', label: 'Paper 1', kind: 'paper' } },
+      { group: 'nodes', data: { id: 'paper:2', label: 'Paper 2', kind: 'paper' } },
+      { group: 'nodes', data: { id: 'textbook:1', label: 'Textbook 1', kind: 'textbook' } },
+      { group: 'edges', data: { id: 'cites:1->2', source: 'paper:1', target: 'paper:2', kind: 'cites' } },
+      { group: 'edges', data: { id: 'contains:tb->p1', source: 'textbook:1', target: 'paper:1', kind: 'contains' } },
+    ] as const
+
+    const stateWithOverview = reducer(INITIAL_STATE, {
+      type: 'SET_GRAPH',
+      elements: [...overviewGraph],
+      layout: 'cose',
+    })
+    const switching = reducer(stateWithOverview, { type: 'SET_TRANSITIONING', value: true })
+
+    const switched = reducer(switching, { type: 'SET_MODULE', module: 'papers' })
+
+    expect(switched.activeModule).toBe('papers')
+    expect(switched.graphElements).toEqual([
+      overviewGraph[0],
+      overviewGraph[1],
+      overviewGraph[3],
+    ])
+    expect(switched.graphUpdateReason).toBe('replace')
+    expect(switched.layoutTrigger).toBe(switching.layoutTrigger + 1)
+    expect(switched.transitioning).toBe(false)
+  })
 })

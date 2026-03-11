@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 // frontend/src/state/store.tsx
 import { createContext, useContext, useReducer, useCallback, type ReactNode } from 'react'
+import { derivePapersEntryGraph } from '../panels/papersPanelModel'
 import { createAskSession, deleteAskSession, deriveAskModuleState, mapAskSession, prependAskSession, switchAskSession } from './askSessions'
 import type { GlobalState, GlobalAction, ModuleId } from './types'
 
@@ -20,8 +21,26 @@ export const INITIAL_STATE: GlobalState = {
 
 export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
   switch (action.type) {
-    case 'SET_MODULE':
-      return { ...state, activeModule: action.module, selectedNode: null }
+    case 'SET_MODULE': {
+      const nextState: GlobalState = { ...state, activeModule: action.module, selectedNode: null }
+      if (action.module !== 'papers') {
+        return nextState
+      }
+
+      const entryGraphElements = derivePapersEntryGraph(state.graphElements, state.papers.selectedPaperId)
+      if (!entryGraphElements || entryGraphElements === state.graphElements) {
+        return nextState
+      }
+
+      return {
+        ...nextState,
+        graphElements: entryGraphElements,
+        graphLayout: 'cose',
+        layoutTrigger: state.layoutTrigger + 1,
+        graphUpdateReason: 'replace',
+        transitioning: false,
+      }
+    }
     case 'SET_GRAPH':
       if (state.graphElements === action.elements && state.graphLayout === action.layout) {
         return state
@@ -125,7 +144,6 @@ export function reducer(state: GlobalState, action: GlobalAction): GlobalState {
         ...state,
         ask: deriveAskModuleState(action.ask.sessions, action.ask.currentSessionId),
       }
-
 
     case 'TEXTBOOKS_SELECT':
       return { ...state, textbooks: { ...state.textbooks, selectedTextbookId: action.textbookId, selectedChapterId: action.chapterId } }

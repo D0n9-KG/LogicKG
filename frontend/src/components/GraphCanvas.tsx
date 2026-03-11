@@ -5,6 +5,7 @@ import { paperRefForAskScope } from '../paperRefs'
 import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNode } from '../state/types'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
+import { syncGraphElements } from './graphCanvasSync'
 import { resolveGraphCanvasViewState } from './graphCanvasViewState'
 import { resolveGraphRenderPlan } from './graphRenderPlan'
 
@@ -1475,27 +1476,28 @@ export default function GraphCanvas({
     onSelectNodeRef.current = onSelectNode
   }, [onSelectNode])
 
+  const graphCanvasViewState = resolveGraphCanvasViewState({
+    activeModule,
+    overviewMode,
+    placementMode,
+    showGraphDetails,
+  })
+  const effectivePlacementMode = graphCanvasViewState.placementMode
+  const { show3D, show2D } = graphCanvasViewState
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const viewState = resolveGraphCanvasViewState({
-        activeModule,
-        overviewMode,
-        placementMode,
-        showGraphDetails,
-      })
-      setPlacementMode(viewState.placementMode)
-      setShowGraphDetails(viewState.showGraphDetails)
       setHiddenKinds([])
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeModule, onOverviewModeChange, overviewMode])
+  }, [activeModule, overviewMode])
 
   useEffect(() => {
-    if (placementMode !== 'timeline') {
+    if (effectivePlacementMode !== 'timeline') {
       const timer = window.setTimeout(() => setTimelineViewport(null), 0)
       return () => window.clearTimeout(timer)
     }
-  }, [placementMode])
+  }, [effectivePlacementMode])
 
   const availableKinds = useMemo(() => {
     const set = new Set<string>()
@@ -1553,7 +1555,7 @@ export default function GraphCanvas({
   // Avoid full graph re-layout on node selection in non-overview modules.
   // Selection highlight is handled by a separate effect.
   const selectedBackboneId =
-    placementMode === 'timeline' && activeModule === 'overview' && selectedNode
+    effectivePlacementMode === 'timeline' && activeModule === 'overview' && selectedNode
       ? String(selectedNode.id)
       : undefined
 
@@ -1596,7 +1598,7 @@ export default function GraphCanvas({
     }))
 
     let edgesForRender: InternalEdge[] = rawEdges
-    if (placementMode === 'timeline') {
+    if (effectivePlacementMode === 'timeline') {
       edgesForRender = buildAggregateBackboneEdges(
         dedupEdges,
         nodeMap,
@@ -1610,11 +1612,11 @@ export default function GraphCanvas({
     const meshLaneLabel = t('网状力导向', 'Force-directed Mesh')
     const getKindLabel = (kind: string) => kindLabel(kind, locale)
     const layoutPack =
-      placementMode === 'timeline'
+      effectivePlacementMode === 'timeline'
         ? buildCockpitLayout(nodeElements, edgesForRender, degreeMap, unknownLabel, getKindLabel)
         : buildRawMeshLayout(nodeElements, edgesForRender, meshLaneLabel)
     const decorations =
-      placementMode === 'timeline' ? buildCockpitDecorations(nodeElements, layoutPack.positions, unknownLabel) : []
+      effectivePlacementMode === 'timeline' ? buildCockpitDecorations(nodeElements, layoutPack.positions, unknownLabel) : []
 
     const transformedNodes: PositionedElement[] = nodeElements.map((data) => {
       const degree = degreeMap.get(data.id) ?? 0
@@ -1646,11 +1648,11 @@ export default function GraphCanvas({
           lineStyle: visual.lineStyle,
           arrow: visual.arrow,
           width:
-            placementMode === 'timeline'
+            effectivePlacementMode === 'timeline'
               ? clamp(visual.width * 0.72 + Math.log2(aggregateCount + 1) * 0.4, 0.8, 3.6)
               : clamp(visual.width * 0.86, 0.84, 3.8),
           edgeOpacity:
-            placementMode === 'timeline'
+            effectivePlacementMode === 'timeline'
               ? clamp(visual.opacity * 0.36 + Math.log2(aggregateCount + 1) * 0.04, 0.14, 0.62)
               : clamp(visual.opacity * 0.52, 0.16, 0.65),
           aggregateCount,
@@ -1664,7 +1666,7 @@ export default function GraphCanvas({
       renderedEdgeCount: transformedEdges.length,
       layoutMeta: layoutPack.meta,
     }
-  }, [filteredElements, locale, placementMode, selectedBackboneId, t])
+  }, [effectivePlacementMode, filteredElements, locale, selectedBackboneId, t])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -1739,7 +1741,7 @@ export default function GraphCanvas({
     if (!cy) return
     cy.style(buildStyle())
     cy.style().update()
-  }, [placementMode])
+  }, [effectivePlacementMode])
 
   useEffect(() => {
     const cy = cyRef.current
@@ -1747,10 +1749,7 @@ export default function GraphCanvas({
 
     const renderPlan = resolveGraphRenderPlan(graphUpdateReason)
     const applyGraph = () => {
-      cy.batch(() => {
-        cy.elements().remove()
-        cy.add(preparedGraph.elements as unknown as Parameters<typeof cy.add>[0])
-      })
+      syncGraphElements(cy, preparedGraph.elements)
       cy.elements().removeClass('faded')
       cy.nodes().unselect()
       cy
@@ -1796,12 +1795,6 @@ export default function GraphCanvas({
     node.select()
   }, [selectedNodeId, preparedGraph.renderedEdgeCount])
 
-  const { show3D, show2D } = resolveGraphCanvasViewState({
-    activeModule,
-    overviewMode,
-    placementMode,
-    showGraphDetails,
-  })
   const visibleNodeCount = filteredElements.filter((el) => el.group === 'nodes').length
 
   useEffect(() => {
@@ -1834,7 +1827,7 @@ export default function GraphCanvas({
   }, [show2D, preparedGraph.renderedEdgeCount])
 
   const timelineAxisTicks = useMemo(() => {
-    if (placementMode !== 'timeline') return []
+    if (effectivePlacementMode !== 'timeline') return []
     const axis = preparedGraph.layoutMeta.yearAxis
     if (!axis.length) return []
     const minX = axis.reduce((min, item) => Math.min(min, item.x), axis[0].x)
@@ -1856,10 +1849,10 @@ export default function GraphCanvas({
       ...item,
       pct: clamp(((item.x - minX) / span) * 100, 0, 100),
     }))
-  }, [placementMode, preparedGraph.layoutMeta.yearAxis])
+  }, [effectivePlacementMode, preparedGraph.layoutMeta.yearAxis])
 
   useEffect(() => {
-    if (!show2D || placementMode !== 'timeline') {
+    if (!show2D || effectivePlacementMode !== 'timeline') {
       const timer = window.setTimeout(() => setTimelineViewport(null), 0)
       return () => window.clearTimeout(timer)
     }
@@ -1915,7 +1908,7 @@ export default function GraphCanvas({
       for (const evt of events) cy.off(evt, pump)
       window.removeEventListener('resize', pump)
     }
-  }, [cyReadyToken, placementMode, preparedGraph.layoutMeta.yearAxis, preparedGraph.renderedEdgeCount, show2D])
+  }, [cyReadyToken, effectivePlacementMode, preparedGraph.layoutMeta.yearAxis, preparedGraph.renderedEdgeCount, show2D])
 
   function toggleKind(kind: string) {
     setHiddenKinds((prev) => {
@@ -1942,9 +1935,9 @@ export default function GraphCanvas({
     })
   }
 
-  const engineLabel = placementMode === 'timeline' ? t('时序驾驶舱', 'Timeline Cockpit') : t('基础网状网络', 'Base Mesh Network')
+  const engineLabel = effectivePlacementMode === 'timeline' ? t('时序驾驶舱', 'Timeline Cockpit') : t('基础网状网络', 'Base Mesh Network')
   const layoutHint =
-    placementMode === 'timeline'
+    effectivePlacementMode === 'timeline'
       ? t(`时间线布局（当前参数: ${layout}）`, `Timeline layout (active preset: ${layout})`)
       : t(`原始网状布局（当前参数: ${layout}）`, `Raw mesh layout (active preset: ${layout})`)
   const focusLabel = selectedNode ? shortLabel(String(selectedNode.label ?? selectedNode.id), 18) : ''
@@ -1976,9 +1969,12 @@ export default function GraphCanvas({
             {(Object.keys(PLACEMENT_MODE_LABELS) as PlacementMode[]).map((mode) => (
               <button
                 key={mode}
-                className={`kgGraphControlChip${placementMode === mode ? ' is-active' : ''}`}
+                className={`kgGraphControlChip${effectivePlacementMode === mode ? ' is-active' : ''}`}
                 type="button"
-                onClick={() => setPlacementMode(mode)}
+                onClick={() => {
+                  if (activeModule !== 'overview') return
+                  setPlacementMode(mode)
+                }}
                 title={
                   mode === 'timeline'
                     ? t('时间线布局（保持当前风格）', 'Timeline layout (preserve current visual style)')
@@ -2005,7 +2001,7 @@ export default function GraphCanvas({
               </div>
             </div>
 
-            {placementMode === 'timeline' && (
+            {effectivePlacementMode === 'timeline' && (
               <>
                 <div className="kgGraphControlRow">
                   <div className="kgGraphControlLabel">{t('分层', 'Lanes')}</div>
@@ -2126,7 +2122,7 @@ export default function GraphCanvas({
         </div>
       )}
 
-      {show2D && placementMode === 'timeline' && timelineAxisTicks.length > 0 && (
+      {show2D && effectivePlacementMode === 'timeline' && timelineAxisTicks.length > 0 && (
         <div className="kgTimelineAxisWrap">
           <div className="kgTimelineAxisHead">
             <span>{t('时间轴', 'Timeline Axis')}</span>
