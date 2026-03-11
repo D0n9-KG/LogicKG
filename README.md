@@ -1,124 +1,129 @@
-﻿# LogicKG
+# LogicKG
 
-LogicKG 是一个面向科研论文的结构化知识图谱系统，核心目标是把论文文本转成可计算、可追溯、可问答的图谱资产。
+LogicKG 是一个面向科研论文与教材知识的图谱系统。它把 Markdown 文档转成可追溯、可检索、可聚类、可问答的图数据，并在此基础上提供教材导入、全图社区检测、GraphRAG 问答、问题发现、相似性分析和配置治理能力。
 
-它将 MinerU 产出的 Markdown 解析为图结构（如 `Paper / Chunk / ReferenceEntry / Proposition / CITES`），并结合向量检索（FAISS）和大模型能力，提供从导入、抽取、质检、图谱浏览到 GraphRAG 问答的一体化工作台。
+当前主流程已经完成从旧 `proposition` 运行时向 `Claim / LogicStep / KnowledgeEntity / GlobalCommunity` 的迁移。教材导入不会再落远端 chapter-local community 结构；全局社区由本地 whole-graph projection + vendored Youtu TreeComm 重建。
 
----
+## 1. 当前核心能力
 
-## 1. 核心能力
-
-- 结构化入库：论文、段落、引用、命题、关系等写入 Neo4j
-- 证据可追溯：回答与边关系可回溯到原文片段（含 chunk 和行号）
-- 双轨抽取：`Raw Pool` 保留候选，`Validated KG` 只写入通过门禁的数据
-- 质量门禁：支持覆盖率、冲突率、逻辑步骤完整度等多维评估
-- GraphRAG 问答：向量召回 + 图上下文 + LLM 生成
-- Schema 可配置：前端可直接调规则与提示词版本
-- 中英双界面：核心导航、面板、问答体验支持中英文切换
-
----
+- 论文导入与重建：将 MinerU Markdown 写入 `Paper / Chunk / ReferenceEntry / LogicStep / Claim / EvidenceEvent / Figure` 图结构。
+- 教材导入与章节图谱：将教材 Markdown 切章后交给 autoyoutu 生成章节图，再落库为 `Textbook / TextbookChapter / KnowledgeEntity` 子图。
+- 全局社区检测：基于 `KnowledgeEntity + Claim + LogicStep` 的整图投影，使用 vendored Youtu TreeComm 生成 `GlobalCommunity / GlobalKeyword`。
+- Ask 问答：统一走 `/rag/ask_v2` 内核，融合 lexical、FAISS、structured retrieval、community、textbook 和 fusion evidence。
+- Discovery：从当前图谱中检测 gap、生成候选研究问题、做证据审计和人工反馈闭环。
+- 配置与运维：提供 schema 版本管理、Config Center、任务队列、重建入口与清理任务。
 
 ## 2. 技术栈
 
 - 后端：FastAPI
-- 前端：React + Vite + TypeScript
+- 前端：React 19 + Vite + TypeScript
 - 图数据库：Neo4j 5.x
 - 向量检索：FAISS
-- 模型接入：DeepSeek / OpenAI / OpenRouter / SiliconFlow（按配置）
+- 教材社区算法：vendored Youtu TreeComm
+- 模型接入：OpenAI-compatible LLM / embedding provider
 
----
-
-## 3. 仓库结构（当前真实状态）
+## 3. 仓库结构
 
 ```text
 .
-├─ backend/                  # FastAPI 后端
-│  ├─ app/                   # API、抽取、RAG、任务、图谱访问等
-│  ├─ tests/                 # 后端测试
-│  ├─ requirements.txt
-│  ├─ runs/                  # 运行产物（忽略提交）
-│  └─ storage/               # 数据产物（忽略提交）
-├─ frontend/                 # React 前端
+├─ backend/
+│  ├─ app/
+│  │  ├─ api/              # FastAPI routers
+│  │  ├─ community/        # GlobalCommunity projection + TreeComm adapter
+│  │  ├─ discovery/        # gap detection / candidate generation / feedback
+│  │  ├─ extraction/       # phase1 extraction and quality gate
+│  │  ├─ fusion/           # fusion graph and retrieval support
+│  │  ├─ graph/            # Neo4j client and graph snapshot helpers
+│  │  ├─ ingest/           # paper/textbook ingest and rebuild pipelines
+│  │  ├─ rag/              # ask planner, retrieval, grounding, answer generation
+│  │  ├─ similarity/       # claim / logic similarity rebuilds
+│  │  ├─ tasks/            # async task queue and handlers
+│  │  └─ vector/           # FAISS build/load helpers
+│  ├─ tests/
+│  ├─ vendor/youtu_graphrag/
+│  └─ requirements.txt
+├─ frontend/
 │  ├─ src/
 │  ├─ tests/
 │  └─ package.json
-├─ docker-compose.yml        # 本地 Neo4j 启动（可选）
-├─ .env.example              # 根目录示例配置
-├─ run.ps1                   # Windows 一键开发启动
+├─ docs/
+├─ docker-compose.yml
+├─ run.ps1
 ├─ README.md
 └─ TECHNICAL_OVERVIEW.zh-CN.md
 ```
 
----
-
 ## 4. 快速开始
 
-### 4.1 前置依赖
+### 4.1 依赖
 
-- Python 3.10+（推荐 3.11）
-- Node.js 18+（推荐 20）
+- Python 3.11 推荐
+- Node.js 18+
 - Neo4j 5.x
-- 至少一组可用模型密钥（LLM + Embedding）
+- 可用的 LLM 与 embedding 配置
+- 教材导入额外需要本地 `autoyoutu` 工程目录
 
-### 4.2 配置环境变量
+### 4.2 环境变量
 
-在仓库根目录创建 `.env`：
-
-```bash
-cp .env.example .env
-```
-
-最小示例：
+复制根目录 `.env.example` 为 `.env`，至少补齐这些值：
 
 ```env
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password
+NEO4J_PASSWORD=please_change_me
+
+AUTOYOUTU_DIR=C:/path/to/autoyoutu
 
 LLM_PROVIDER=deepseek
 LLM_MODEL=deepseek-chat
-DEEPSEEK_API_KEY=your_deepseek_key
+LLM_API_KEY=
 
 EMBEDDING_PROVIDER=siliconflow
 EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_API_KEY=your_embedding_key
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://api.siliconflow.com/v1
 ```
 
 说明：
 
-- 后端会优先读取 `backend/.env`，其次读取根目录 `.env`
-- Neo4j 用户名支持 `NEO4J_USER` 和 `NEO4J_USERNAME` 两种写法
-- LLM / Embedding 支持通用 key（`LLM_API_KEY` / `EMBEDDING_API_KEY`）或 provider-specific key
-- 抽取策略阈值（`phase1_*` / `phase2_*`）主要通过前端 Schema 页面管理
+- 后端优先读取 `backend/.env`，其次读取根目录 `.env`。
+- `AUTOYOUTU_DIR` 仅在教材导入时必需。
+- embedding 配置会被 Ask、similarity、TreeComm、FAISS 共用。
 
 ### 4.3 启动 Neo4j
 
-方式 A（推荐）：本机已有 Neo4j Desktop / 服务
-
-方式 B（Docker）：
+如果你本机没有现成 Neo4j，可以使用：
 
 ```bash
 docker compose up -d
 ```
 
-### 4.4 启动项目
+### 4.4 启动开发环境
 
-Windows（推荐）：
+推荐直接在仓库根目录运行：
 
-```powershell
-.\run.ps1
+```bash
+npm run dev
 ```
 
-手动启动（Linux/macOS 或通用）：
+这个命令会：
+
+- 检查并创建后端虚拟环境
+- 安装 `backend/requirements.txt`
+- 安装前端依赖
+- 自动选择空闲端口
+- 同步前端 `VITE_API_URL`
+- 同时启动后端和前端
+
+也可以手动启动：
 
 后端：
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+.venv\Scripts\pip.exe install -r requirements.txt
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 前端：
@@ -129,49 +134,81 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-访问地址：
+默认访问地址：
 
 - 前端：`http://127.0.0.1:5173`
-- 后端文档：`http://127.0.0.1:8000/docs`
+- 后端 OpenAPI：`http://127.0.0.1:8000/docs`
 - 健康检查：`http://127.0.0.1:8000/health`
 
----
+## 5. 常见工作流
 
-## 5. 典型使用流程
+### 5.1 论文导入
 
-1. 在前端「导入中心」或调用 `/ingest/path` 导入 MinerU Markdown
-2. 在论文/图谱页面检查抽取结果与关系质量
-3. 在 Ask 页面基于图谱进行问答与证据追溯
-4. 在 Schema 页面调整规则与提示词，保存版本后重建验证
-
-`/ingest/path` 示例：
+同步导入：
 
 ```bash
-curl -X POST 'http://127.0.0.1:8000/ingest/path' \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"/data/mineru_output"}'
+curl -X POST http://127.0.0.1:8000/ingest/path ^
+  -H "Content-Type: application/json" ^
+  -d "{\"path\":\"C:/data/mineru_output\"}"
 ```
 
----
+异步任务导入：
 
-## 6. 配置与版本管理
+```bash
+curl -X POST http://127.0.0.1:8000/tasks/ingest/path ^
+  -H "Content-Type: application/json" ^
+  -d "{\"path\":\"C:/data/mineru_output\"}"
+```
 
-- 抽取配置模板：`high_precision` / `balanced` / `high_recall`
-- 常用接口：
-  - `GET /schema/presets`
-  - `POST /schema/presets/apply`
-- 配置中心（运维页）可统一管理 discovery/similarity/schema 关键参数
+### 5.2 教材导入
 
-建议：
+```bash
+curl -X POST http://127.0.0.1:8000/textbooks/ingest ^
+  -H "Content-Type: application/json" ^
+  -d "{\"path\":\"C:/books/book.md\",\"title\":\"Example Textbook\",\"authors\":[\"Author A\"],\"year\":2024}"
+```
 
-- 为每次策略调整填写可识别的版本名称
-- 重要调参后，对同一批论文做重建对比（覆盖率、冲突率、证据可追溯率）
+教材导入完成后会自动触发一次 `GlobalCommunity` 全量重建。
 
----
+### 5.3 全局社区重建
 
-## 7. 开发与验证命令
+```bash
+curl -X POST http://127.0.0.1:8000/tasks/rebuild/community ^
+  -H "Content-Type: application/json" ^
+  -d "{}"
+```
 
-### 7.1 前端
+### 5.4 清理旧 proposition 残留
+
+```bash
+curl -X POST http://127.0.0.1:8000/tasks/cleanup/propositions
+```
+
+这个任务是一次性维护入口，会删除旧 `Proposition / PropositionGroup` 相关图和陈旧的 FAISS 产物，然后重建 `GlobalCommunity` 与结构化检索语料。
+
+## 6. 关键 API 入口
+
+- `GET /health`
+- `POST /ingest/path`
+- `POST /tasks/ingest/path`
+- `POST /textbooks/ingest`
+- `GET /textbooks`
+- `GET /textbooks/{textbook_id}/graph`
+- `POST /tasks/rebuild/community`
+- `GET /community/list`
+- `GET /community/{community_id}`
+- `POST /rag/ask`
+- `POST /rag/ask_v2`
+- `POST /rag/ask_v2_stream`
+- `POST /discovery/batch`
+- `GET /discovery/candidates`
+- `POST /discovery/feedback`
+- `GET /config-center/profile`
+- `GET /schema/active`
+
+## 7. 开发与验证
+
+前端：
 
 ```bash
 cd frontend
@@ -180,65 +217,32 @@ npm run test
 npm run build
 ```
 
-### 7.2 后端
+后端：
 
 ```bash
 cd backend
-pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-当前基线（本仓库最近一次完整回归）：
-
-- 前端：`lint/test/build` 全通过
-- 后端：`343 passed`
-
----
-
-## 8. 部署建议（生产）
-
-推荐拓扑：
-
-- Neo4j：Docker 或托管服务（不对公网直接暴露 7687）
-- 后端：systemd 管理 Uvicorn，监听 `127.0.0.1:8000`
-- 前端：Nginx 静态托管 + `/api` 反代后端
-
-关键点：
-
-- `.env` 只保存在服务器本地，权限建议 `600`
-- `backend/storage/` 与 `backend/runs/` 做周期备份
-- 上线前做一次最小冒烟：导入 -> 查询 -> Ask -> 证据追溯
-
----
-
-## 9. 安全与提交规范
-
-- 不提交 `.env`、`backend/storage/`、`backend/runs/`、`node_modules/`、`dist/`
-- 推送前建议执行：
+针对社区与 Ask 的常用聚焦回归：
 
 ```bash
-git status -sb
-rg -n "ghp_|github_pat_|sk-|BEGIN .*PRIVATE KEY" -S .
+cd backend
+.\.venv\Scripts\python.exe -m pytest ^
+  tests/test_tree_comm_adapter.py ^
+  tests/test_global_community_service.py ^
+  tests/test_rag_service.py ^
+  tests/test_rag_structured_retrieval.py -q
 ```
 
----
+## 8. 当前实现说明
 
-## 10. 常见问题
+- `/rag/ask` 已经完全切到 `ask_v2` 内核。
+- 教材导入会过滤远端 `community / keyword / super-node` 节点与相关边，只保留章节知识实体和实体关系。
+- `GlobalCommunity` 由本地 whole-graph projection + vendored Youtu TreeComm 生成，不再走旧的假适配器。
+- 前端 `/fusion` 路由已重定向到 `/ask`；fusion 仍作为后端数据与证据通道存在。
+- 旧 proposition 运行时已从 Ask / discovery / frontend 主流程中移除，保留的只有清理任务与兼容测试。
 
-- Neo4j 连接失败：检查 URI、账号密码、防火墙与端口占用
-- Embedding 报错：确认 `EMBEDDING_PROVIDER` 与对应 API key 已配置
-- 导入慢：先缩小导入目录做最小样本验证，再扩容跑批
-- 前端显示异常：先跑 `npm run build` 与浏览器控制台检查
-
----
-
-## 11. 技术文档
-
-项目中文技术总览见：
+## 9. 相关文档
 
 - [TECHNICAL_OVERVIEW.zh-CN.md](TECHNICAL_OVERVIEW.zh-CN.md)
-
----
-
-## 12. License
-
-如需开源分发，请补充 `LICENSE` 与 `CONTRIBUTING.md`。
