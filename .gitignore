@@ -27,11 +27,14 @@ dev_pids.json
 task_plan.md
 progress.md
 findings.md
+.superpowers/
 
 # Docs (track formal docs only, ignore ad-hoc notes by default)
 docs/*
 !docs/
 !docs/neo4j-setup.md
+!docs/superpowers/
+!docs/superpowers/**
 !docs/plans/
 !docs/plans/**
 !docs/migrations/
