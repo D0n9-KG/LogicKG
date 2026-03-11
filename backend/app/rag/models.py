@@ -48,7 +48,6 @@ class RetrievalPlan(str, Enum):
     hybrid_parallel = "hybrid_parallel"
     claim_first = "claim_first"
     community_first = "community_first"
-    proposition_first = "proposition_first"
 
 
 class AskQueryPlan(BaseModel):
@@ -58,7 +57,6 @@ class AskQueryPlan(BaseModel):
     paper_query: str | None = None
     textbook_query: str | None = None
     community_query: str | None = None
-    proposition_query: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     reason: str | None = None
 
@@ -114,7 +112,6 @@ class StructuredEvidenceItem(BaseModel):
     member_ids: list[str] | None = None
     member_kinds: list[str] | None = None
     keyword_texts: list[str] | None = None
-    proposition_id: str | None = None
     source_kind: str | None = None
     source_ref_id: str | None = None
     textbook_id: str | None = None

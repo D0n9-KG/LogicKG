@@ -13,6 +13,37 @@ from app.settings import settings
 
 log = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+_SUPPORTED_QUERY_FIELDS = {"main_query", "paper_query", "textbook_query", "community_query"}
+_SUPPORTED_RETRIEVAL_PLANS = {item.value for item in RetrievalPlan}
+
+
+def _normalize_query_plan_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    normalized = dict(payload)
+    retrieval_plan = str(normalized.get("retrieval_plan") or "").strip()
+    community_query = str(normalized.get("community_query") or "").strip()
+    if not community_query:
+        legacy_query = next(
+            (
+                str(value).strip()
+                for key, value in normalized.items()
+                if str(key).endswith("_query")
+                and str(key) not in _SUPPORTED_QUERY_FIELDS
+                and str(value).strip()
+            ),
+            "",
+        )
+        if legacy_query:
+            normalized["community_query"] = legacy_query
+    if retrieval_plan and retrieval_plan not in _SUPPORTED_RETRIEVAL_PLANS and normalized.get("community_query"):
+        normalized["retrieval_plan"] = "community_first"
+    normalized = {
+        key: value
+        for key, value in normalized.items()
+        if key in {"intent", "retrieval_plan", "main_query", "paper_query", "textbook_query", "community_query", "confidence", "reason"}
+    }
+    return normalized
 
 
 def fallback_query_plan(question: str) -> AskQueryPlan:
@@ -25,9 +56,10 @@ def fallback_query_plan(question: str) -> AskQueryPlan:
 
 def resolve_query_plan(question: str, payload: dict[str, Any] | None) -> AskQueryPlan:
     try:
-        if not isinstance(payload, dict):
+        normalized_payload = _normalize_query_plan_payload(payload)
+        if not isinstance(normalized_payload, dict):
             raise ValueError("planner payload must be a dict")
-        return AskQueryPlan.model_validate(payload)
+        return AskQueryPlan.model_validate(normalized_payload)
     except Exception:
         return fallback_query_plan(question)
 
@@ -77,10 +109,10 @@ def plan_ask_query(question: str, scope: dict | None = None, locale: str | None 
                         "You are a retrieval planner for a scientific QA system. "
                         "Do not answer the user question. "
                         "Return only one JSON object with keys: "
-                        "intent, retrieval_plan, main_query, paper_query, textbook_query, proposition_query, confidence, reason. "
+                        "intent, retrieval_plan, main_query, paper_query, textbook_query, community_query, confidence, reason. "
                         "main_query is mandatory. "
                         "Valid intents: paper_detail, foundational, hybrid_explanation, comparison. "
-                        "Valid retrieval plans: paper_first_then_textbook, textbook_first_then_paper, hybrid_parallel, claim_first, proposition_first."
+                        "Valid retrieval plans: paper_first_then_textbook, textbook_first_then_paper, hybrid_parallel, claim_first, community_first."
                     ),
                 ),
                 (
@@ -100,4 +132,3 @@ def plan_ask_query(question: str, scope: dict | None = None, locale: str | None 
 
     payload = _extract_json_payload(getattr(response, "content", ""))
     return resolve_query_plan(text, payload)
-

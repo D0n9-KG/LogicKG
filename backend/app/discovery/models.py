@@ -11,7 +11,6 @@ GapType = Literal[
     "future_work",
     "limitation",
     "gap_claim",
-    "challenged_proposition",
     "seed",
 ]
 

@@ -201,17 +201,6 @@ def _default_question(gap: dict, variant: int) -> str:
             variant=variant,
         )
         return f"{stem} {issue} while preserving core performance?"
-    if gap_type == "challenged_proposition":
-        stem = _pick_phrase(
-            gap,
-            [
-                "What evidence chain can stabilize claims about",
-                "Which new experiment can re-evaluate the challenged proposition in",
-                "How can we stress-test uncertainty in",
-            ],
-            variant=variant,
-        )
-        return f"{stem} {issue}?"
     if "friction" in topic.lower():
         return "How does contact friction causally alter clustering transition under controlled restitution settings?"
     if "temperature" in topic.lower():

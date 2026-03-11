@@ -337,7 +337,6 @@ def ingest_textbook(
         "total_chapters": len(chapters),
         "total_entities": total_entities,
         "total_relations": total_relations,
-        "mapped_propositions": 0,
         "global_communities": int(community_rebuild_result.get("communities", 0) or 0),
         "global_keywords": int(community_rebuild_result.get("keywords", 0) or 0),
         "chapters": chapter_results,

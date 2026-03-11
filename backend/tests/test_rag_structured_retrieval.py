@@ -233,6 +233,35 @@ def test_structured_rows_preserve_provenance_and_grounding_fields() -> None:
     assert rows[1]["evidence_event_type"] == "SUPPORTS"
 
 
+def test_normalize_structured_rows_drops_legacy_proposition_rows_and_ids() -> None:
+    structured = _structured_module()
+
+    rows = structured.normalize_structured_rows(
+        [
+            {
+                "kind": "claim",
+                "source_id": "cl-1",
+                "text": "Finite element discretization stabilizes PDE solving.",
+                "proposition_id": "pr-1",
+            },
+            {
+                "kind": "proposition",
+                "source_id": "pr-legacy",
+                "text": "Legacy proposition row should not survive runtime normalization.",
+            },
+        ]
+    )
+
+    assert rows == [
+        {
+            "kind": "claim",
+            "source_id": "cl-1",
+            "id": "cl-1",
+            "text": "Finite element discretization stabilizes PDE solving.",
+        }
+    ]
+
+
 def test_retrieve_communities_prefers_faiss_hits_and_preserves_membership_fields(monkeypatch) -> None:
     structured = _structured_module()
 

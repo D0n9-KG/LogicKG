@@ -17,6 +17,45 @@ _CORPUS_KIND = {
     "claims": "claim",
     "communities": "community",
 }
+_SUPPORTED_STRUCTURED_KINDS = {"community", "claim", "logic_step", "textbook", "chunk", "structured"}
+_SUPPORTED_STRUCTURED_ROW_KEYS = {
+    "kind",
+    "source_id",
+    "id",
+    "text",
+    "summary",
+    "title",
+    "community_id",
+    "member_ids",
+    "member_kinds",
+    "keyword_texts",
+    "keywords",
+    "source_kind",
+    "source_ref_id",
+    "quote",
+    "evidence_quote",
+    "paper_source",
+    "paper_id",
+    "paper_title",
+    "chunk_id",
+    "source_chunk_id",
+    "chapter_id",
+    "source_chapter_id",
+    "chapter_title",
+    "textbook_id",
+    "textbook_title",
+    "logic_step_id",
+    "step_type",
+    "entity_type",
+    "evidence_event_id",
+    "evidence_event_type",
+    "reasons",
+    "evidence_chunk_ids",
+    "start_line",
+    "end_line",
+    "score",
+    "rank_score",
+}
 
 
 def _tokens(text: str) -> list[str]:
@@ -125,6 +164,8 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
         if not isinstance(row, dict):
             continue
         kind = str(row.get("kind") or "").strip() or "structured"
+        if kind not in _SUPPORTED_STRUCTURED_KINDS:
+            continue
         source_id = str(row.get("source_id") or row.get("community_id") or row.get("id") or "").strip()
         text = str(row.get("text") or "").strip()
         if kind == "community" and not text:
@@ -132,7 +173,7 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
         if not source_id or not text:
             continue
 
-        normalized = dict(row)
+        normalized = {key: value for key, value in row.items() if key in _SUPPORTED_STRUCTURED_ROW_KEYS}
         normalized["kind"] = kind
         normalized["source_id"] = source_id
         normalized["id"] = str(row.get("id") or source_id).strip() or source_id
@@ -144,14 +185,10 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
             normalized["member_kinds"] = _string_list(row.get("member_kinds"))
             normalized["keyword_texts"] = _string_list(row.get("keyword_texts") or row.get("keywords"))
 
-        if kind == "proposition":
-            normalized["proposition_id"] = str(row.get("proposition_id") or source_id).strip() or source_id
         if "source_kind" in row:
             normalized["source_kind"] = str(row.get("source_kind") or "").strip() or None
         if "source_ref_id" in row:
             normalized["source_ref_id"] = str(row.get("source_ref_id") or "").strip() or None
-        elif "source_id" in row and kind == "proposition":
-            normalized["source_ref_id"] = str(row.get("source_id") or "").strip() or None
         if "quote" in row:
             normalized["quote"] = str(row.get("quote") or "").strip() or None
         if "evidence_quote" in row:
@@ -172,8 +209,6 @@ def normalize_structured_rows(rows: list[dict[str, Any]] | None) -> list[dict[st
             normalized["evidence_event_type"] = str(row.get("evidence_event_type") or "").strip() or None
         if "community_id" in row and kind != "community":
             normalized["community_id"] = str(row.get("community_id") or "").strip() or None
-        if "proposition_id" in row and kind != "proposition":
-            normalized["proposition_id"] = str(row.get("proposition_id") or "").strip() or None
         if "start_line" in row:
             normalized["start_line"] = row.get("start_line")
         if "end_line" in row:
@@ -337,7 +372,6 @@ def fuse_retrieval_channels(
         "textbook_first_then_paper": ["textbook", "community", "claim", "logic_step", "chunk"],
         "claim_first": ["claim", "logic_step", "chunk", "community", "textbook"],
         "community_first": ["community", "textbook", "claim", "logic_step", "chunk"],
-        "proposition_first": ["community", "textbook", "claim", "logic_step", "chunk"],
         "hybrid_parallel": ["claim", "community", "logic_step", "textbook", "chunk"],
         "paper_first_then_textbook": ["chunk", "claim", "logic_step", "community", "textbook"],
     }

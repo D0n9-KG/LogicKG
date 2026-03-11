@@ -35,6 +35,39 @@ log = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_:+./-]*|\d[\d_./-]*")
 _GROUNDING_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？;；])\s+|\n+")
+_SUPPORTED_GROUNDING_KINDS = {"claim", "logic_step", "community", "textbook", "structured"}
+_ALLOWED_STRUCTURED_EXTRA_KEYS = {
+    "paper_source",
+    "paper_id",
+    "paper_title",
+    "community_id",
+    "member_ids",
+    "member_kinds",
+    "keyword_texts",
+    "keywords",
+    "source_kind",
+    "source_ref_id",
+    "quote",
+    "evidence_quote",
+    "chunk_id",
+    "source_chunk_id",
+    "chapter_id",
+    "source_chapter_id",
+    "chapter_title",
+    "textbook_id",
+    "textbook_title",
+    "logic_step_id",
+    "step_type",
+    "entity_type",
+    "evidence_event_id",
+    "evidence_event_type",
+    "reasons",
+    "evidence_chunk_ids",
+    "start_line",
+    "end_line",
+    "score",
+    "rank_score",
+}
 _ZH_RETRIEVAL_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("方法", "做法", "算法", "模型", "框架", "技术路线"), "method methodology approach framework model algorithm pipeline"),
     (("结论", "发现", "结果"), "results findings conclusion key findings"),
@@ -710,7 +743,7 @@ def _structured_channel_limits(plan_name: str, want: int) -> dict[str, int]:
     elif plan_name == "claim_first":
         limits["claim"] = boosted
         limits["logic_step"] = max(base, want + 2)
-    elif plan_name in {"community_first", "proposition_first"}:
+    elif plan_name == "community_first":
         limits["community"] = boosted
         limits["textbook"] = max(base, want + 2)
     elif plan_name == "hybrid_parallel":
@@ -833,7 +866,7 @@ def _normalize_structured_rows_preserving_extras(rows: list[dict[str, Any]] | No
         item = dict(normalized_rows[0])
         if isinstance(row, dict):
             for key, value in row.items():
-                if key not in item:
+                if key in _ALLOWED_STRUCTURED_EXTRA_KEYS and key not in item:
                     item[key] = value
         out.append(item)
     return out
@@ -970,6 +1003,8 @@ def _normalize_grounding_seed_rows(rows: list[dict[str, Any]] | None) -> list[di
             continue
         source_id = str(row.get("source_id") or row.get("community_id") or row.get("id") or "").strip()
         kind = str(row.get("kind") or row.get("source_kind") or "").strip() or "structured"
+        if kind not in _SUPPORTED_GROUNDING_KINDS:
+            continue
         if not source_id:
             continue
         item = dict(row)
@@ -1000,7 +1035,7 @@ def retrieve_structured_evidence(
     community_query = _plan_text(
         plan,
         "community_query",
-        fallback=_plan_text(plan, "proposition_query", fallback=textbook_query or plan.main_query),
+        fallback=textbook_query or plan.main_query,
     )
 
     logic_hits = _attach_paper_metadata(
@@ -1027,7 +1062,6 @@ def retrieve_structured_evidence(
         "textbook_first_then_paper": ["textbook", "community", "claim", "logic_step"],
         "claim_first": ["claim", "logic_step", "community", "textbook"],
         "community_first": ["community", "textbook", "claim", "logic_step"],
-        "proposition_first": ["community", "textbook", "claim", "logic_step"],
         "hybrid_parallel": ["claim", "community", "logic_step", "textbook"],
         "paper_first_then_textbook": ["claim", "logic_step", "textbook", "community"],
     }.get(plan_name, ["claim", "logic_step", "textbook", "community"])
@@ -1060,7 +1094,7 @@ def ground_structured_evidence(*args, **kwargs) -> list[dict[str, Any]]:  # noqa
     graph_targets = [
         {"kind": str(row.get("kind") or "").strip(), "source_id": str(row.get("source_id") or "").strip()}
         for row in grounding_seed_rows
-        if str(row.get("kind") or "").strip() in {"claim", "logic_step", "proposition"}
+        if str(row.get("kind") or "").strip() in {"claim", "logic_step"}
         and str(row.get("source_id") or "").strip()
     ]
     if graph_targets:
@@ -1107,13 +1141,13 @@ def _prepare_ask_v2_context(
     plan_name = str(getattr(query_plan.retrieval_plan, "value", query_plan.retrieval_plan) or "").strip()
     paper_query = _plan_text(query_plan, "paper_query", fallback=query_plan.main_query)
     textbook_query = _plan_text(query_plan, "textbook_query", fallback=query_plan.main_query)
-    seed_query = textbook_query if plan_name in {"textbook_first_then_paper", "community_first", "proposition_first"} else paper_query
+    seed_query = textbook_query if plan_name in {"textbook_first_then_paper", "community_first"} else paper_query
     retrieval_query = _build_retrieval_query(seed_query, scope_paper, locale=normalized_locale)
     want = max(1, int(k))
     oversample = min(100, max(want, want * 5))
     if plan_name == "claim_first":
         oversample = min(100, max(oversample, want * 6))
-    elif plan_name in {"community_first", "proposition_first"}:
+    elif plan_name == "community_first":
         oversample = min(100, max(oversample, want * 4))
     route = route_query(
         retrieval_query,
@@ -1273,7 +1307,6 @@ def _prepare_ask_v2_context(
                         fusion_query = textbook_query if plan_name in {
                             "textbook_first_then_paper",
                             "community_first",
-                            "proposition_first",
                             "hybrid_parallel",
                         } else retrieval_query
                         fusion_evidence = rank_fusion_basics(fusion_query, fusion_rows, k=min(12, max(4, want)))

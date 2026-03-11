@@ -156,5 +156,5 @@ def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypa
     )
 
     assert result["ok"] is True
-    assert result["mapped_propositions"] == 0
+    assert "mapped_propositions" not in result
     assert len(rebuild_calls) == 1

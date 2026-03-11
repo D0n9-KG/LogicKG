@@ -1135,6 +1135,69 @@ def test_ground_structured_evidence_expands_community_members_and_textbook_fallb
     assert rows[1]["quote"] == "Finite element chapter defines discretization over mesh elements."
 
 
+def test_ground_structured_evidence_ignores_legacy_proposition_rows(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeNeo4jClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_grounding_rows_for_structured_ids(self, ids, limit=200):
+            captured["ids"] = list(ids)
+            return [
+                {
+                    "source_kind": "claim",
+                    "source_id": "cl-1",
+                    "quote": "Finite element method discretizes the domain.",
+                    "chunk_id": "c1",
+                    "md_path": "runs/paper-A/content.md",
+                    "start_line": 11,
+                    "end_line": 12,
+                    "textbook_id": None,
+                    "chapter_id": None,
+                    "evidence_event_id": "ev-1",
+                    "evidence_event_type": "SUPPORTS",
+                }
+            ]
+
+    monkeypatch.setattr("app.rag.service.Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(
+        "app.rag.service.settings",
+        SimpleNamespace(
+            neo4j_uri="bolt://localhost:7687",
+            neo4j_user="neo4j",
+            neo4j_password="test",
+        ),
+    )
+
+    rows = ground_structured_evidence(
+        structured_evidence=[
+            {
+                "kind": "claim",
+                "source_id": "cl-1",
+                "text": "Finite element stability claim.",
+            },
+            {
+                "kind": "proposition",
+                "source_id": "pr-legacy",
+                "text": "Legacy proposition row.",
+                "evidence_quote": "Legacy proposition quote should be ignored.",
+            },
+        ],
+        evidence=[{"paper_source": "paper-A", "paper_id": "doi:10.1000/in"}],
+        k=4,
+    )
+
+    assert captured["ids"] == [{"kind": "claim", "source_id": "cl-1"}]
+    assert [row["source_id"] for row in rows] == ["cl-1"]
+
+
 def test_retrieve_structured_evidence_scoped_community_first_keeps_textbook_origin(monkeypatch):
     monkeypatch.setattr("app.rag.service.retrieve_logic_steps", lambda *args, **kwargs: [], raising=False)
     monkeypatch.setattr("app.rag.service.retrieve_claims", lambda *args, **kwargs: [], raising=False)
