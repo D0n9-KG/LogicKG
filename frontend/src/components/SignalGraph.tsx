@@ -10,7 +10,6 @@ export type SignalGraphNode = {
     | 'group'
     | 'textbook'
     | 'chapter'
-    | 'proposition'
     | 'hotspot'
     | 'paper'
     | 'entity'
@@ -324,7 +323,7 @@ export default function SignalGraph({
           },
         },
         {
-          selector: 'node[kind = "chapter"], node[kind = "paper"], node[kind = "proposition"]',
+          selector: 'node[kind = "chapter"], node[kind = "paper"]',
           style: {
             label: 'data(label)',
             shape: 'roundrectangle',

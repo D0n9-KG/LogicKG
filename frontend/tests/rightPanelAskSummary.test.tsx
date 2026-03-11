@@ -136,7 +136,7 @@ describe('RightPanel ask summary fusion coverage', () => {
                 queryPlan: {
                   main_query: 'finite element method assumptions',
                   textbook_query: 'finite element method definition assumptions discretization',
-                  proposition_query: 'finite element method assumptions proposition',
+                  community_query: 'finite element method assumptions community',
                 },
                 retrievalMode: 'hybrid',
                 notice: '',
@@ -221,7 +221,7 @@ describe('RightPanel ask summary fusion coverage', () => {
             queryPlan: {
               main_query: 'finite element method assumptions',
               textbook_query: 'finite element method definition assumptions discretization',
-              proposition_query: 'finite element method assumptions proposition',
+              community_query: 'finite element method assumptions community',
             },
             retrievalMode: 'hybrid',
             notice: '',

@@ -13,20 +13,18 @@ export type GraphNodeData = {
   label: string
   shortLabel?: string
   description?: string
-  kind: string        // 'paper' | 'logic' | 'claim' | 'prop' | 'group' | 'entity' | 'citation'
+  kind: string        // 'textbook' | 'chapter' | 'community' | 'paper' | 'logic' | 'claim' | 'entity' | 'citation' | 'group'
   // Type-specific optional fields
   qualityTier?: string   // 'A1' | 'A2' | 'B1' | 'B2' | 'C'
   ingested?: boolean
   inScope?: boolean
   year?: number
   confidence?: number    // 0–1, drives opacity for claims
-  state?: string         // proposition state: 'stable' | 'challenged' | 'superseded'
   paperId?: string
   textbookId?: string
   chapterId?: string
   communityId?: string
   clusterKey?: string
-  propId?: string
   // Display
   degree?: number
   mentions?: number
@@ -64,7 +62,6 @@ export type SelectedNode = {
   paperId?: string
   textbookId?: string
   chapterId?: string
-  propId?: string
   route?: string
 }
 
@@ -139,7 +136,6 @@ export type AskItem = {
     kind?: string
     source_id?: string
     community_id?: string
-    proposition_id?: string
     text?: string
     score?: number
     paper_source?: string
@@ -177,7 +173,6 @@ export type AskItem = {
     paper_query?: string
     textbook_query?: string
     community_query?: string
-    proposition_query?: string
     confidence?: number
     reason?: string
   } | null

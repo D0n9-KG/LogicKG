@@ -17,7 +17,7 @@
   --accent:        #00c8ff;
   --accent-2:      #2060e0;
   --accent-3:      #5046e5;
-  --accent-warm:   #f5aa00;  /* UI accent warmth: graph node Proposition, highlights */
+  --accent-warm:   #f5aa00;  /* UI accent warmth: highlights and emphasis */
 
   /* ── Semantic ── */
   --success:       #10b981;
@@ -42,7 +42,6 @@
   --node-paper-c:  #1d4ed8;
   --node-logic:    #10b981;
   --node-claim:    #a855f7;
-  --node-prop:     #f59e0b;
   --node-entity:   #06b6d4;
   --node-group:    #6366f1;
   --node-citation: #94a3b8;

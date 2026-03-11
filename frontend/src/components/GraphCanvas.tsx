@@ -97,8 +97,6 @@ const KIND_LABELS: Record<string, LocalizedText> = {
   paper: { zh: '论文', en: 'Paper' },
   logic: { zh: '逻辑', en: 'Logic' },
   claim: { zh: '论断', en: 'Claim' },
-  prop: { zh: '命题', en: 'Proposition' },
-  proposition: { zh: '命题', en: 'Proposition' },
   group: { zh: '分组', en: 'Group' },
   entity: { zh: '实体', en: 'Entity' },
   citation: { zh: '引文', en: 'Citation' },
@@ -111,8 +109,6 @@ const KIND_PRIORITY: Record<string, number> = {
   paper: 4,
   logic: 5,
   claim: 6,
-  prop: 7,
-  proposition: 7,
   group: 8,
   entity: 9,
   citation: 10,
@@ -248,30 +244,6 @@ function nodeVisual(data: GraphNodeData, degree: number): NodeVisual {
       borderColor: 'rgba(255, 237, 213, 0.92)',
       shape: 'round-rectangle',
       size: 14 + Math.min(18, weightedDegree * 0.7),
-    }
-  }
-  if (data.kind === 'prop' || data.kind === 'proposition') {
-    if (data.state === 'challenged') {
-      return {
-        color: 'rgba(248, 113, 113, 0.92)',
-        borderColor: 'rgba(254, 226, 226, 0.92)',
-        shape: 'diamond',
-        size: 16 + Math.min(20, weightedDegree * 0.8),
-      }
-    }
-    if (data.state === 'superseded') {
-      return {
-        color: 'rgba(148, 163, 184, 0.84)',
-        borderColor: 'rgba(226, 232, 240, 0.84)',
-        shape: 'diamond',
-        size: 14 + Math.min(18, weightedDegree * 0.7),
-      }
-    }
-    return {
-      color: 'rgba(250, 204, 21, 0.9)',
-      borderColor: 'rgba(254, 243, 199, 0.9)',
-      shape: 'diamond',
-      size: 15 + Math.min(20, weightedDegree * 0.75),
     }
   }
   if (data.kind === 'group') {
@@ -1711,7 +1683,6 @@ export default function GraphCanvas({
         paperId: data.paperId,
         textbookId: data.textbookId,
         chapterId: data.chapterId,
-        propId: data.propId,
       })
     })
 

@@ -83,7 +83,6 @@ function nodeColor(kind: string, tier?: string, ingested?: boolean): string {
   if (kind === 'community') return '#fb7185'
   if (kind === 'logic') return '#34d399'
   if (kind === 'claim') return '#fb923c'
-  if (kind === 'prop' || kind === 'proposition') return '#facc15'
   if (kind === 'group') return '#2dd4bf'
   if (kind === 'entity') return '#14b8a6'
   return '#94a3b8'
@@ -96,7 +95,6 @@ function nodeSize(kind: string, degree?: number, ingested?: boolean): number {
   if (kind === 'community') return 6.4 + d * 0.24
   if (kind === 'paper') return ingested === false ? 3.8 + d * 0.2 : 5.8 + d * 0.34
   if (kind === 'group') return 6.2 + d * 0.28
-  if (kind === 'prop' || kind === 'proposition') return 5.6 + d * 0.24
   if (kind === 'logic' || kind === 'claim') return 4.8 + d * 0.24
   if (kind === 'citation') return 3.2 + d * 0.14
   return 4 + d * 0.2

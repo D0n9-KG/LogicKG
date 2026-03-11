@@ -40,8 +40,7 @@ const KIND_LABELS: Record<string, LocalizedText> = {
   paper: { zh: '论文', en: 'Paper' },
   logic: { zh: '逻辑步骤', en: 'Logic Step' },
   claim: { zh: '论断', en: 'Claim' },
-  prop: { zh: '命题', en: 'Proposition' },
-  group: { zh: '命题组', en: 'Proposition Group' },
+  group: { zh: '分组', en: 'Group' },
   entity: { zh: '实体', en: 'Entity' },
   citation: { zh: '被引文献', en: 'Citation' },
 }
@@ -65,8 +64,7 @@ function normalizeText(value: unknown): string {
 }
 
 function kindLabel(kind: string, locale: UILocale) {
-  const raw = String(kind ?? '')
-  const key = raw === 'proposition' ? 'prop' : raw
+  const key = String(kind ?? '')
   const label = KIND_LABELS[key]
   return label ? pickText(locale, label) : key || 'unknown'
 }
@@ -254,7 +252,6 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       community: 0,
       logic: 0,
       claim: 0,
-      proposition: 0,
       entity: 0,
       citation: 0,
     }
@@ -265,7 +262,6 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       else if (node.kind === 'community') counts.community += 1
       else if (node.kind === 'logic') counts.logic += 1
       else if (node.kind === 'claim') counts.claim += 1
-      else if (node.kind === 'proposition' || node.kind === 'prop') counts.proposition += 1
       else if (node.kind === 'entity') counts.entity += 1
       else if (node.kind === 'citation') counts.citation += 1
     }
@@ -426,7 +422,6 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
         paperId: node.paperId,
         textbookId: node.textbookId,
         chapterId: node.chapterId,
-        propId: node.propId,
       },
     })
   }
@@ -524,7 +519,6 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       community: 0,
       logic: 0,
       claim: 0,
-      proposition: 0,
       entity: 0,
       citation: 0,
     }
@@ -798,8 +792,8 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                             const rowRecord = row as Record<string, unknown>
                             const rowKind = normalizeText(row.kind || 'structured')
                             const communityId = normalizeText(rowRecord.community_id || (rowKind === 'community' ? row.source_id : ''))
-                            const sourceId = normalizeText(row.source_id || row.proposition_id || communityId)
-                            const title = normalizeText(row.text || row.source_id || row.proposition_id || communityId || row.kind || `structured-${index + 1}`)
+                            const sourceId = normalizeText(row.source_id || communityId)
+                            const title = normalizeText(row.text || row.source_id || communityId || row.kind || `structured-${index + 1}`)
                             const groundingRows = sourceId ? groundingBySourceId.get(sourceId) ?? [] : []
                             const communityKeywords = asStringList(rowRecord.keyword_texts)
                             const representativeMembers = asStringList(rowRecord.member_ids)
@@ -1360,14 +1354,6 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                 <div className="kgInfoLine">
                   <span>textbookId</span>
                   <b>{prettyValue(genericContext.center?.textbookId ?? genericContext.raw.selectedNode.textbookId)}</b>
-                </div>
-                <div className="kgInfoLine">
-                  <span>propId</span>
-                  <b>{prettyValue(genericContext.center?.propId ?? genericContext.raw.selectedNode.propId)}</b>
-                </div>
-                <div className="kgInfoLine">
-                  <span>state</span>
-                  <b>{prettyValue(genericContext.center?.state)}</b>
                 </div>
                 <div className="kgInfoLine">
                   <span>mentions</span>

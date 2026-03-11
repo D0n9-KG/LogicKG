@@ -48,7 +48,6 @@ export type QueryPlanRow = {
   paper_query?: string
   textbook_query?: string
   community_query?: string
-  proposition_query?: string
   confidence?: number
   reason?: string
 }
@@ -57,7 +56,6 @@ export type StructuredEvidenceRow = {
   kind?: string
   source_id?: string
   community_id?: string
-  proposition_id?: string
   text?: string
   score?: number
   paper_source?: string
