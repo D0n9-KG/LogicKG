@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,6 +14,7 @@ from app.api.routers.schema import router as schema_router
 from app.api.routers.collections import router as collections_router
 from app.api.routers.discovery import router as discovery_router
 from app.api.routers.config_center import router as config_center_router
+from app.api.routers.community import router as community_router
 from app.api.routers.fusion import router as fusion_router
 from app.api.routers.textbooks import router as textbooks_router
 
@@ -22,6 +25,7 @@ from app.tasks.handlers import (
     handle_discovery_batch,
     handle_rebuild_all,
     handle_rebuild_fusion,
+    handle_rebuild_global_communities,
     handle_rebuild_evolution,
     handle_rebuild_faiss,
     handle_rebuild_paper,
@@ -29,11 +33,37 @@ from app.tasks.handlers import (
     handle_update_similarity_paper,
     handle_upload_replace,
 )
-from app.tasks.manager import task_manager
+from app.tasks.manager import TaskManager, task_manager
 from app.tasks.models import TaskType
 
 
-app = FastAPI(title="LogicKG API", version="0.1.0")
+def register_task_handlers(manager: TaskManager) -> None:
+    manager.register(TaskType.ingest_path, handle_ingest_path)
+    manager.register(TaskType.ingest_upload_ready, handle_ingest_upload_ready)
+    manager.register(TaskType.upload_replace, handle_upload_replace)
+    manager.register(TaskType.rebuild_paper, handle_rebuild_paper)
+    manager.register(TaskType.rebuild_faiss, handle_rebuild_faiss)
+    manager.register(TaskType.rebuild_all, handle_rebuild_all)
+    manager.register(TaskType.rebuild_fusion, handle_rebuild_fusion)
+    manager.register(TaskType.rebuild_global_communities, handle_rebuild_global_communities)
+    manager.register(TaskType.rebuild_evolution, handle_rebuild_evolution)
+    manager.register(TaskType.rebuild_similarity, handle_rebuild_similarity)
+    manager.register(TaskType.update_similarity_paper, handle_update_similarity_paper)
+    manager.register(TaskType.ingest_textbook, handle_ingest_textbook)
+    manager.register(TaskType.discovery_batch, handle_discovery_batch)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    register_task_handlers(task_manager)
+    task_manager.start()
+    try:
+        yield
+    finally:
+        task_manager.stop()
+
+
+app = FastAPI(title="LogicKG API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,22 +82,6 @@ app.include_router(schema_router)
 app.include_router(collections_router)
 app.include_router(discovery_router)
 app.include_router(config_center_router)
+app.include_router(community_router)
 app.include_router(fusion_router)
 app.include_router(textbooks_router)
-
-
-@app.on_event("startup")
-def _start_tasks() -> None:
-    task_manager.register(TaskType.ingest_path, handle_ingest_path)
-    task_manager.register(TaskType.ingest_upload_ready, handle_ingest_upload_ready)
-    task_manager.register(TaskType.upload_replace, handle_upload_replace)
-    task_manager.register(TaskType.rebuild_paper, handle_rebuild_paper)
-    task_manager.register(TaskType.rebuild_faiss, handle_rebuild_faiss)
-    task_manager.register(TaskType.rebuild_all, handle_rebuild_all)
-    task_manager.register(TaskType.rebuild_fusion, handle_rebuild_fusion)
-    task_manager.register(TaskType.rebuild_evolution, handle_rebuild_evolution)
-    task_manager.register(TaskType.rebuild_similarity, handle_rebuild_similarity)
-    task_manager.register(TaskType.update_similarity_paper, handle_update_similarity_paper)
-    task_manager.register(TaskType.ingest_textbook, handle_ingest_textbook)
-    task_manager.register(TaskType.discovery_batch, handle_discovery_batch)
-    task_manager.start()

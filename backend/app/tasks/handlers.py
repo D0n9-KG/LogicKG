@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.community.service import rebuild_global_communities
 from app.ingest.pipeline import ingest_path
 from app.ingest.rebuild import rebuild_global_faiss, rebuild_paper
 from app.ingest.upload_actions import commit_ready, replace_with_new
@@ -202,6 +203,20 @@ def handle_rebuild_fusion(
         update(stage, p, msg)
 
     return rebuild_fusion_graph(paper_id=paper_id, progress=progress, log=log)
+
+
+def handle_rebuild_global_communities(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    _load_payload(task_id)
+    update("community:init", 0.02, "Rebuilding global communities")
+
+    def progress(stage: str, p: float, msg: str | None = None) -> None:
+        update(stage, p, msg)
+
+    return rebuild_global_communities(progress=progress, log=log)
 
 
 def handle_rebuild_evolution(

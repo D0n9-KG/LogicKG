@@ -15,6 +15,10 @@ class SubmitTaskResponse(BaseModel):
     task_id: str
 
 
+class RebuildCommunityTaskRequest(BaseModel):
+    textbook_id: str | None = None
+
+
 class IngestPathTaskRequest(BaseModel):
     path: str = Field(min_length=1)
 
@@ -76,6 +80,19 @@ def submit_rebuild_similarity():
 def submit_rebuild_fusion():
     try:
         task_id = task_manager.submit(TaskType.rebuild_fusion, {})
+        return SubmitTaskResponse(task_id=task_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/rebuild/community", response_model=SubmitTaskResponse)
+def submit_rebuild_community(req: RebuildCommunityTaskRequest):
+    try:
+        payload = {}
+        textbook_id = str(req.textbook_id or "").strip()
+        if textbook_id:
+            payload["textbook_id"] = textbook_id
+        task_id = task_manager.submit(TaskType.rebuild_global_communities, payload)
         return SubmitTaskResponse(task_id=task_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
