@@ -20,10 +20,10 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from app.community.service import rebuild_global_communities
 from app.graph.neo4j_client import Neo4jClient
 from app.ingest.graph_importer import import_youtu_graph
-from app.ingest.textbook_proposition_mapper import map_entities_to_propositions
-from app.ingest.textbook_splitter import ChapterUnit, split_textbook_md
+from app.ingest.textbook_splitter import split_textbook_md
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -216,7 +216,7 @@ def ingest_textbook(
     total_entities = 0
     total_relations = 0
     chapter_results: list[dict] = []
-    proposition_result = {"entities": 0, "propositions": 0}
+    community_rebuild_result: dict[str, Any] = {"communities": 0, "keywords": 0}
 
     try:
         # Single Neo4j connection for the entire ingestion
@@ -312,16 +312,18 @@ def ingest_textbook(
                 })
                 log(f"Chapter {ch.chapter_num} done: {entity_count} entities, {relation_count} relations")
 
-            # Step 4: map textbook assertion entities to Propositions.
-            progress("textbook:proposition_map", 0.95, "Mapping textbook entities to propositions")
-            candidate_entities = client.list_knowledge_entities_for_propositions(tb_id)
-            mapped_items = map_entities_to_propositions(candidate_entities)
-            proposition_result = client.upsert_proposition_for_entity(mapped_items)
-            log(
-                "Proposition mapping done: "
-                f"{proposition_result.get('entities', 0)} entities mapped, "
-                f"{proposition_result.get('propositions', 0)} propositions upserted"
-            )
+        progress("textbook:community_rebuild", 0.95, "Rebuilding global communities after textbook import")
+
+        def _community_progress(stage: str, p: float, msg: str | None = None) -> None:
+            clamped = max(0.0, min(1.0, float(p)))
+            progress(stage, 0.95 + 0.04 * clamped, msg)
+
+        community_rebuild_result = rebuild_global_communities(progress=_community_progress, log=log)
+        log(
+            "Global community rebuild done: "
+            f"{community_rebuild_result.get('communities', 0)} communities, "
+            f"{community_rebuild_result.get('keywords', 0)} keywords"
+        )
 
     finally:
         # Always clean up temp directory
@@ -335,7 +337,9 @@ def ingest_textbook(
         "total_chapters": len(chapters),
         "total_entities": total_entities,
         "total_relations": total_relations,
-        "mapped_propositions": proposition_result.get("propositions", 0),
+        "mapped_propositions": 0,
+        "global_communities": int(community_rebuild_result.get("communities", 0) or 0),
+        "global_keywords": int(community_rebuild_result.get("keywords", 0) or 0),
         "chapters": chapter_results,
     }
     log(f"Ingestion complete: {json.dumps(summary, ensure_ascii=False)}")

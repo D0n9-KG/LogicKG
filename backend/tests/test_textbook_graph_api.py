@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 import app.api.routers.textbooks as textbooks_router
+import app.ingest.textbook_pipeline as textbook_pipeline
 
 
 class _FakeNeo4jClient:
@@ -72,8 +74,6 @@ def test_chapter_graph_snapshot_endpoint_returns_payload(monkeypatch) -> None:
 
 
 def test_textbook_fusion_link_endpoint_submits_global_community_rebuild_task(monkeypatch) -> None:
-    monkeypatch.setattr(textbooks_router, "create_propositions_for_textbook", lambda textbook_id: {"textbook_id": textbook_id})
-
     captured: dict[str, object] = {}
 
     def _fake_submit(task_type, payload):
@@ -94,3 +94,67 @@ def test_textbook_fusion_link_endpoint_submits_global_community_rebuild_task(mon
     assert payload == {"task_id": "task-community-1", "task_type": "rebuild_global_communities"}
     assert str(getattr(captured["task_type"], "value", captured["task_type"])) == "rebuild_global_communities"
     assert captured["payload"] == {"textbook_id": "tb-1"}
+
+
+def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypatch, tmp_path: Path) -> None:
+    source_md = tmp_path / "textbook.md"
+    source_md.write_text("# Chapter 1\ncontent", encoding="utf-8")
+    graph_json = tmp_path / "graph.json"
+    graph_json.write_text("{}", encoding="utf-8")
+
+    class _FakeChapter:
+        chapter_num = 1
+        title = "Chapter 1"
+        body = "# Chapter 1\ncontent"
+
+    class _FakeNeo4jClient:
+        def __init__(self, uri: str, user: str, password: str) -> None:
+            self.uri = uri
+            self.user = user
+            self.password = password
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def ensure_schema(self) -> None:
+            return None
+
+        def upsert_textbook(self, **kwargs) -> None:
+            return None
+
+        def upsert_textbook_chapter(self, **kwargs) -> None:
+            return None
+
+    rebuild_calls: list[dict] = []
+
+    monkeypatch.setattr(textbook_pipeline, "Neo4jClient", _FakeNeo4jClient)
+    monkeypatch.setattr(textbook_pipeline, "split_textbook_md", lambda md_path: [_FakeChapter()])
+    monkeypatch.setattr(textbook_pipeline, "_run_autoyoutu_pipeline", lambda chapter_md_path, output_dir, log: graph_json)
+    monkeypatch.setattr(
+        textbook_pipeline,
+        "import_youtu_graph",
+        lambda graph_json_path, textbook_id, chapter_id, neo4j_client: {
+            "entity_count": 2,
+            "relation_count": 1,
+            "community_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        textbook_pipeline,
+        "rebuild_global_communities",
+        lambda progress=None, log=None: rebuild_calls.append({"progress": progress, "log": log}) or {"communities": 1},
+        raising=False,
+    )
+    monkeypatch.setattr(textbook_pipeline.settings, "storage_dir", str(tmp_path / "storage"), raising=False)
+
+    result = textbook_pipeline.ingest_textbook(
+        str(source_md),
+        {"title": "Continuum Mechanics", "authors": ["A. Author"]},
+    )
+
+    assert result["ok"] is True
+    assert result["mapped_propositions"] == 0
+    assert len(rebuild_calls) == 1

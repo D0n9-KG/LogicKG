@@ -6,7 +6,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.graph.neo4j_client import Neo4jClient
-from app.evolution.service import create_propositions_for_textbook
 from app.settings import settings
 from app.tasks.manager import task_manager
 from app.tasks.models import TaskType
@@ -141,9 +140,9 @@ def delete_textbook(textbook_id: str):
 
 @router.post("/fusion/link")
 def fusion_link(req: FusionLinkRequest):
-    """Create Propositions for textbook entities and link to evolution layer."""
+    """Submit a global community rebuild task after textbook import/update."""
     try:
-        stats = create_propositions_for_textbook(req.textbook_id)
-        return {"ok": True, **stats}
+        task_id = task_manager.submit(TaskType.rebuild_global_communities, {"textbook_id": req.textbook_id})
+        return {"task_id": task_id, "task_type": TaskType.rebuild_global_communities.value}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
