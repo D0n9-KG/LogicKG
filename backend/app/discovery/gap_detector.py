@@ -147,6 +147,95 @@ def _community_description(row: dict[str, Any]) -> str:
     return "A global community lacks sufficient evidence coverage for high-confidence explanation."
 
 
+def _paper_context_sentence(row: dict[str, Any]) -> str:
+    paper_title = _clean_text(str(row.get("paper_title") or row.get("title") or ""))
+    if paper_title:
+        return f"The issue appears in {paper_title}."
+    return "The issue appears in the cited source."
+
+
+def _legacy_gap_title(prefix: str, row: dict[str, Any]) -> str:
+    paper_title = _clean_text(str(row.get("paper_title") or row.get("title") or ""))
+    raw_topic = _clean_text(str(row.get("text") or row.get("description") or ""))
+    raw_topic = re.sub(r"\bsignal from (claim|extracted gap seed)\b", "", raw_topic, flags=re.IGNORECASE)
+    raw_topic = re.sub(r"^(limitation|gap|future work|critique)\b[:\s-]*", "", raw_topic, flags=re.IGNORECASE).strip()
+    topic = _first_sentence(paper_title or raw_topic, max_chars=88) or "reported evidence gap"
+    label = prefix.strip() or "Reported gap"
+    return f"{label}: {topic}"
+
+
+def _from_gap_like_claims(
+    client: Any,
+    keywords: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = list(client.list_gap_like_claims(limit=max(50, limit * 4), kinds=None) or [])
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        text = _clean_text(str(row.get("text") or ""))
+        paper_title = _clean_text(str(row.get("paper_title") or ""))
+        if not text:
+            continue
+        if not _domain_match(" ".join(part for part in [text, paper_title] if part), keywords):
+            continue
+        kinds = [kind.casefold() for kind in _string_list(row.get("kinds"))]
+        prefix = "Paper-reported limitation needs follow-up" if "limitation" in kinds else "Paper-reported gap needs follow-up"
+        out.append(
+            {
+                "gap_id": _gap_id("claim", str(row.get("claim_id") or text)),
+                "gap_type": "gap_claim",
+                "title": _legacy_gap_title(prefix, row),
+                "description": f"{_paper_context_sentence(row)} {text}".strip(),
+                "missing_evidence_statement": "Need stronger cross-paper support and challenge evidence for this reported issue.",
+                "priority_score": _clamp01(0.45 + 0.35 * float(row.get("confidence") or 0.0)),
+                "source_community_ids": _string_list(row.get("source_community_ids")),
+                "source_paper_ids": _string_list(row.get("paper_id")),
+                "signals": {
+                    "claim_id": str(row.get("claim_id") or "").strip(),
+                    "prop_id": str(row.get("prop_id") or "").strip(),
+                    "kinds": _string_list(row.get("kinds")),
+                    "evidence_count": int(row.get("evidence_count") or 0),
+                },
+            }
+        )
+    return _dedup_and_sort(out, limit=limit)
+
+
+def _from_gap_seeds(
+    client: Any,
+    keywords: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = list(client.list_gap_seeds(limit=max(50, limit * 4), kinds=None) or [])
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        text = _clean_text(str(row.get("text") or row.get("claim_text") or ""))
+        paper_title = _clean_text(str(row.get("paper_title") or ""))
+        if not text:
+            continue
+        if not _domain_match(" ".join(part for part in [text, paper_title] if part), keywords):
+            continue
+        out.append(
+            {
+                "gap_id": _gap_id("seed", str(row.get("seed_id") or text)),
+                "gap_type": "seed",
+                "title": _legacy_gap_title("Extracted research gap needs follow-up", row),
+                "description": f"{_paper_context_sentence(row)} {text}".strip(),
+                "missing_evidence_statement": "Need direct evidence that validates or challenges this extracted gap statement.",
+                "priority_score": _clamp01(0.42 + 0.38 * float(row.get("confidence") or 0.0)),
+                "source_community_ids": _string_list(row.get("source_community_ids")),
+                "source_paper_ids": _string_list(row.get("paper_id")),
+                "signals": {
+                    "seed_id": str(row.get("seed_id") or "").strip(),
+                    "claim_id": str(row.get("claim_id") or "").strip(),
+                    "prop_id": str(row.get("prop_id") or "").strip(),
+                    "kinds": _string_list(row.get("kinds")),
+                },
+            }
+        )
+    return _dedup_and_sort(out, limit=limit)
+
+
 def _from_global_communities(
     client: Neo4jClient,
     keywords: list[str],

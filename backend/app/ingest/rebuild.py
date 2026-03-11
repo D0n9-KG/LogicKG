@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -18,6 +19,7 @@ from app.ingest.models import Chunk, MdSpan
 from app.ingest.parse_md import parse_mineru_markdown
 from app.llm.citation_purpose import classify_citation_purposes_batch
 from app.llm.reference_recovery import recover_references_with_agent
+from app.rag.structured_retrieval import build_community_corpus_rows
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
 from app.vector.faiss_store import build_faiss_for_chunks, build_faiss_for_rows
@@ -35,6 +37,20 @@ def _storage_dir() -> Path:
     p = _backend_root() / settings.storage_dir
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _clear_stale_proposition_faiss_exports(out_dir: Path) -> dict[str, Any]:
+    removed: list[str] = []
+    for name in ("propositions", "proposition_groups"):
+        path = out_dir / name
+        if not path.exists():
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        removed.append(str(path))
+    return {"removed_corpora": removed}
 
 
 def _safe_id(s: str) -> str:
@@ -676,21 +692,17 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
                     "evidence_quote",
                 ],
             ),
-            "propositions": (
-                client.list_proposition_structured_rows(limit=50000),
+            "communities": (
+                build_community_corpus_rows(client, limit=50000),
                 [
                     "kind",
                     "source_id",
-                    "proposition_id",
-                    "paper_id",
-                    "paper_source",
-                    "source_kind",
-                    "source_ref_id",
-                    "textbook_id",
-                    "chapter_id",
-                    "evidence_quote",
-                    "evidence_event_id",
-                    "evidence_event_type",
+                    "community_id",
+                    "title",
+                    "summary",
+                    "keyword_texts",
+                    "member_ids",
+                    "member_kinds",
                 ],
             ),
         }
@@ -715,6 +727,9 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
 
     notify("rebuild:faiss_build", 0.55, f"Building FAISS over {len(chunks)} chunks")
     out_dir = _storage_dir() / "faiss"
+    cleanup = _clear_stale_proposition_faiss_exports(out_dir)
+    if cleanup["removed_corpora"]:
+        write_log(f"removed stale FAISS corpora: {', '.join(cleanup['removed_corpora'])}")
     res = {
         "chunks": build_faiss_for_chunks(chunks, out_dir=str(out_dir / "chunks")),
         "corpora": {},
@@ -730,4 +745,4 @@ def rebuild_global_faiss(progress: ProgressFn | None = None, log: LogFn | None =
         )
     write_log(f"built global FAISS in {out_dir}")
     notify("rebuild:faiss_done", 1.0, "FAISS rebuild done")
-    return {"faiss": res, "dir": str(out_dir)}
+    return {"faiss": res, "dir": str(out_dir), "cleanup": cleanup}

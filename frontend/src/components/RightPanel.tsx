@@ -122,25 +122,6 @@ function communityMemberNodeId(memberId: string, memberKind: string): string {
   return kind ? `${kind}:${memberId}` : memberId
 }
 
-export function groundingLocationLabel(
-  row: NonNullable<AskItem['grounding']>[number] | undefined,
-  locale: UILocale,
-): string {
-  if (!row) return ''
-  const parts: string[] = []
-  const chunkId = normalizeText(row.chunk_id)
-  const chapterId = normalizeText(row.chapter_id)
-  const textbookId = normalizeText(row.textbook_id)
-  const startLine = Number.isFinite(Number(row.start_line)) ? Number(row.start_line) : null
-  const endLine = Number.isFinite(Number(row.end_line)) ? Number(row.end_line) : null
-  if (chunkId) parts.push(chunkId)
-  else if (chapterId) parts.push(chapterId)
-  else if (textbookId) parts.push(textbookId)
-  if (startLine !== null && endLine !== null) parts.push(`${locale === 'zh-CN' ? '行' : 'Lines'} ${startLine}-${endLine}`)
-  else if (startLine !== null) parts.push(`${locale === 'zh-CN' ? '行' : 'Line'} ${startLine}`)
-  return parts.join(' | ')
-}
-
 function sourceFromMdPath(mdPath: unknown): string {
   const raw = normalizeText(mdPath)
   if (!raw) return ''

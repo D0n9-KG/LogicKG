@@ -397,46 +397,45 @@ export default function AskPanel() {
     [filteredScopePaperOptions, scopeRenderLimit],
   )
 
-  const submitQuestion = useCallback(
-    async (question: string, k: number, requestedScope: Scope) => {
-      if (!question.trim() || busy) return
+  const submitQuestion = async (question: string, k: number, requestedScope: Scope) => {
+    if (!question.trim() || busy) return
 
-      const sessionId = ask.currentSessionId ?? currentSession?.id ?? null
-      const id = makeId()
-      const item: AskItem = {
-        id,
+    const sessionId = ask.currentSessionId ?? currentSession?.id ?? null
+    const id = makeId()
+    const item: AskItem = {
+      id,
+      question: question.trim(),
+      k: clampK(k),
+      createdAt: Date.now(),
+      status: 'running',
+      answer: '',
+      evidence: [],
+      fusionEvidence: [],
+      dualEvidenceCoverage: false,
+      graphContext: [],
+      structuredKnowledge: null,
+      structuredEvidence: [],
+      grounding: [],
+      intent: '',
+      retrievalPlan: '',
+      queryPlan: null,
+      retrievalMode: '',
+      notice: '',
+      insufficientScopeEvidence: false,
+      error: '',
+    }
+
+    dispatch({ type: 'ASK_ADD_ITEM', item, sessionId: sessionId ?? undefined })
+    dispatch({ type: 'ASK_SET_CURRENT', id, sessionId: sessionId ?? undefined })
+    dispatch({ type: 'SET_SELECTED', node: null })
+
+    try {
+      const payload = {
         question: question.trim(),
         k: clampK(k),
-        createdAt: Date.now(),
-        status: 'running',
-        answer: '',
-        evidence: [],
-        fusionEvidence: [],
-        dualEvidenceCoverage: false,
-        graphContext: [],
-        structuredKnowledge: null,
-        structuredEvidence: [],
-        grounding: [],
-        intent: '',
-        retrievalPlan: '',
-        queryPlan: null,
-        retrievalMode: '',
-        notice: '',
-        insufficientScopeEvidence: false,
-        error: '',
+        locale,
+        conversation: buildConversationPayload(currentSession?.history ?? [], currentSession?.currentId ?? null, locale),
       }
-
-      dispatch({ type: 'ASK_ADD_ITEM', item, sessionId: sessionId ?? undefined })
-      dispatch({ type: 'ASK_SET_CURRENT', id, sessionId: sessionId ?? undefined })
-      dispatch({ type: 'SET_SELECTED', node: null })
-
-      try {
-        const payload = {
-          question: question.trim(),
-          k: clampK(k),
-          locale,
-          conversation: buildConversationPayload(currentSession?.history ?? [], currentSession?.currentId ?? null, locale),
-        }
 
         const requestWithStreaming = async (scopePayload: ReturnType<typeof toRequestScope>) => {
           let streamedAnswer = ''
@@ -541,24 +540,22 @@ export default function AskPanel() {
           },
         })
       } catch (error: unknown) {
-        dispatch({
-          type: 'ASK_UPDATE_ITEM',
-          id,
-          sessionId: sessionId ?? undefined,
-          patch: {
-            status: 'error',
-            error: String((error as { message?: unknown } | null)?.message ?? error),
-          },
-        })
-      }
-    },
-    [ask.currentSessionId, busy, currentSession?.id, dispatch, locale, t],
-  )
-  const submitAsk = useCallback(async () => {
+      dispatch({
+        type: 'ASK_UPDATE_ITEM',
+        id,
+        sessionId: sessionId ?? undefined,
+        patch: {
+          status: 'error',
+          error: String((error as { message?: unknown } | null)?.message ?? error),
+        },
+      })
+    }
+  }
+  const submitAsk = async () => {
     const question = ask.draftQuestion.trim()
     if (!question || busy) return
     await submitQuestion(question, ask.draftK, scope)
-  }, [ask.draftK, ask.draftQuestion, busy, scope, submitQuestion])
+  }
 
   const toggleScopePaper = useCallback(
     (paperId: string) => {
@@ -581,12 +578,12 @@ export default function AskPanel() {
     setScopeRenderLimit(SCOPE_LIST_PAGE_SIZE)
   }, [dispatch])
 
-  const retryCurrentOnAllScope = useCallback(async () => {
+  const retryCurrentOnAllScope = async () => {
     if (!current || busy) return
     saveScope({ mode: 'all' })
     dispatch({ type: 'ASK_SET_DRAFT', question: current.question, k: current.k, sessionId: currentSession?.id })
     await submitQuestion(current.question, current.k, { mode: 'all' })
-  }, [busy, current, currentSession?.id, dispatch, submitQuestion])
+  }
 
   const deleteSession = useCallback(
     (sessionId: string) => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { buildAskGraph, resolveAskGraph } from '../src/loaders/ask'
+import { buildAskGraph, resolveAskGraph, type AskApiResponse } from '../src/loaders/ask'
 
 describe('ask loader graph builder', () => {
   test('buildAskGraph keeps evidence nodes even when paper_source is missing', () => {
@@ -99,7 +99,7 @@ describe('ask loader graph builder', () => {
             score: 0.82,
           },
         ],
-      } as any,
+      } satisfies AskApiResponse,
       fallbackGraph,
     )
 

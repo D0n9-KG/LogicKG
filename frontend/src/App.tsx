@@ -150,8 +150,12 @@ function Shell() {
 
   useEffect(() => {
     if (floatingPanelMode) return
-    if (leftDrawerOpen) setLeftDrawerOpen(false)
-    if (rightDrawerOpen) setRightDrawerOpen(false)
+    if (!leftDrawerOpen && !rightDrawerOpen) return
+    const timer = window.setTimeout(() => {
+      setLeftDrawerOpen(false)
+      setRightDrawerOpen(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [floatingPanelMode, leftDrawerOpen, rightDrawerOpen])
 
   const frameStyle = {

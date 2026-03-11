@@ -158,3 +158,38 @@ def test_global_community_read_helpers_return_keywords_and_members() -> None:
         {"member_id": "cl-1", "member_kind": "Claim", "text": "FEM improves stability."},
         {"member_id": "ke-1", "member_kind": "KnowledgeEntity", "text": "Finite Element Method"},
     ]
+
+
+def test_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() -> None:
+    class _CleanupSession(_FakeSession):
+        def run(self, query: str, **params):
+            self.calls.append((str(query), dict(params)))
+            if "deleted_proposition_groups" in str(query):
+                return _Result(
+                    {
+                        "deleted_proposition_groups": 2,
+                        "deleted_propositions": 3,
+                        "deleted_relation_edges": 4,
+                    }
+                )
+            return _Result({"cnt": 0})
+
+    fake_session = _CleanupSession()
+    client = _client_with_fake_driver(fake_session)
+
+    assert hasattr(client, "clear_proposition_artifacts"), "Expected clear_proposition_artifacts() to exist."
+
+    deleted = client.clear_proposition_artifacts()
+
+    assert deleted == {
+        "deleted_proposition_groups": 2,
+        "deleted_propositions": 3,
+        "deleted_relation_edges": 4,
+    }
+
+    queries = "\n".join(query for query, _ in fake_session.calls)
+    assert "PropositionGroup" in queries
+    assert "Proposition" in queries
+    assert "SUPPORTS" in queries
+    assert "CHALLENGES" in queries
+    assert "SUPERSEDES" in queries

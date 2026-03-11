@@ -4043,6 +4043,35 @@ RETURN deleted_communities,
             "deleted_keyword_edges": int((row or {}).get("deleted_keyword_edges") or 0),
         }
 
+    def clear_proposition_artifacts(self) -> dict[str, int]:
+        cypher = """
+CALL {
+    MATCH (:Proposition)-[r:SUPPORTS|CHALLENGES|SUPERSEDES]->(:Proposition)
+    RETURN count(r) AS deleted_relation_edges, collect(r) AS relation_edges
+}
+CALL {
+    MATCH (pg:PropositionGroup)
+    RETURN count(pg) AS deleted_proposition_groups, collect(pg) AS proposition_groups
+}
+CALL {
+    MATCH (pr:Proposition)
+    RETURN count(pr) AS deleted_propositions, collect(pr) AS propositions
+}
+FOREACH (rel IN relation_edges | DELETE rel)
+FOREACH (node IN proposition_groups | DETACH DELETE node)
+FOREACH (node IN propositions | DETACH DELETE node)
+RETURN deleted_proposition_groups,
+       deleted_propositions,
+       deleted_relation_edges
+"""
+        with self._driver.session() as session:
+            row = session.run(cypher).single()
+        return {
+            "deleted_proposition_groups": int((row or {}).get("deleted_proposition_groups") or 0),
+            "deleted_propositions": int((row or {}).get("deleted_propositions") or 0),
+            "deleted_relation_edges": int((row or {}).get("deleted_relation_edges") or 0),
+        }
+
     def upsert_global_communities(self, items: list[dict]) -> int:
         if not items:
             return 0

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { buildAskGraph } from '../src/loaders/ask'
+import { buildAskGraph, type AskApiResponse } from '../src/loaders/ask'
 
 describe('ask community graph builder', () => {
   test('renders community nodes with member nodes and evidence links below the members', () => {
@@ -67,7 +67,7 @@ describe('ask community graph builder', () => {
       ],
       graph_context: [],
       dual_evidence_coverage: true,
-    } as any)
+    } satisfies AskApiResponse)
 
     const nodes = graph.filter((item) => item.group === 'nodes').map((item) => item.data)
     const edges = graph.filter((item) => item.group === 'edges').map((item) => item.data)
