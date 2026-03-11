@@ -107,6 +107,21 @@ function shortText(value: unknown, max = 120): string {
   return `${text.slice(0, Math.max(1, max - 3))}...`
 }
 
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => normalizeText(item)).filter(Boolean)
+}
+
+function communityMemberNodeId(memberId: string, memberKind: string): string {
+  const kind = normalizeText(memberKind)
+  if (kind === 'claim') return `claim:${memberId}`
+  if (kind === 'entity' || kind === 'knowledge_entity') return `entity:${memberId}`
+  if (kind === 'paper') return `paper:${memberId}`
+  if (kind === 'chapter') return `chapter:${memberId}`
+  if (kind === 'textbook') return `textbook:${memberId}`
+  return kind ? `${kind}:${memberId}` : memberId
+}
+
 export function groundingLocationLabel(
   row: NonNullable<AskItem['grounding']>[number] | undefined,
   locale: UILocale,
@@ -689,8 +704,8 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                         <div className="kgInfoMetricValue">{counts.claim}</div>
                       </div>
                       <div className="kgInfoMetricCard">
-                        <div className="kgInfoMetricLabel">{t('命题节点', 'Proposition Nodes')}</div>
-                        <div className="kgInfoMetricValue">{counts.proposition}</div>
+                        <div className="kgInfoMetricLabel">{t('社区节点', 'Community Nodes')}</div>
+                        <div className="kgInfoMetricValue">{counts.community}</div>
                       </div>
                       <div className="kgInfoMetricCard">
                         <div className="kgInfoMetricLabel">{t('引用节点', 'Citation Nodes')}</div>
@@ -799,14 +814,76 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                         <div className="kgSectionTitle">{t('结构化证据', 'Structured Evidence')}</div>
                         <div className="kgInfoSection kgStack" style={{ gap: 8 }}>
                           {structuredEvidence.slice(0, 6).map((row, index) => {
-                            const sourceId = normalizeText(row.source_id || row.proposition_id)
-                            const title = normalizeText(row.text || row.source_id || row.proposition_id || row.kind || `structured-${index + 1}`)
+                            const rowRecord = row as Record<string, unknown>
+                            const rowKind = normalizeText(row.kind || 'structured')
+                            const communityId = normalizeText(rowRecord.community_id || (rowKind === 'community' ? row.source_id : ''))
+                            const sourceId = normalizeText(row.source_id || row.proposition_id || communityId)
+                            const title = normalizeText(row.text || row.source_id || row.proposition_id || communityId || row.kind || `structured-${index + 1}`)
                             const groundingRows = sourceId ? groundingBySourceId.get(sourceId) ?? [] : []
+                            const communityKeywords = asStringList(rowRecord.keyword_texts)
+                            const representativeMembers = asStringList(rowRecord.member_ids)
+                              .map((memberId, memberIndex) => {
+                                const memberKind = asStringList(rowRecord.member_kinds)[memberIndex] || ''
+                                const graphNode = askContext?.nodeMap.get(communityMemberNodeId(memberId, memberKind))
+                                const claimRow = (current.structuredKnowledge?.claims ?? []).find((claim) => normalizeText(claim.claim_id) === memberId)
+                                const fusionRow = (current.fusionEvidence ?? []).find((fusionRow) => normalizeText(fusionRow.entity_id) === memberId)
+                                return {
+                                  memberId,
+                                  memberKind: memberKind || normalizeText(graphNode?.kind),
+                                  memberLabel:
+                                    normalizeText(graphNode?.label)
+                                    || normalizeText(claimRow?.text)
+                                    || normalizeText(fusionRow?.entity_name)
+                                    || memberId,
+                                  groundingRows: groundingBySourceId.get(memberId) ?? [],
+                                }
+                              })
+                              .filter((member) => normalizeText(member.memberLabel))
+
+                            if (rowKind === 'community' && communityId) {
+                              return (
+                                <div key={`structured-${sourceId || index}`} className="kgInfoNeighborCard">
+                                  <div className="kgInfoNeighborTitle">{title}</div>
+                                  <div className="kgInfoNeighborMeta">
+                                    {rowKind} | {communityId}
+                                    {row.paper_source ? ` | ${row.paper_source}` : ''}
+                                    {row.chapter_id ? ` | ${row.chapter_id}` : ''}
+                                  </div>
+                                  {communityKeywords.length > 0 && (
+                                    <div className="kgStack" style={{ gap: 2, marginTop: 6 }}>
+                                      <div className="kgInfoNeighborMeta">{t('社区关键词', 'Community Keywords')}</div>
+                                      <div className="kgInfoNeighborMeta">{communityKeywords.join(', ')}</div>
+                                    </div>
+                                  )}
+                                  {representativeMembers.length > 0 && (
+                                    <div className="kgStack" style={{ gap: 6, marginTop: 6 }}>
+                                      <div className="kgInfoNeighborMeta">{t('代表成员', 'Representative Members')}</div>
+                                      {representativeMembers.slice(0, 4).map((member) => (
+                                        <div key={`member-${communityId}-${member.memberId}`} className="kgStack" style={{ gap: 2 }}>
+                                          <div className="kgInfoNeighborMeta">
+                                            {kindLabel(member.memberKind || 'entity', locale)} | {member.memberLabel}
+                                          </div>
+                                          {member.groundingRows.slice(0, 2).map((groundingRow, groundingIndex) => (
+                                            <div key={`member-grounding-${communityId}-${member.memberId}-${groundingIndex}`} className="kgStack" style={{ gap: 2 }}>
+                                              <div className="kgInfoNeighborMeta">{normalizeText(groundingRow.quote)}</div>
+                                              {betterGroundingLocationLabel(groundingRow, locale) && (
+                                                <div className="kgInfoNeighborMeta">{betterGroundingLocationLabel(groundingRow, locale)}</div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            }
+
                             return (
                               <div key={`structured-${sourceId || index}`} className="kgInfoNeighborCard">
                                 <div className="kgInfoNeighborTitle">{title}</div>
                                 <div className="kgInfoNeighborMeta">
-                                  {normalizeText(row.kind || 'structured')}
+                                  {rowKind}
                                   {row.paper_source ? ` | ${row.paper_source}` : ''}
                                   {row.chapter_id ? ` | ${row.chapter_id}` : ''}
                                 </div>

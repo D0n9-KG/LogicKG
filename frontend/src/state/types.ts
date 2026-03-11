@@ -138,6 +138,7 @@ export type AskItem = {
   structuredEvidence?: Array<{
     kind?: string
     source_id?: string
+    community_id?: string
     proposition_id?: string
     text?: string
     score?: number
@@ -148,6 +149,9 @@ export type AskItem = {
     entity_id?: string
     textbook_id?: string
     chapter_id?: string
+    member_ids?: string[]
+    member_kinds?: string[]
+    keyword_texts?: string[]
     evidence_event_id?: string
     evidence_event_type?: string
   }>
@@ -156,6 +160,8 @@ export type AskItem = {
     source_id?: string
     quote?: string
     paper_source?: string
+    paper_id?: string
+    md_path?: string
     chunk_id?: string
     textbook_id?: string
     chapter_id?: string
@@ -170,6 +176,7 @@ export type AskItem = {
     main_query?: string
     paper_query?: string
     textbook_query?: string
+    community_query?: string
     proposition_query?: string
     confidence?: number
     reason?: string

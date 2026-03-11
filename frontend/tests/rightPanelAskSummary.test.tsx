@@ -105,22 +105,25 @@ describe('RightPanel ask summary fusion coverage', () => {
                 graphContext: [],
                 structuredKnowledge: {
                   logic_steps: [{ paper_source: 'paper-A', step_type: 'Method', summary: 'Uses FEM.' }],
-                  claims: [],
+                  claims: [{ claim_id: 'cl-1', paper_source: 'paper-A', step_type: 'Result', text: 'FEM improves stability.' }],
                 },
                 structuredEvidence: [
                   {
-                    kind: 'proposition',
-                    source_id: 'pr-1',
-                    proposition_id: 'pr-1',
-                    text: 'Finite element discretization stabilizes PDE solving.',
+                    kind: 'community',
+                    source_id: 'gc:finite-element',
+                    community_id: 'gc:finite-element',
+                    text: 'Finite element stability community.',
                     source_kind: 'claim',
                     source_ref_id: 'cl-1',
+                    member_ids: ['cl-1', 'ent-1'],
+                    member_kinds: ['claim', 'entity'],
+                    keyword_texts: ['finite element', 'stability'],
                   },
                 ],
                 grounding: [
                   {
-                    source_kind: 'proposition',
-                    source_id: 'pr-1',
+                    source_kind: 'claim',
+                    source_id: 'cl-1',
                     quote: 'Finite element method discretizes the domain.',
                     chunk_id: 'c1',
                     chapter_id: 'tb:1:ch001',
@@ -187,22 +190,25 @@ describe('RightPanel ask summary fusion coverage', () => {
             graphContext: [],
             structuredKnowledge: {
               logic_steps: [{ paper_source: 'paper-A', step_type: 'Method', summary: 'Uses FEM.' }],
-              claims: [],
+              claims: [{ claim_id: 'cl-1', paper_source: 'paper-A', step_type: 'Result', text: 'FEM improves stability.' }],
             },
             structuredEvidence: [
               {
-                kind: 'proposition',
-                source_id: 'pr-1',
-                proposition_id: 'pr-1',
-                text: 'Finite element discretization stabilizes PDE solving.',
+                kind: 'community',
+                source_id: 'gc:finite-element',
+                community_id: 'gc:finite-element',
+                text: 'Finite element stability community.',
                 source_kind: 'claim',
                 source_ref_id: 'cl-1',
+                member_ids: ['cl-1', 'ent-1'],
+                member_kinds: ['claim', 'entity'],
+                keyword_texts: ['finite element', 'stability'],
               },
             ],
             grounding: [
               {
-                source_kind: 'proposition',
-                source_id: 'pr-1',
+                source_kind: 'claim',
+                source_id: 'cl-1',
                 quote: 'Finite element method discretizes the domain.',
                 chunk_id: 'c1',
                 chapter_id: 'tb:1:ch001',
@@ -237,6 +243,11 @@ describe('RightPanel ask summary fusion coverage', () => {
     expect(html).toContain('Foundational')
     expect(html).toContain('textbook_first_then_paper')
     expect(html).toContain('Structured Evidence')
+    expect(html).toContain('Community Keywords')
+    expect(html).toContain('Representative Members')
+    expect(html).toContain('finite element, stability')
+    expect(html).toContain('FEM improves stability.')
+    expect(html).toContain('Finite Element Method')
     expect(html).toContain('Finite element method discretizes the domain.')
     expect(html).toContain('c1')
     expect(html).toContain('Lines 11-13')

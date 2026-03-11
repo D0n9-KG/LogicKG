@@ -47,6 +47,7 @@ export type QueryPlanRow = {
   main_query?: string
   paper_query?: string
   textbook_query?: string
+  community_query?: string
   proposition_query?: string
   confidence?: number
   reason?: string
@@ -55,6 +56,7 @@ export type QueryPlanRow = {
 export type StructuredEvidenceRow = {
   kind?: string
   source_id?: string
+  community_id?: string
   proposition_id?: string
   text?: string
   score?: number
@@ -65,6 +67,9 @@ export type StructuredEvidenceRow = {
   entity_id?: string
   textbook_id?: string
   chapter_id?: string
+  member_ids?: string[]
+  member_kinds?: string[]
+  keyword_texts?: string[]
   evidence_event_id?: string
   evidence_event_type?: string
 }
@@ -74,6 +79,8 @@ export type GroundingRow = {
   source_id?: string
   quote?: string
   paper_source?: string
+  paper_id?: string
+  md_path?: string
   chunk_id?: string
   textbook_id?: string
   chapter_id?: string
@@ -152,8 +159,53 @@ function entityNodeId(entityId: string): string {
   return `entity:${entityId}`
 }
 
-function propositionNodeId(propositionId: string): string {
-  return `proposition:${propositionId}`
+function communityNodeId(communityId: string): string {
+  return `community:${communityId}`
+}
+
+function claimNodeId(claimId: string): string {
+  return `claim:${claimId}`
+}
+
+function logicNodeId(logicId: string): string {
+  return `logic:${logicId}`
+}
+
+function evidenceSourceKey(row: Pick<EvidenceRow, 'paper_source' | 'paper_id' | 'md_path'>): string {
+  const source = norm(row.paper_source) || sourceFromMdPath(row.md_path)
+  const paperId = norm(row.paper_id)
+  return paperId || source
+}
+
+function evidenceNodeIdForGrounding(row: GroundingRow, evidenceNodeIdsBySource: Map<string, string[]>): string[] {
+  const paperSource = norm(row.paper_source)
+  const paperId = norm(row.paper_id)
+  const mdSource = sourceFromMdPath(row.md_path)
+  const keys = [paperId, paperSource, mdSource].filter(Boolean)
+  for (const key of keys) {
+    const matches = evidenceNodeIdsBySource.get(key)
+    if (matches?.length) return matches
+  }
+  return []
+}
+
+function normalizedMemberKind(kind: string): string {
+  const value = norm(kind).toLowerCase()
+  if (!value) return 'entity'
+  if (value === 'logic_step') return 'logic'
+  return value
+}
+
+function buildMemberNodeId(memberId: string, memberKind: string): string {
+  const kind = normalizedMemberKind(memberKind)
+  if (kind === 'claim') return claimNodeId(memberId)
+  if (kind === 'logic') return logicNodeId(memberId)
+  if (kind === 'entity') return entityNodeId(memberId)
+  if (kind === 'paper') return `paper:${memberId}`
+  if (kind === 'textbook') return textbookNodeId(memberId)
+  if (kind === 'chapter') return chapterNodeId(memberId)
+  if (kind === 'community') return communityNodeId(memberId)
+  return `${kind}:${memberId}`
 }
 
 function chapterLabel(row: FusionEvidenceRow): string {
@@ -203,9 +255,10 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
   const sourceToPaperNodeId = new Map<string, string>()
   const sourceToPaperTitle = new Map<string, string>()
   const paperNodePriority = new Map<string, number>()
+  const evidenceNodeIdsBySource = new Map<string, string[]>()
   const claimNodeById = new Map<string, string>()
   const claimToLogicNodeId = new Map<string, string>()
-  const propositionNodeById = new Map<string, string>()
+  const communityNodeById = new Map<string, string>()
 
   const upsertPaperNode = (
     nodeId: string,
@@ -274,6 +327,13 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
       kind: 'evidenced_by',
       weight: Number.isFinite(Number(ev.score)) ? Math.max(0.2, Math.min(1, Number(ev.score))) : 0.4,
     })
+
+    const evidenceKeys = [evidenceSourceKey(ev), paperId, source].filter(Boolean)
+    for (const key of evidenceKeys) {
+      const existing = evidenceNodeIdsBySource.get(key) ?? []
+      existing.push(evidenceNodeId)
+      evidenceNodeIdsBySource.set(key, existing)
+    }
   }
 
   for (const row of res.graph_context ?? []) {
@@ -385,71 +445,67 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
   }
 
   for (const row of res.structured_evidence ?? []) {
-    const kind = norm(row.kind)
-    const propositionId = norm(row.proposition_id || (kind === 'proposition' ? row.source_id : ''))
-    if (!propositionId) continue
+    const kind = norm(row.kind).toLowerCase()
+    if (kind !== 'community') continue
 
-    const nodeId = propositionNodeId(propositionId)
-    propositionNodeById.set(propositionId, nodeId)
+    const communityId = norm(row.community_id || row.source_id)
+    if (!communityId) continue
 
-    const propositionText = norm(row.text || row.proposition_id || row.source_id || 'proposition')
+    const nodeId = communityNodeId(communityId)
+    communityNodeById.set(communityId, nodeId)
+
+    const communityText = norm(row.text || row.community_id || row.source_id || 'community')
+    const keywordText = (row.keyword_texts ?? []).map((value) => norm(value)).filter(Boolean).join(', ')
     nodeMap.set(nodeId, {
       id: nodeId,
-      label: short(propositionText, 38),
-      kind: 'proposition',
-      propId: propositionId,
-      description: propositionText,
+      label: short(communityText, 38),
+      kind: 'community',
+      description: keywordText ? `${communityText} | ${keywordText}` : communityText,
+      communityId,
       paperId: norm(row.paper_id) || undefined,
       textbookId: norm(row.textbook_id) || undefined,
       chapterId: norm(row.chapter_id) || undefined,
     })
 
-    const claimRef =
-      kind === 'claim'
-        ? norm(row.source_id)
-        : norm(row.source_kind) === 'claim'
-          ? norm(row.source_ref_id)
-          : ''
-    const claimNodeId = claimRef ? claimNodeById.get(claimRef) : undefined
-    if (claimNodeId) {
-      edgeMap.set(`${claimNodeId}->${nodeId}`, {
-        id: `${claimNodeId}->${nodeId}`,
-        source: claimNodeId,
-        target: nodeId,
-        kind: 'supports',
+    const memberIds = row.member_ids ?? []
+    const memberKinds = row.member_kinds ?? []
+    memberIds.forEach((memberIdRaw, index) => {
+      const memberId = norm(memberIdRaw)
+      const memberKind = normalizedMemberKind(memberKinds[index] ?? '')
+      if (!memberId) return
+
+      const targetNodeId = buildMemberNodeId(memberId, memberKind)
+      const existing = nodeMap.get(targetNodeId)
+      if (!existing) {
+        nodeMap.set(targetNodeId, {
+          id: targetNodeId,
+          label: short(memberId, 38),
+          kind: memberKind,
+          description: memberId,
+          communityId,
+        })
+      }
+
+      edgeMap.set(`${nodeId}->${targetNodeId}`, {
+        id: `${nodeId}->${targetNodeId}`,
+        source: nodeId,
+        target: targetNodeId,
+        kind: 'contains',
         weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.55,
       })
-    }
-
-    const logicNodeId = claimRef ? claimToLogicNodeId.get(claimRef) : undefined
-    if (logicNodeId) {
-      edgeMap.set(`${logicNodeId}->${nodeId}`, {
-        id: `${logicNodeId}->${nodeId}`,
-        source: logicNodeId,
-        target: nodeId,
-        kind: 'supports',
-        weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.5,
-      })
-    }
-
-    const entityId = norm(row.entity_id)
-    if (entityId) {
-      edgeMap.set(`${nodeId}->${entityNodeId(entityId)}`, {
-        id: `${nodeId}->${entityNodeId(entityId)}`,
-        source: nodeId,
-        target: entityNodeId(entityId),
-        kind: 'maps_to',
-        weight: Number.isFinite(Number(row.score)) ? Math.max(0.35, Math.min(1, Number(row.score))) : 0.48,
-      })
-    }
+    })
   }
 
   for (const row of res.grounding ?? []) {
-    const propositionId = norm(row.source_kind) === 'proposition' ? norm(row.source_id) : ''
-    if (!propositionId) continue
-    const nodeId = propositionNodeById.get(propositionId)
-    if (!nodeId) continue
-    const existing = nodeId ? nodeMap.get(nodeId) : undefined
+    const sourceKind = normalizedMemberKind(String(row.source_kind ?? ''))
+    const sourceId = norm(row.source_id)
+    if (!sourceId) continue
+
+    const nodeId =
+      sourceKind === 'community'
+        ? communityNodeById.get(sourceId) ?? communityNodeId(sourceId)
+        : buildMemberNodeId(sourceId, sourceKind)
+    const existing = nodeMap.get(nodeId)
     if (!existing) continue
     const quote = norm(row.quote)
     if (!quote) continue
@@ -457,6 +513,17 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
       ...existing,
       description: existing.description ? `${existing.description} | ${quote}` : quote,
     })
+
+    const evidenceNodeIds = evidenceNodeIdForGrounding(row, evidenceNodeIdsBySource)
+    for (const evidenceNodeId of evidenceNodeIds) {
+      edgeMap.set(`${nodeId}->${evidenceNodeId}`, {
+        id: `${nodeId}->${evidenceNodeId}`,
+        source: nodeId,
+        target: evidenceNodeId,
+        kind: 'evidenced_by',
+        weight: 0.6,
+      })
+    }
   }
 
   for (const fusion of res.fusion_evidence ?? []) {
@@ -556,7 +623,16 @@ export function buildAskGraph(res: AskApiResponse): GraphElement[] {
     }
   }
 
-  const nodes: GraphElement[] = Array.from(nodeMap.values()).map((data) => ({ group: 'nodes', data }))
+  const nodes: GraphElement[] = Array.from(nodeMap.values())
+    .sort((left, right) => {
+      const rank = (node: GraphNodeData) => {
+        if (node.kind === 'community') return 0
+        if (String(node.id).startsWith('evidence:')) return 2
+        return 1
+      }
+      return rank(left) - rank(right)
+    })
+    .map((data) => ({ group: 'nodes', data }))
   const edges: GraphElement[] = Array.from(edgeMap.values()).map((data) => ({ group: 'edges', data }))
   return [...nodes, ...edges]
 }
