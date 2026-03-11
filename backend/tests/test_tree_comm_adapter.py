@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
 
 
@@ -8,9 +9,21 @@ def _adapter_module():
     return importlib.import_module("app.community.tree_comm_adapter")
 
 
+def _vendored_tree_comm_module():
+    sys.modules.pop("vendor.youtu_graphrag.utils.tree_comm", None)
+    return importlib.import_module("vendor.youtu_graphrag.utils.tree_comm")
+
+
 def test_vendored_tree_comm_upstream_note_exists() -> None:
     upstream = Path(__file__).resolve().parents[1] / "vendor" / "youtu_graphrag" / "UPSTREAM.md"
     assert upstream.is_file(), "Expected backend/vendor/youtu_graphrag/UPSTREAM.md to document the vendored source."
+
+
+def test_vendored_tree_comm_uses_internal_compat_layers() -> None:
+    module = _vendored_tree_comm_module()
+
+    assert module.torch.__name__.startswith("vendor.youtu_graphrag.")
+    assert module.SentenceTransformer.__module__.startswith("vendor.youtu_graphrag.")
 
 
 def test_run_tree_comm_uses_vendored_fast_tree_comm(monkeypatch) -> None:

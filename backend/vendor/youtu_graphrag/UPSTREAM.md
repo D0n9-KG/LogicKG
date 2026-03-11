@@ -15,5 +15,6 @@ Only the TreeComm implementation and its direct runtime dependencies are vendore
 ## Local Adaptations
 
 - Rewrote `utils` imports to package-relative imports so the code runs under `vendor.youtu_graphrag`.
+- Replaced upstream `torch` and `sentence_transformers` imports with vendored compatibility modules under `vendor.youtu_graphrag._compat` so TreeComm stays self-contained inside the vendor package.
 - Kept `config.get_config()` optional; LogicKG passes TreeComm parameters from its own settings instead of vendoring the upstream config loader.
 - Relaxed `LLMCompletionCall` initialization so missing API credentials do not break TreeComm clustering paths that never call the LLM naming helpers. `call_api()` still raises if invoked without a configured client.

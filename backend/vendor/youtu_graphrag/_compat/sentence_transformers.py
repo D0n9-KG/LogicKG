@@ -47,3 +47,4 @@ class SentenceTransformer:
         if single_input:
             return np.asarray(embeddings[0], dtype=float)
         return np.asarray(embeddings, dtype=float)
+

@@ -6,11 +6,11 @@ from typing import Dict, List
 import json_repair
 import numpy as np
 import scipy.sparse as sp
-import torch
-from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 
+from .._compat import torch
+from .._compat.sentence_transformers import SentenceTransformer
 from . import call_llm_api
 from .logger import logger
 
