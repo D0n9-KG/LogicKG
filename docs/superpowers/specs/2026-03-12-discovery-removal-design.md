@@ -27,7 +27,7 @@ The final product should have no active discovery workflow, no discovery managem
 - frontend navigation, workbench shortcuts, overview statistics, and config-center panels
 - Neo4j persistence for `KnowledgeGap`, `ResearchQuestion`, `ResearchQuestionCandidate`, `FeedbackRecord`, and `KnowledgeGapSeed`
 - local artifacts such as `storage/discovery/prompt_policy_bandit.json`
-- persisted task records in `backend/storage/tasks/*.json`
+- persisted task records in task storage resolved through the existing task-storage helpers
 
 This means discovery removal is not only a UI deletion. It is a runtime, data, and storage cleanup effort.
 
@@ -83,6 +83,7 @@ The cleanup must:
 - avoid startup-time side effects
 - avoid depending on the frontend
 - produce structured output so cleanup can be verified
+- define how partial failures are reported across graph, filesystem, config, and task cleanup
 
 ### 3. Historical traces are deleted, not merely hidden
 
@@ -177,7 +178,7 @@ Recommended interface:
 
 - `cleanup_legacy_discovery_artifacts(progress: ProgressFn | None = None, log: LogFn | None = None) -> dict[str, Any]`
 
-A thin operator-facing command or script should call this function directly.
+A thin operator-facing script at `backend/scripts/cleanup_discovery.py` should call this function directly.
 
 ### Responsibilities
 
@@ -204,18 +205,20 @@ Graph cleanup must report counts for deleted nodes and dropped schema objects.
 
 Delete discovery-owned local files if present:
 
-- `storage/discovery/`
+- the discovery directory under the active backend storage root resolved from `_storage_dir()` / `settings.storage_dir`
 - prompt-policy JSON files
 - any other discovery-only local artifact directory created by the removed module
 
 Filesystem cleanup must tolerate missing paths.
+
+Cleanup must resolve paths through existing storage helpers instead of hard-coded repository-relative strings, so customized storage roots remain supported.
 
 #### 3. Stored config and task history
 
 Cleanup must also purge local operational residue:
 
 - load and resave config-center profile data without `modules.discovery`
-- delete task JSON files whose stored `type` is `discovery_batch`
+- delete task JSON files from the active task-storage directory whose stored `type` is `discovery_batch`
 
 Task-history cleanup should inspect raw JSON file contents, not filenames, so the purge remains correct even if task IDs are arbitrary.
 
@@ -232,6 +235,14 @@ The cleanup path should:
 - be callable without the frontend
 - return structured counts for graph, schema, config, task, and filesystem cleanup
 - remain safe if re-run after a partial cleanup
+
+Failure contract:
+
+- the cleanup should attempt every cleanup surface even if an earlier surface fails
+- each surface should report its own `status`, counts, and error text when applicable
+- the top-level result should set `ok = false` if any surface fails
+- the operator-facing script should exit non-zero when `ok = false`
+- tests should assert both the per-surface reporting and the non-zero overall failure outcome for partial-cleanup scenarios
 
 ### No automatic rebuild after cleanup
 
@@ -327,6 +338,7 @@ The cleanup tests should cover:
 - removing `modules.discovery` from stored config
 - deleting `discovery_batch` task files from task storage
 - deleting `storage/discovery` artifacts when present
+- reporting partial-cleanup failures without aborting the remaining cleanup surfaces
 
 ## Documentation Boundary
 
@@ -362,7 +374,7 @@ The removal is successful when all of the following are true:
 - `/discovery` redirects to `/ops`
 - Neo4j contains no `KnowledgeGap`, `ResearchQuestion`, `ResearchQuestionCandidate`, `FeedbackRecord`, or `KnowledgeGapSeed` nodes
 - discovery-owned constraints and indexes are gone
-- `backend/storage/tasks/` contains no persisted `discovery_batch` records
-- `storage/discovery/` and discovery prompt-policy artifacts are gone
+- the active task-storage directory contains no persisted `discovery_batch` records
+- the active backend storage root contains no discovery prompt-policy artifacts or discovery-only storage directories
 - backend and frontend test suites pass after the discovery references are removed
-- a repo-wide grep over live code paths finds no remaining discovery references outside archived docs/specs, worktrees, and generated storage
+- allowlisted grep checks over live code paths find no remaining references to discovery-owned identifiers such as `app.discovery`, `TaskType.discovery_batch`, `handle_discovery_batch`, `modules.discovery`, `discovery_prompt_policy_path`, `upsert_discovery_graph`, and frontend `/discovery` route usage, while intentionally ignoring unrelated names like `citation_discovery`
