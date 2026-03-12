@@ -334,6 +334,9 @@ Required updates include:
   - assert overview stats using only still-live data
 - `frontend/tests/workspaceData.test.ts`
   - remove discovery-backed cache expectations
+- frontend router coverage
+  - assert that `/discovery` redirects to `/ops`
+  - assert there is no remaining discovery page rendering path
 
 ### Add focused cleanup coverage
 
@@ -387,4 +390,5 @@ The removal is successful when all of the following are true:
 - the active backend storage root contains no discovery prompt-policy artifacts or discovery-only storage directories
 - any legacy prompt-policy file resolved from the old `discovery_prompt_policy_path` semantics is gone
 - backend and frontend test suites pass after the discovery references are removed
-- allowlisted grep checks over live code paths find no remaining references to discovery-owned identifiers such as `app.discovery`, `TaskType.discovery_batch`, `handle_discovery_batch`, `modules.discovery`, `discovery_prompt_policy_path`, `upsert_discovery_graph`, and frontend `/discovery` route usage, while intentionally ignoring unrelated names like `citation_discovery`
+- allowlisted grep checks over live code paths find no remaining references to discovery-owned identifiers such as `app.discovery`, `TaskType.discovery_batch`, `handle_discovery_batch`, `modules.discovery`, `discovery_prompt_policy_path`, and `upsert_discovery_graph`
+- frontend `/discovery` usage is reduced to exactly one intentional router redirect entry to `/ops`, with no remaining discovery page/component wiring, while intentionally ignoring unrelated names like `citation_discovery`
