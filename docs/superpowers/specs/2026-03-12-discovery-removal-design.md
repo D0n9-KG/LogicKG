@@ -26,7 +26,7 @@ The final product should have no active discovery workflow, no discovery managem
 - frontend route and page in `frontend/src/pages/DiscoveryPage.tsx`
 - frontend navigation, workbench shortcuts, overview statistics, and config-center panels
 - Neo4j persistence for `KnowledgeGap`, `ResearchQuestion`, `ResearchQuestionCandidate`, `FeedbackRecord`, and `KnowledgeGapSeed`
-- local artifacts such as `storage/discovery/prompt_policy_bandit.json`
+- local artifacts such as discovery prompt-policy files under the active backend storage root
 - persisted task records in task storage resolved through the existing task-storage helpers
 
 This means discovery removal is not only a UI deletion. It is a runtime, data, and storage cleanup effort.
@@ -92,7 +92,7 @@ The approved scope includes local operational residue, not only graph nodes.
 That means cleanup must also remove:
 
 - `modules.discovery` from stored config-center profiles
-- `discovery_batch` task JSON records under `backend/storage/tasks/`
+- `discovery_batch` task JSON records from the active task-storage directory
 - local discovery prompt-policy files or directories
 
 ### 4. `/discovery` should redirect, not disappear abruptly
@@ -337,7 +337,7 @@ The cleanup tests should cover:
 - succeeding when graph data is already absent
 - removing `modules.discovery` from stored config
 - deleting `discovery_batch` task files from task storage
-- deleting `storage/discovery` artifacts when present
+- deleting discovery artifacts from the active backend storage root when present
 - reporting partial-cleanup failures without aborting the remaining cleanup surfaces
 
 ## Documentation Boundary
