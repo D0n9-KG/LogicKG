@@ -45,6 +45,7 @@ This means discovery removal is not only a UI deletion. It is a runtime, data, a
 - delete the frontend discovery page, navigation, overview summary, and config-center panel
 - redirect the frontend `/discovery` route to `/ops`
 - delete discovery-specific evaluation utilities and metrics tests
+- preserve non-discovery evaluation tooling when removing discovery-only metrics/helpers
 - remove or rewrite tests that still expect discovery behavior
 - update active product-facing docs and labels so discovery is not presented as a current capability
 
@@ -125,7 +126,7 @@ Remove the runtime discovery package and its direct integrations:
 - `backend/app/main.py` imports and router registration
 - `backend/app/tasks/handlers.py` discovery handler and imports
 - `backend/app/tasks/models.py` `TaskType.discovery_batch`
-- discovery-specific evaluation helpers such as `eval_quality.py`, `backend/eval_quality.py`, and discovery-only metrics code they expose
+- discovery-only evaluation helpers and metrics code, including `backend/eval_quality.py` when it becomes unused and discovery-specific functions or entry points inside shared scripts such as `eval_quality.py`
 
 After this change:
 
@@ -212,6 +213,13 @@ Delete discovery-owned local files if present:
 Filesystem cleanup must tolerate missing paths.
 
 Cleanup must resolve paths through existing storage helpers instead of hard-coded repository-relative strings, so customized storage roots remain supported.
+
+Cleanup must also resolve the legacy prompt-policy file using the old `discovery_prompt_policy_path` semantics before that setting is removed:
+
+- if the legacy value is absolute, delete that absolute file when present
+- if the legacy value is relative, resolve it the same way the old discovery module did and delete that file when present
+
+This legacy-path cleanup is required in addition to cleaning the active backend storage root, so idempotent cleanup still works for customized historical policy locations.
 
 #### 3. Stored config and task history
 
@@ -338,6 +346,7 @@ The cleanup tests should cover:
 - removing `modules.discovery` from stored config
 - deleting `discovery_batch` task files from task storage
 - deleting discovery artifacts from the active backend storage root when present
+- deleting legacy prompt-policy files resolved from old relative and absolute `discovery_prompt_policy_path` values
 - reporting partial-cleanup failures without aborting the remaining cleanup surfaces
 
 ## Documentation Boundary
@@ -376,5 +385,6 @@ The removal is successful when all of the following are true:
 - discovery-owned constraints and indexes are gone
 - the active task-storage directory contains no persisted `discovery_batch` records
 - the active backend storage root contains no discovery prompt-policy artifacts or discovery-only storage directories
+- any legacy prompt-policy file resolved from the old `discovery_prompt_policy_path` semantics is gone
 - backend and frontend test suites pass after the discovery references are removed
 - allowlisted grep checks over live code paths find no remaining references to discovery-owned identifiers such as `app.discovery`, `TaskType.discovery_batch`, `handle_discovery_batch`, `modules.discovery`, `discovery_prompt_policy_path`, `upsert_discovery_graph`, and frontend `/discovery` route usage, while intentionally ignoring unrelated names like `citation_discovery`
