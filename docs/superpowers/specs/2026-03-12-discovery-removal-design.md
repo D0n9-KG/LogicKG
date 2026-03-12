@@ -44,6 +44,7 @@ This means discovery removal is not only a UI deletion. It is a runtime, data, a
 - delete local discovery artifacts, including prompt policy files and task records
 - delete the frontend discovery page, navigation, overview summary, and config-center panel
 - redirect the frontend `/discovery` route to `/ops`
+- delete discovery-specific evaluation utilities and metrics tests
 - remove or rewrite tests that still expect discovery behavior
 - update active product-facing docs and labels so discovery is not presented as a current capability
 
@@ -123,6 +124,7 @@ Remove the runtime discovery package and its direct integrations:
 - `backend/app/main.py` imports and router registration
 - `backend/app/tasks/handlers.py` discovery handler and imports
 - `backend/app/tasks/models.py` `TaskType.discovery_batch`
+- discovery-specific evaluation helpers such as `eval_quality.py`, `backend/eval_quality.py`, and discovery-only metrics code they expose
 
 After this change:
 
@@ -171,6 +173,12 @@ Recommended placement:
 
 This follows existing repository structure without inventing a new migration framework.
 
+Recommended interface:
+
+- `cleanup_legacy_discovery_artifacts(progress: ProgressFn | None = None, log: LogFn | None = None) -> dict[str, Any]`
+
+A thin operator-facing command or script should call this function directly.
+
 ### Responsibilities
 
 The cleanup unit should remove discovery residues from three places:
@@ -209,11 +217,15 @@ Cleanup must also purge local operational residue:
 - load and resave config-center profile data without `modules.discovery`
 - delete task JSON files whose stored `type` is `discovery_batch`
 
-Task-history cleanup should inspect file contents, not filenames, so the purge remains correct even if task IDs are arbitrary.
+Task-history cleanup should inspect raw JSON file contents, not filenames, so the purge remains correct even if task IDs are arbitrary.
+
+It must not depend on `TaskRecord.from_dict()` or `TaskType.discovery_batch`, because the enum entry is being removed as part of the same migration.
 
 ### Invocation model
 
 Cleanup should be run explicitly through an operator/developer maintenance command or script. It must not run automatically on app startup.
+
+The cleanup entrypoint must not use the persisted task system. It should run directly as a synchronous maintenance command or script invocation, so it does not create fresh task records while purging old `discovery_batch` records.
 
 The cleanup path should:
 
@@ -240,6 +252,7 @@ Delete discovery-specific frontend files and integrations:
 
 - `frontend/src/pages/DiscoveryPage.tsx`
 - `frontend/src/pages/discovery.css`
+- discovery API critical-path references in `frontend/src/api.ts`
 - discovery route entry in `frontend/src/App.tsx`
 - discovery navigation item in `frontend/src/components/TopBar.tsx`
 - discovery shortcut button in the workbench shell
@@ -283,6 +296,7 @@ Examples include:
 
 - backend tests named `test_discovery_*`
 - frontend tests that mock `/discovery/candidates`
+- discovery-only evaluation tests such as `backend/tests/test_eval_discovery_metrics.py`
 
 ### Rewrite affected non-discovery tests
 
@@ -318,6 +332,11 @@ The cleanup tests should cover:
 
 Update active product-facing copy and docs so discovery is not described as a current feature.
 
+At minimum, update:
+
+- `README.md`
+- `TECHNICAL_OVERVIEW.zh-CN.md`
+
 Do not rewrite archived historical records such as old plan/spec files that mention discovery as part of past migration work. Those documents can remain as historical artifacts.
 
 ## Rollout Order
@@ -346,3 +365,4 @@ The removal is successful when all of the following are true:
 - `backend/storage/tasks/` contains no persisted `discovery_batch` records
 - `storage/discovery/` and discovery prompt-policy artifacts are gone
 - backend and frontend test suites pass after the discovery references are removed
+- a repo-wide grep over live code paths finds no remaining discovery references outside archived docs/specs, worktrees, and generated storage
