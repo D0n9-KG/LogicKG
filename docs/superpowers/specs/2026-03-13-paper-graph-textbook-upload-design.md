@@ -105,17 +105,21 @@ To make that reliable, recursive detection should use a subtree-count rule rathe
 For each directory under the upload root:
 
 - compute how many Markdown files exist in its full subtree
-- a directory is a textbook unit root when its subtree contains exactly one Markdown file and its parent subtree does not also qualify as the same single-textbook unit boundary
-- the only Markdown file in that subtree is the textbook main file
-- every file in that subtree belongs to that textbook unit
+- a directory qualifies as a textbook unit candidate when its subtree contains exactly one Markdown file
+- among nested qualifying candidates for the same Markdown file, choose the highest qualifying directory before the next ancestor subtree count becomes greater than `1`
+- the only Markdown file in that chosen subtree is the textbook main file
+- every file in that chosen subtree belongs to that textbook unit
 
 Practical effect:
 
 - nested image folders remain attached to the textbook
 - a large root folder containing many textbook subfolders gets split into multiple textbook units
 - a root folder with only one textbook in it can still be treated as a single textbook import
+- sibling asset folders stay attached to the same textbook unit as long as they live under the chosen one-Markdown subtree
 
 Directories with zero Markdown files are ignored. Directories whose subtree contains multiple Markdown files are not textbook units in v1 and should continue descending until smaller valid units are found.
+
+This rule is intentionally specific because it is the main thing that determines whether a large nested upload tree is split correctly.
 
 ### 4. Textbook identity must not depend on hand-entered authors
 
@@ -436,12 +440,14 @@ Commit behavior:
 
 1. load the upload session
 2. iterate through `ready` units that are not skipped
-3. ingest one textbook at a time through the existing textbook pipeline
+3. ingest one textbook at a time through the existing single-textbook pipeline, passing the staged main Markdown plus inferred metadata
 4. record per-unit results
 5. keep going on single-unit failure
 6. return a structured batch summary
 
 The task result should make partial success explicit.
+
+The batch upload flow must reuse the existing textbook ingestion pipeline rather than introducing a second graph-import implementation path.
 
 ## Paper graph preview model
 
@@ -532,4 +538,3 @@ The following decisions are now fixed and should not be reopened during implemen
 - each textbook unit in v1 assumes one main Markdown file
 - the paper detail graph should use a right-side fixed detail card
 - the paper detail graph visual direction should follow the `B` clustered-island look, but with enough layout constraints to prevent overlap
-
