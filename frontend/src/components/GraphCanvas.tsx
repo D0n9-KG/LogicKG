@@ -1,10 +1,12 @@
 import cytoscape from 'cytoscape'
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n, type UILocale } from '../i18n'
+import { loadOverviewCommunity3DGraph } from '../loaders/overview'
 import { paperRefForAskScope } from '../paperRefs'
 import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNode } from '../state/types'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
+import { limitGraphElementsForDisplay } from './graphDisplaySafety'
 import { syncGraphElements } from './graphCanvasSync'
 import { resolveGraphCanvasViewState } from './graphCanvasViewState'
 import { resolveGraphRenderPlan } from './graphRenderPlan'
@@ -1438,6 +1440,8 @@ export default function GraphCanvas({
   const [miniMap, setMiniMap] = useState<MiniMapSnapshot | null>(null)
   const [timelineViewport, setTimelineViewport] = useState<TimelineViewport | null>(null)
   const [cyReadyToken, setCyReadyToken] = useState(0)
+  const [overview3dElements, setOverview3dElements] = useState<GraphElement[]>([])
+  const [community3DRefreshKey, setCommunity3DRefreshKey] = useState(0)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
@@ -1447,6 +1451,12 @@ export default function GraphCanvas({
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode
   }, [onSelectNode])
+
+  useEffect(() => {
+    const handler = () => setCommunity3DRefreshKey((k) => k + 1)
+    window.addEventListener('overview-community-3d-invalidate', handler)
+    return () => window.removeEventListener('overview-community-3d-invalidate', handler)
+  }, [])
 
   const graphCanvasViewState = resolveGraphCanvasViewState({
     activeModule,
@@ -1470,6 +1480,31 @@ export default function GraphCanvas({
       return () => window.clearTimeout(timer)
     }
   }, [effectivePlacementMode])
+
+  useEffect(() => {
+    if (activeModule !== 'overview' || !show3D) {
+      const timer = window.setTimeout(() => setOverview3dElements([]), 0)
+      return () => window.clearTimeout(timer)
+    }
+
+    let cancelled = false
+    void loadOverviewCommunity3DGraph({
+      communityLimit: 18,
+      memberLimitPerCommunity: 6,
+      maxNodes: 160,
+      maxEdges: 240,
+    })
+      .then((graph) => {
+        if (!cancelled) setOverview3dElements(graph)
+      })
+      .catch(() => {
+        if (!cancelled) setOverview3dElements([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeModule, show3D, community3DRefreshKey])
 
   const availableKinds = useMemo(() => {
     const set = new Set<string>()
@@ -1515,6 +1550,31 @@ export default function GraphCanvas({
     return [...visibleNodes, ...visibleEdges]
   }, [elements, hiddenKinds])
 
+  const safeDisplayElements = useMemo(() => {
+    const maxNodes =
+      activeModule === 'overview'
+        ? 260
+        : activeModule === 'papers'
+          ? 220
+          : activeModule === 'textbooks'
+            ? 220
+            : 240
+    const maxEdges =
+      activeModule === 'overview'
+        ? 190
+        : activeModule === 'papers'
+          ? 180
+          : activeModule === 'textbooks'
+            ? 180
+            : 220
+    return limitGraphElementsForDisplay(filteredElements, {
+      activeModule,
+      selectedNodeId: selectedNode?.id ?? null,
+      maxNodes,
+      maxEdges,
+    })
+  }, [activeModule, filteredElements, selectedNode?.id])
+
   useEffect(() => {
     if (!hiddenKinds.length) return
     const hasVisibleNodes = filteredElements.some((el) => el.group === 'nodes')
@@ -1532,8 +1592,8 @@ export default function GraphCanvas({
       : undefined
 
   const preparedGraph = useMemo((): PreparedGraph => {
-    const nodeElements = filteredElements.filter((el) => el.group === 'nodes').map((el) => el.data as GraphNodeData)
-    const rawEdges = filteredElements.filter((el) => el.group === 'edges').map((el) => ({ ...(el.data as GraphEdgeData) } satisfies InternalEdge))
+    const nodeElements = safeDisplayElements.filter((el) => el.group === 'nodes').map((el) => el.data as GraphNodeData)
+    const rawEdges = safeDisplayElements.filter((el) => el.group === 'edges').map((el) => ({ ...(el.data as GraphEdgeData) } satisfies InternalEdge))
     const nodeMap = new Map(nodeElements.map((n) => [n.id, n]))
 
     const degreeMap = new Map<string, number>()
@@ -1638,7 +1698,7 @@ export default function GraphCanvas({
       renderedEdgeCount: transformedEdges.length,
       layoutMeta: layoutPack.meta,
     }
-  }, [effectivePlacementMode, filteredElements, locale, selectedBackboneId, t])
+  }, [effectivePlacementMode, locale, safeDisplayElements, selectedBackboneId, t])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -1766,7 +1826,7 @@ export default function GraphCanvas({
     node.select()
   }, [selectedNodeId, preparedGraph.renderedEdgeCount])
 
-  const visibleNodeCount = filteredElements.filter((el) => el.group === 'nodes').length
+  const visibleNodeCount = safeDisplayElements.filter((el) => el.group === 'nodes').length
 
   useEffect(() => {
     const cy = cyRef.current
@@ -2038,7 +2098,7 @@ export default function GraphCanvas({
               </div>
             )}
           >
-            <Graph3D elements={filteredElements} onSelectNode={onSelectNode} transitioning={transitioning} />
+            <Graph3D elements={overview3dElements.length ? overview3dElements : safeDisplayElements} onSelectNode={onSelectNode} transitioning={transitioning} />
           </Suspense>
         </div>
       )}

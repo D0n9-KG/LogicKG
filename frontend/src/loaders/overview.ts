@@ -22,6 +22,29 @@ type NetworkEdge = {
 }
 
 type NetworkResponse = { nodes: NetworkNode[]; edges: NetworkEdge[] }
+type OverviewCommunityNode = {
+  id: string
+  label?: string
+  kind?: string
+  description?: string
+  cluster_key?: string
+  community_id?: string
+  paper_id?: string
+  chapter_id?: string
+}
+
+type OverviewCommunityEdge = {
+  id: string
+  source: string
+  target: string
+  kind?: string
+  weight?: number
+}
+
+type OverviewCommunityResponse = {
+  nodes?: OverviewCommunityNode[]
+  edges?: OverviewCommunityEdge[]
+}
 type TextbookListResponse = {
   textbooks?: Array<{
     textbook_id?: string
@@ -31,11 +54,22 @@ type TextbookListResponse = {
 
 const overviewGraphCache = new Map<string, GraphElement[]>()
 const overviewGraphPending = new Map<string, Promise<GraphElement[]>>()
+const overviewCommunity3DGraphCache = new Map<string, GraphElement[]>()
+const overviewCommunity3DGraphPending = new Map<string, Promise<GraphElement[]>>()
 const OVERVIEW_TEXTBOOK_LIMIT = 4
 
 export function invalidateOverviewGraphCache() {
   overviewGraphCache.clear()
   overviewGraphPending.clear()
+  overviewCommunity3DGraphCache.clear()
+  overviewCommunity3DGraphPending.clear()
+  window.dispatchEvent(new CustomEvent('overview-community-3d-invalidate'))
+}
+
+export function invalidateOverviewCommunity3DGraphCache() {
+  overviewCommunity3DGraphCache.clear()
+  overviewCommunity3DGraphPending.clear()
+  window.dispatchEvent(new CustomEvent('overview-community-3d-invalidate'))
 }
 
 export async function loadOverviewGraph(
@@ -132,5 +166,89 @@ export async function loadOverviewGraph(
     })
 
   overviewGraphPending.set(cacheKey, request)
+  return request
+}
+
+export async function loadOverviewCommunity3DGraph(options: {
+  communityLimit?: number
+  memberLimitPerCommunity?: number
+  maxNodes?: number
+  maxEdges?: number
+  force?: boolean
+} = {}): Promise<GraphElement[]> {
+  const communityLimit = Math.max(1, Math.min(80, Math.round(options.communityLimit ?? 18)))
+  const memberLimitPerCommunity = Math.max(1, Math.min(24, Math.round(options.memberLimitPerCommunity ?? 6)))
+  const maxNodes = Math.max(8, Math.min(800, Math.round(options.maxNodes ?? 160)))
+  const maxEdges = Math.max(8, Math.min(1600, Math.round(options.maxEdges ?? 240)))
+  const cacheKey = `${communityLimit}:${memberLimitPerCommunity}:${maxNodes}:${maxEdges}`
+
+  if (options.force) {
+    overviewCommunity3DGraphCache.delete(cacheKey)
+    overviewCommunity3DGraphPending.delete(cacheKey)
+  }
+
+  const cached = overviewCommunity3DGraphCache.get(cacheKey)
+  if (cached) return cached
+
+  const pending = overviewCommunity3DGraphPending.get(cacheKey)
+  if (pending) return pending
+
+  const qs = new URLSearchParams({
+    community_limit: String(communityLimit),
+    member_limit_per_community: String(memberLimitPerCommunity),
+    max_nodes: String(maxNodes),
+    max_edges: String(maxEdges),
+  })
+
+  const request = apiGet<OverviewCommunityResponse>(`/community/overview-graph?${qs}`)
+    .then((res) => {
+      const nodeMap = new Map<string, GraphElement>()
+      const edgeMap = new Map<string, GraphElement>()
+
+      for (const node of res.nodes ?? []) {
+        const id = String(node.id ?? '').trim()
+        if (!id) continue
+        nodeMap.set(id, {
+          group: 'nodes',
+          data: {
+            id,
+            label: String(node.label ?? id).trim() || id,
+            description: String(node.description ?? '').trim() || undefined,
+            kind: String(node.kind ?? 'community').trim() || 'community',
+            clusterKey: String(node.cluster_key ?? '').trim() || undefined,
+            communityId: String(node.community_id ?? '').trim() || undefined,
+            paperId: String(node.paper_id ?? '').trim() || undefined,
+            chapterId: String(node.chapter_id ?? '').trim() || undefined,
+          } satisfies GraphNodeData,
+        })
+      }
+
+      for (const edge of res.edges ?? []) {
+        const id = String(edge.id ?? '').trim()
+        const source = String(edge.source ?? '').trim()
+        const target = String(edge.target ?? '').trim()
+        if (!id || !source || !target) continue
+        if (!nodeMap.has(source) || !nodeMap.has(target)) continue
+        edgeMap.set(id, {
+          group: 'edges',
+          data: {
+            id,
+            source,
+            target,
+            kind: String(edge.kind ?? 'contains').trim() || 'contains',
+            weight: Math.min(1, Math.max(0.08, Number(edge.weight ?? 0.5))),
+          } satisfies GraphEdgeData,
+        })
+      }
+
+      const elements = [...nodeMap.values(), ...edgeMap.values()]
+      overviewCommunity3DGraphCache.set(cacheKey, elements)
+      return elements
+    })
+    .finally(() => {
+      overviewCommunity3DGraphPending.delete(cacheKey)
+    })
+
+  overviewCommunity3DGraphPending.set(cacheKey, request)
   return request
 }
