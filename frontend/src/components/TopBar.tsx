@@ -23,7 +23,6 @@ const MODULES: ModuleNavItem[] = [
   { id: 'papers', moduleId: 'papers', label: { zh: '论文', en: 'Papers' }, note: { zh: '引文网络', en: 'Citation Net' } },
   { id: 'ask', moduleId: 'ask', label: { zh: '问答', en: 'Ask' }, note: { zh: '图谱增强问答', en: 'GraphRAG' } },
   { id: 'textbooks', moduleId: 'textbooks', label: { zh: '教材', en: 'Textbooks' }, note: { zh: '知识结构', en: 'Knowledge Base' } },
-  { id: 'discovery', label: { zh: '发现', en: 'Discovery' }, note: { zh: '问题挖掘', en: 'Question Mining' }, href: '/discovery' },
   { id: 'ops', label: { zh: '运维', en: 'Ops' }, note: { zh: '任务与配置', en: 'Tasks & Config' }, href: '/ops' },
 ]
 
@@ -61,21 +60,20 @@ export default function TopBar() {
   const nodeCount = graphElements.filter((e) => e.group === 'nodes').length
   const edgeCount = graphElements.filter((e) => e.group === 'edges').length
 
-  function isActive(m: ModuleNavItem): boolean {
-    if (m.href) return location.pathname === m.href || location.pathname.startsWith(`${m.href}/`)
-    return activeModule === m.moduleId
+  function isActive(item: ModuleNavItem): boolean {
+    if (item.href) return location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
+    return activeModule === item.moduleId
   }
 
-  function handleClick(m: ModuleNavItem) {
-    if (m.href) {
-      nav(m.href)
+  function handleClick(item: ModuleNavItem) {
+    if (item.href) {
+      nav(item.href)
       return
     }
 
-    if (m.moduleId) {
-      if (location.pathname !== '/') nav('/')
-      if (activeModule !== m.moduleId) switchModule(m.moduleId)
-    }
+    if (!item.moduleId) return
+    if (location.pathname !== '/') nav('/')
+    if (activeModule !== item.moduleId) switchModule(item.moduleId)
   }
 
   return (
@@ -83,8 +81,8 @@ export default function TopBar() {
       <a
         className="kgBrand"
         href="/"
-        onClick={(e) => {
-          e.preventDefault()
+        onClick={(event) => {
+          event.preventDefault()
           nav('/')
           if (activeModule !== 'overview') switchModule('overview')
         }}
@@ -97,15 +95,15 @@ export default function TopBar() {
       </a>
 
       <nav className="kgModuleNav" aria-label={t('模块导航', 'Module Navigation')}>
-        {MODULES.map((m) => (
+        {MODULES.map((item) => (
           <button
-            key={m.id}
+            key={item.id}
             type="button"
-            className={`kgModuleBtn${isActive(m) ? ' is-active' : ''}`}
-            onClick={() => handleClick(m)}
+            className={`kgModuleBtn${isActive(item) ? ' is-active' : ''}`}
+            onClick={() => handleClick(item)}
           >
-            <span>{t(m.label.zh, m.label.en)}</span>
-            <small>{t(m.note.zh, m.note.en)}</small>
+            <span>{t(item.label.zh, item.label.en)}</span>
+            <small>{t(item.note.zh, item.note.en)}</small>
           </button>
         ))}
       </nav>

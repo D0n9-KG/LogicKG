@@ -3,12 +3,21 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from app.crossref.client import CrossrefClient, CrossrefResolveResult
 from app.graph.neo4j_client import paper_id_for_md_path
 from app.ingest.models import DocumentIR, ReferenceEntry
 
 logger = logging.getLogger(__name__)
+
+
+def _crossref_workers(crossref: CrossrefClient, item_count: int) -> int:
+    try:
+        workers = int(crossref.recommended_workers())
+    except Exception:  # noqa: BLE001
+        workers = 1
+    return max(1, min(workers, max(1, int(item_count))))
 
 
 def build_reference_and_cite_records(
@@ -49,7 +58,7 @@ def build_reference_and_cite_records(
     cites_resolved_by_doi: dict[str, dict] = {}
     cites_unresolved: list[dict] = []
 
-    for ref_num, ref in sorted(ref_by_num.items(), key=lambda x: x[0]):
+    def _resolve_one(ref_num: int, ref: ReferenceEntry) -> tuple[int, dict]:
         crossref_error: str | None = None
         try:
             resolve = crossref.resolve_reference(ref.raw)
@@ -68,6 +77,33 @@ def build_reference_and_cite_records(
             payload["error"] = crossref_error
             crossref_json = json.dumps(payload, ensure_ascii=False)
 
+        return ref_num, {
+            "selected": selected,
+            "confidence": resolve.confidence,
+            "crossref_json": crossref_json,
+            "crossref_error": crossref_error,
+        }
+
+    ref_items = sorted(ref_by_num.items(), key=lambda x: x[0])
+    resolved_refs: dict[int, dict] = {}
+    workers = _crossref_workers(crossref, len(ref_items))
+    if workers == 1 or len(ref_items) <= 1:
+        for ref_num, ref in ref_items:
+            resolved_ref_num, payload = _resolve_one(ref_num, ref)
+            resolved_refs[resolved_ref_num] = payload
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_resolve_one, ref_num, ref) for ref_num, ref in ref_items]
+            for future in futures:
+                resolved_ref_num, payload = future.result()
+                resolved_refs[resolved_ref_num] = payload
+
+    for ref_num, ref in ref_items:
+        resolved = resolved_refs[ref_num]
+        selected = resolved["selected"]
+        crossref_json = str(resolved["crossref_json"])
+        crossref_error = resolved["crossref_error"]
+
         ref_id = f"{paper_id}:{ref_num}"
         refs_out.append(
             {
@@ -76,7 +112,7 @@ def build_reference_and_cite_records(
                 "ref_num": ref_num,
                 "raw": ref.raw,
                 "resolved_doi": selected.doi if selected else None,
-                "resolve_confidence": resolve.confidence,
+                "resolve_confidence": resolved["confidence"],
                 "crossref_json": crossref_json,
                 "crossref_error": crossref_error,
                 "resolved_title": selected.title if selected else None,
@@ -96,7 +132,7 @@ def build_reference_and_cite_records(
             evidence_chunk_ids.append(e.chunk_id)
             evidence_spans.append(f"{e.span.start_line}-{e.span.end_line}")
 
-        if selected and selected.doi and resolve.confidence >= crossref_confidence_threshold:
+        if selected and selected.doi and float(resolved["confidence"]) >= crossref_confidence_threshold:
             doi = selected.doi.lower()
             cited_paper_id = f"doi:{doi}"
             cited_papers_out.setdefault(

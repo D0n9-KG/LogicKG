@@ -307,6 +307,27 @@
   min-height: 92px;
 }
 
+.cc-worker-list {
+  display: grid;
+  gap: 14px;
+}
+
+.cc-worker-card {
+  border: 1px solid rgba(123, 150, 208, 0.28);
+  border-radius: 14px;
+  background: rgba(10, 20, 38, 0.42);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.cc-worker-cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 @media (max-width: 1320px) {
   .cc-layout {
     grid-template-columns: minmax(0, 1fr);

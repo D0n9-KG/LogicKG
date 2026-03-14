@@ -12,11 +12,11 @@ from app.api.routers.papers import router as papers_router
 from app.api.routers.paper_edits import router as paper_edits_router
 from app.api.routers.schema import router as schema_router
 from app.api.routers.collections import router as collections_router
-from app.api.routers.discovery import router as discovery_router
 from app.api.routers.config_center import router as config_center_router
 from app.api.routers.community import router as community_router
 from app.api.routers.fusion import router as fusion_router
 from app.api.routers.textbooks import router as textbooks_router
+from app.ops_config_store import apply_profile_to_settings
 
 from app.tasks.handlers import (
     handle_delete_papers_batch,
@@ -24,8 +24,8 @@ from app.tasks.handlers import (
     handle_cleanup_legacy_propositions,
     handle_ingest_path,
     handle_ingest_textbook,
+    handle_ingest_textbook_upload_ready,
     handle_ingest_upload_ready,
-    handle_discovery_batch,
     handle_rebuild_all,
     handle_rebuild_fusion,
     handle_rebuild_global_communities,
@@ -42,6 +42,7 @@ from app.tasks.models import TaskType
 def register_task_handlers(manager: TaskManager) -> None:
     manager.register(TaskType.ingest_path, handle_ingest_path)
     manager.register(TaskType.ingest_upload_ready, handle_ingest_upload_ready)
+    manager.register(TaskType.ingest_textbook_upload_ready, handle_ingest_textbook_upload_ready)
     manager.register(TaskType.upload_replace, handle_upload_replace)
     manager.register(TaskType.delete_papers_batch, handle_delete_papers_batch)
     manager.register(TaskType.delete_textbooks_batch, handle_delete_textbooks_batch)
@@ -54,11 +55,11 @@ def register_task_handlers(manager: TaskManager) -> None:
     manager.register(TaskType.rebuild_similarity, handle_rebuild_similarity)
     manager.register(TaskType.update_similarity_paper, handle_update_similarity_paper)
     manager.register(TaskType.ingest_textbook, handle_ingest_textbook)
-    manager.register(TaskType.discovery_batch, handle_discovery_batch)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    apply_profile_to_settings()
     register_task_handlers(task_manager)
     task_manager.start()
     try:
@@ -84,7 +85,6 @@ app.include_router(papers_router)
 app.include_router(paper_edits_router)
 app.include_router(schema_router)
 app.include_router(collections_router)
-app.include_router(discovery_router)
 app.include_router(config_center_router)
 app.include_router(community_router)
 app.include_router(fusion_router)

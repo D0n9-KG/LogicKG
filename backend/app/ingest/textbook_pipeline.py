@@ -20,9 +20,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from app.community.service import rebuild_global_communities
 from app.graph.neo4j_client import Neo4jClient
 from app.ingest.graph_importer import import_youtu_graph
+from app.ingest.textbook_identity import build_textbook_id, infer_textbook_identity
 from app.ingest.textbook_splitter import split_textbook_md
 from app.settings import settings
 
@@ -41,10 +41,8 @@ def _noop_log(line: str) -> None:
 
 
 def _textbook_id(title: str, authors: list[str] | None) -> str:
-    """Deterministic textbook ID from title + authors."""
-    authors_joined = ",".join(sorted(str(a).strip().lower() for a in (authors or []) if str(a).strip()))
-    seed = f"tb:v1\0{(title or '').strip().lower()}\0{authors_joined}"
-    return "tb:" + hashlib.sha256(seed.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    """Backward-compatible wrapper around the shared textbook identity helper."""
+    return build_textbook_id(title, "")
 
 
 def _chapter_id(textbook_id: str, chapter_num: int) -> str:
@@ -186,13 +184,14 @@ def ingest_textbook(
     progress = progress or _noop_progress
     log = log or _noop_log
 
-    title = str(metadata.get("title") or Path(md_path).stem)
+    inferred_identity = infer_textbook_identity(Path(md_path))
+    title = str(metadata.get("title") or inferred_identity.inferred_title)
     authors = metadata.get("authors") or []
     year = metadata.get("year")
     edition = metadata.get("edition")
     doc_type = str(metadata.get("doc_type") or "textbook")
 
-    tb_id = _textbook_id(title, authors)
+    tb_id = build_textbook_id(title, inferred_identity.content_fingerprint)
     log(f"Textbook ID: {tb_id}")
 
     # ── Step 1: Split into chapters ──
@@ -216,8 +215,6 @@ def ingest_textbook(
     total_entities = 0
     total_relations = 0
     chapter_results: list[dict] = []
-    community_rebuild_result: dict[str, Any] = {"communities": 0, "keywords": 0}
-
     try:
         # Single Neo4j connection for the entire ingestion
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
@@ -312,18 +309,7 @@ def ingest_textbook(
                 })
                 log(f"Chapter {ch.chapter_num} done: {entity_count} entities, {relation_count} relations")
 
-        progress("textbook:community_rebuild", 0.95, "Rebuilding global communities after textbook import")
-
-        def _community_progress(stage: str, p: float, msg: str | None = None) -> None:
-            clamped = max(0.0, min(1.0, float(p)))
-            progress(stage, 0.95 + 0.04 * clamped, msg)
-
-        community_rebuild_result = rebuild_global_communities(progress=_community_progress, log=log)
-        log(
-            "Global community rebuild done: "
-            f"{community_rebuild_result.get('communities', 0)} communities, "
-            f"{community_rebuild_result.get('keywords', 0)} keywords"
-        )
+        log("Textbook import finished; global community rebuild remains manual")
 
     finally:
         # Always clean up temp directory
@@ -337,8 +323,8 @@ def ingest_textbook(
         "total_chapters": len(chapters),
         "total_entities": total_entities,
         "total_relations": total_relations,
-        "global_communities": int(community_rebuild_result.get("communities", 0) or 0),
-        "global_keywords": int(community_rebuild_result.get("keywords", 0) or 0),
+        "global_communities": 0,
+        "global_keywords": 0,
         "chapters": chapter_results,
     }
     log(f"Ingestion complete: {json.dumps(summary, ensure_ascii=False)}")

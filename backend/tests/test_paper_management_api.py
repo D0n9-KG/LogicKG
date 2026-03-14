@@ -69,9 +69,10 @@ class _CaptureSession:
         self.last_query = ""
         self.last_params: dict[str, object] = {}
 
-    def run(self, cypher: str, **params):
-        self.last_query = str(cypher)
-        self.last_params = dict(params)
+    def run(self, query: str, parameters: dict[str, object] | None = None, **params):
+        self.last_query = str(query)
+        self.last_params = dict(parameters or {})
+        self.last_params.update(params)
         return []
 
     def __enter__(self):
@@ -103,4 +104,4 @@ def test_list_papers_for_management_query_includes_collections_and_display_title
     assert "[x IN cos WHERE x IS NOT NULL | {collection_id: x.collection_id, name: x.name}] AS collections" in fake_session.last_query
     assert "WHEN trim(coalesce(p.paper_source, '')) <> '' THEN p.paper_source" in fake_session.last_query
     assert "WHEN trim(coalesce(p.doi, '')) <> '' THEN p.doi" not in fake_session.last_query
-    assert fake_session.last_params == {"limit": 50, "query": "attention"}
+    assert fake_session.last_params == {"limit": 50, "search": "attention"}

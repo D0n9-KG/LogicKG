@@ -51,7 +51,7 @@ class UploadStartRequest(BaseModel):
     total_bytes: int | None = Field(default=None, ge=1)
     filename: str | None = None
     files: list[dict] | None = None  # folder mode: [{path,size}]
-    doi_strategy: str = Field(default="extract_only", pattern="^(extract_only|title_crossref)$")
+    doi_strategy: str = Field(default="title_crossref", pattern="^(extract_only|title_crossref)$")
 
 
 @router.post("/upload/start")

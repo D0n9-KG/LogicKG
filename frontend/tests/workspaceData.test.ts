@@ -47,7 +47,6 @@ describe('workspaceData cache', () => {
     let version = 0
     apiGetMock.mockImplementation(async (path: string) => {
       if (path === '/graph/papers?limit=1000') return { papers: Array.from({ length: 2 + version }, (_, idx) => idx) }
-      if (path === '/discovery/candidates') return { candidates: [{ candidate_id: `c-${version}` }] }
       throw new Error(`Unexpected path: ${path}`)
     })
 
@@ -59,8 +58,8 @@ describe('workspaceData cache', () => {
 
     expect(second).toEqual(first)
     expect(third.paperCount).toBe(3)
-    expect(third.discoveryItems[0]?.candidate_id).toBe('c-1')
-    expect(apiGetMock).toHaveBeenCalledTimes(4)
+    expect(third).not.toHaveProperty('discoveryItems')
+    expect(apiGetMock).toHaveBeenCalledTimes(2)
   })
 
   test('keeps textbook list cached between module entries', async () => {

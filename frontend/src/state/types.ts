@@ -21,6 +21,9 @@ export type GraphNodeData = {
   year?: number
   confidence?: number    // 0–1, drives opacity for claims
   paperId?: string
+  paperSource?: string
+  paperTitle?: string
+  stepType?: string
   textbookId?: string
   chapterId?: string
   communityId?: string
@@ -60,6 +63,9 @@ export type SelectedNode = {
   label: string
   description?: string
   paperId?: string
+  paperSource?: string
+  paperTitle?: string
+  stepType?: string
   textbookId?: string
   chapterId?: string
   route?: string

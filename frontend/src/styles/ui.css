@@ -2757,6 +2757,29 @@
   padding-inline: 8px;
 }
 
+.ingestSectionBanner {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(146, 168, 217, 0.2);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(16, 29, 52, 0.72), rgba(9, 17, 31, 0.78)),
+    radial-gradient(circle at 0 0, rgba(99, 230, 255, 0.12), transparent 32%);
+}
+
+.ingestSectionTitle {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 760;
+  color: rgba(246, 251, 255, 0.97);
+}
+
+.ingestSectionSubtitle {
+  font-size: 12.5px;
+  color: rgba(205, 220, 244, 0.8);
+}
+
 .ingestSummaryRow {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2814,6 +2837,14 @@
 .ingestScanPanel,
 .ingestResultPanel {
   margin-top: 14px;
+}
+
+.ingestTextbookPanel {
+  margin-top: 6px;
+}
+
+.ingestTextbookResults .itemCard {
+  border-color: rgba(124, 255, 203, 0.18);
 }
 
 .ingestScanActions {
@@ -2900,6 +2931,124 @@
 
 .paperDetailSummaryValue code {
   font-size: 12px;
+}
+
+.paperGraphWorkbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1.95fr) minmax(300px, 0.72fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.paperGraphStage {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.paperGraphStageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.paperGraphStageTitle {
+  margin-top: 4px;
+  color: rgba(238, 246, 255, 0.94);
+  font-size: 16px;
+  font-weight: 680;
+  letter-spacing: 0.18px;
+}
+
+.paperGraphLegend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.paperGraphLegendChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(146, 168, 217, 0.24);
+  background: rgba(146, 168, 217, 0.1);
+  color: rgba(228, 239, 255, 0.9);
+  font-size: 11.5px;
+}
+
+.paperGraphLegendChip--logic {
+  border-color: rgba(126, 229, 255, 0.34);
+  background: rgba(118, 224, 255, 0.14);
+}
+
+.paperGraphLegendChip--claim {
+  border-color: rgba(221, 176, 255, 0.34);
+  background: rgba(214, 152, 255, 0.14);
+}
+
+.paperGraphLegendChip--citation {
+  border-color: rgba(255, 213, 154, 0.34);
+  background: rgba(245, 190, 127, 0.14);
+}
+
+.paperGraphLegendChip--summary {
+  border-color: rgba(190, 203, 239, 0.3);
+  background: rgba(122, 141, 190, 0.18);
+}
+
+.paperGraphStageHint {
+  color: rgba(184, 207, 238, 0.78);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paperGraphDetailCard {
+  position: sticky;
+  top: 18px;
+  border: 1px solid rgba(146, 168, 217, 0.24);
+  border-radius: 16px;
+  background:
+    linear-gradient(170deg, rgba(15, 27, 50, 0.86), rgba(9, 16, 31, 0.9)),
+    radial-gradient(circle at 100% 0, rgba(118, 224, 255, 0.14), transparent 42%);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  min-height: 500px;
+}
+
+.paperGraphDetailTitle {
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1.14;
+  color: rgba(245, 250, 255, 0.97);
+}
+
+.paperGraphDetailType {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 255, 203, 0.32);
+  background: rgba(124, 255, 203, 0.12);
+  color: rgba(229, 255, 246, 0.92);
+  font-size: 12px;
+}
+
+.paperGraphDetailBody {
+  color: rgba(219, 232, 251, 0.86);
+  line-height: 1.7;
+  min-height: 152px;
+}
+
+.paperGraphDetailActions {
+  margin-top: auto;
 }
 
 .paperDetailLoading .panelBody {
@@ -4649,6 +4798,23 @@
   .ingestSummaryRow,
   .paperDetailSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .paperGraphWorkbench {
+    grid-template-columns: 1fr;
+  }
+
+  .paperGraphDetailCard {
+    position: static;
+    min-height: 0;
+  }
+
+  .paperGraphStageHeader {
+    flex-direction: column;
+  }
+
+  .paperGraphLegend {
+    justify-content: flex-start;
   }
 
   .graphLayout {

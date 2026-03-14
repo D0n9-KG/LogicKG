@@ -1741,6 +1741,9 @@ export default function GraphCanvas({
         label: data.label,
         description: data.description,
         paperId: data.paperId,
+        paperSource: data.paperSource,
+        paperTitle: data.paperTitle,
+        stepType: data.stepType,
         textbookId: data.textbookId,
         chapterId: data.chapterId,
       })

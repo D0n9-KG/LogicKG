@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
   invalidateOverviewStatsCache,
@@ -30,6 +30,16 @@ function pruneSelection(selection: Record<string, boolean>, validIds: Set<string
   const next: Record<string, boolean> = {}
   for (const [id, selected] of Object.entries(selection)) {
     if (selected && validIds.has(id)) next[id] = true
+  }
+  return next
+}
+
+function updateSelectionForIds(selection: Record<string, boolean>, ids: string[], checked: boolean) {
+  const next = { ...selection }
+  for (const id of ids) {
+    if (!id) continue
+    if (checked) next[id] = true
+    else delete next[id]
   }
   return next
 }
@@ -72,6 +82,19 @@ function taskSummary(task: DeleteTaskRecord | null) {
   }
 }
 
+function failedTaskReasons(task: DeleteTaskRecord | null) {
+  const items = Array.isArray(task?.result?.items) ? task.result.items : []
+  const reasons = items
+    .map((item) => ({
+      status: String(item.status ?? ''),
+      reason: String(item.reason ?? item.id ?? '').trim(),
+    }))
+    .filter((item) => item.status === 'failed' && item.reason)
+    .map((item) => item.reason)
+
+  return Array.from(new Set(reasons))
+}
+
 function deletedIdsFromTask(task: DeleteTaskRecord, fallbackIds: string[]) {
   const items = Array.isArray(task.result?.items) ? task.result.items : []
   const deletedIds = items
@@ -86,6 +109,13 @@ function deletedIdsFromTask(task: DeleteTaskRecord, fallbackIds: string[]) {
   return Number(task.result?.deleted_count ?? 0) > 0 ? fallbackIds : []
 }
 
+type ManagementLoadResult = {
+  papers: PaperManagementRow[] | null
+  textbooks: TextbookRow[] | null
+  paperError: string
+  textbookError: string
+}
+
 export default function ImportedSourceManagement() {
   const { state, dispatch } = useGlobalState()
   const { t } = useI18n()
@@ -98,26 +128,40 @@ export default function ImportedSourceManagement() {
   const [textbookTask, setTextbookTask] = useState<DeleteTaskRecord | null>(null)
   const [paperError, setPaperError] = useState('')
   const [textbookError, setTextbookError] = useState('')
+  const [showMetadataOnly, setShowMetadataOnly] = useState(false)
   const [loading, setLoading] = useState(true)
+  const paperSelectAllRef = useRef<HTMLInputElement | null>(null)
+  const textbookSelectAllRef = useRef<HTMLInputElement | null>(null)
 
-  const loadManagementData = useCallback(async () => {
-    const [papers, textbooks] = await Promise.all([
+  const loadManagementData = useCallback(async (): Promise<ManagementLoadResult> => {
+    const [papersResult, textbooksResult] = await Promise.allSettled([
       loadPaperManagementRows(),
       loadTextbookManagementRows(),
     ])
-    return { papers, textbooks }
+
+    return {
+      papers: papersResult.status === 'fulfilled' ? papersResult.value : null,
+      textbooks: textbooksResult.status === 'fulfilled' ? textbooksResult.value : null,
+      paperError:
+        papersResult.status === 'rejected'
+          ? String((papersResult.reason as { message?: unknown })?.message ?? papersResult.reason)
+          : '',
+      textbookError:
+        textbooksResult.status === 'rejected'
+          ? String((textbooksResult.reason as { message?: unknown })?.message ?? textbooksResult.reason)
+          : '',
+    }
   }, [])
 
   useEffect(() => {
     let cancelled = false
     loadManagementData()
-      .then(({ papers, textbooks }) => {
+      .then(({ papers, textbooks, paperError, textbookError }) => {
         if (cancelled) return
-        setPaperRows(papers)
-        setTextbookRows(textbooks)
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setPaperError(String((e as { message?: unknown })?.message ?? e))
+        if (papers !== null) setPaperRows(papers)
+        if (textbooks !== null) setTextbookRows(textbooks)
+        setPaperError(paperError)
+        setTextbookError(textbookError)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -143,11 +187,48 @@ export default function ImportedSourceManagement() {
   )
   const selectedPaperIds = useMemo(() => activeSelectionIds(paperSelection), [paperSelection])
   const selectedTextbookIds = useMemo(() => activeSelectionIds(textbookSelection), [textbookSelection])
+  const metadataOnlyExpanded = showMetadataOnly || paperQuery.trim().length > 0
+  const visibleIngestedPaperIds = useMemo(
+    () => ingestedPapers.map((row) => row.paper_id).filter(Boolean),
+    [ingestedPapers],
+  )
+  const visibleTextbookIds = useMemo(
+    () => textbookRows.map((row) => row.textbook_id).filter(Boolean),
+    [textbookRows],
+  )
+  const allVisiblePapersSelected = useMemo(
+    () => visibleIngestedPaperIds.length > 0 && visibleIngestedPaperIds.every((id) => !!paperSelection[id]),
+    [paperSelection, visibleIngestedPaperIds],
+  )
+  const someVisiblePapersSelected = useMemo(
+    () => !allVisiblePapersSelected && visibleIngestedPaperIds.some((id) => !!paperSelection[id]),
+    [allVisiblePapersSelected, paperSelection, visibleIngestedPaperIds],
+  )
+  const allVisibleTextbooksSelected = useMemo(
+    () => visibleTextbookIds.length > 0 && visibleTextbookIds.every((id) => !!textbookSelection[id]),
+    [textbookSelection, visibleTextbookIds],
+  )
+  const someVisibleTextbooksSelected = useMemo(
+    () => !allVisibleTextbooksSelected && visibleTextbookIds.some((id) => !!textbookSelection[id]),
+    [allVisibleTextbooksSelected, textbookSelection, visibleTextbookIds],
+  )
+
+  useEffect(() => {
+    if (paperSelectAllRef.current) paperSelectAllRef.current.indeterminate = someVisiblePapersSelected
+  }, [someVisiblePapersSelected])
+
+  useEffect(() => {
+    if (textbookSelectAllRef.current) textbookSelectAllRef.current.indeterminate = someVisibleTextbooksSelected
+  }, [someVisibleTextbooksSelected])
 
   const syncSelectionsAfterRefresh = useCallback(
     (papers: PaperManagementRow[], textbooks: TextbookRow[]) => {
-      setPaperSelection((current) => pruneSelection(current, new Set(papers.filter((row) => row.ingested).map((row) => row.paper_id))))
-      setTextbookSelection((current) => pruneSelection(current, new Set(textbooks.map((row) => row.textbook_id))))
+      setPaperSelection((current) =>
+        pruneSelection(current, new Set(papers.filter((row) => row.ingested).map((row) => row.paper_id))),
+      )
+      setTextbookSelection((current) =>
+        pruneSelection(current, new Set(textbooks.map((row) => row.textbook_id))),
+      )
     },
     [],
   )
@@ -180,16 +261,26 @@ export default function ImportedSourceManagement() {
     }
   }, [dispatch, state.activeModule, state.papers.selectedPaperId, state.textbooks.selectedTextbookId])
 
+  const handleToggleAllVisiblePapers = useCallback((checked: boolean) => {
+    setPaperSelection((current) => updateSelectionForIds(current, visibleIngestedPaperIds, checked))
+  }, [visibleIngestedPaperIds])
+
+  const handleToggleAllTextbooks = useCallback((checked: boolean) => {
+    setTextbookSelection((current) => updateSelectionForIds(current, visibleTextbookIds, checked))
+  }, [visibleTextbookIds])
+
   async function handleDeleteSelectedPapers() {
     if (selectedPaperIds.length === 0 || isTaskActive(paperTask)) return
     setPaperError('')
 
     try {
       const submitted = await submitPaperDeleteTask(selectedPaperIds)
+      setPaperTask({ task_id: submitted.task_id, status: 'queued', stage: 'queued' })
       const task = await waitForDeleteTask(submitted.task_id)
       setPaperTask(task)
 
       const deleted = Number(task.result?.deleted_count ?? 0) > 0
+      const failureReasons = failedTaskReasons(task)
       if (deleted) {
         invalidatePaperDataCache()
         invalidateTextbookCatalogCache()
@@ -197,18 +288,24 @@ export default function ImportedSourceManagement() {
         invalidateOverviewGraphCache()
 
         const refreshed = await loadManagementData()
-        setPaperRows(refreshed.papers)
-        setTextbookRows(refreshed.textbooks)
-        syncSelectionsAfterRefresh(refreshed.papers, refreshed.textbooks)
+        const nextPapers = refreshed.papers ?? paperRows
+        const nextTextbooks = refreshed.textbooks ?? textbookRows
+        setPaperRows(nextPapers)
+        setTextbookRows(nextTextbooks)
+        setPaperError(refreshed.paperError)
+        setTextbookError(refreshed.textbookError)
+        syncSelectionsAfterRefresh(nextPapers, nextTextbooks)
         const removedPaperIds = deletedIdsFromTask(task, selectedPaperIds)
         await restoreNeutralGraphIfNeeded(removedPaperIds, [])
       }
 
-      if (String(task.status ?? '') === 'failed') {
+      if (failureReasons.length > 0) {
+        setPaperError(`${t('Some selected papers could not be deleted', 'Some selected papers could not be deleted')}: ${failureReasons.join(', ')}`)
+      } else if (String(task.status ?? '') === 'failed') {
         if (deleted) {
-          setPaperError(t('论文已删除，但重建失败。', 'Paper deleted, but rebuild failed.'))
+          setPaperError(t('Paper deleted, but rebuild failed.', 'Paper deleted, but rebuild failed.'))
         } else {
-          setPaperError(task.error || task.message || t('删除论文失败。', 'Failed to delete papers.'))
+          setPaperError(task.error || task.message || t('Failed to delete papers.', 'Failed to delete papers.'))
         }
       }
     } catch (e: unknown) {
@@ -222,10 +319,12 @@ export default function ImportedSourceManagement() {
 
     try {
       const submitted = await submitTextbookDeleteTask(selectedTextbookIds)
+      setTextbookTask({ task_id: submitted.task_id, status: 'queued', stage: 'queued' })
       const task = await waitForDeleteTask(submitted.task_id)
       setTextbookTask(task)
 
       const deleted = Number(task.result?.deleted_count ?? 0) > 0
+      const failureReasons = failedTaskReasons(task)
       if (deleted) {
         invalidatePaperDataCache()
         invalidateTextbookCatalogCache()
@@ -233,18 +332,24 @@ export default function ImportedSourceManagement() {
         invalidateOverviewGraphCache()
 
         const refreshed = await loadManagementData()
-        setPaperRows(refreshed.papers)
-        setTextbookRows(refreshed.textbooks)
-        syncSelectionsAfterRefresh(refreshed.papers, refreshed.textbooks)
+        const nextPapers = refreshed.papers ?? paperRows
+        const nextTextbooks = refreshed.textbooks ?? textbookRows
+        setPaperRows(nextPapers)
+        setTextbookRows(nextTextbooks)
+        setPaperError(refreshed.paperError)
+        setTextbookError(refreshed.textbookError)
+        syncSelectionsAfterRefresh(nextPapers, nextTextbooks)
         const removedTextbookIds = deletedIdsFromTask(task, selectedTextbookIds)
         await restoreNeutralGraphIfNeeded([], removedTextbookIds)
       }
 
-      if (String(task.status ?? '') === 'failed') {
+      if (failureReasons.length > 0) {
+        setTextbookError(`${t('Some selected textbooks could not be deleted', 'Some selected textbooks could not be deleted')}: ${failureReasons.join(', ')}`)
+      } else if (String(task.status ?? '') === 'failed') {
         if (deleted) {
-          setTextbookError(t('教材已删除，但重建失败。', 'Textbook deleted, but rebuild failed.'))
+          setTextbookError(t('Textbook deleted, but rebuild failed.', 'Textbook deleted, but rebuild failed.'))
         } else {
-          setTextbookError(task.error || task.message || t('删除教材失败。', 'Failed to delete textbooks.'))
+          setTextbookError(task.error || task.message || t('Failed to delete textbooks.', 'Failed to delete textbooks.'))
         }
       }
     } catch (e: unknown) {
@@ -283,14 +388,32 @@ export default function ImportedSourceManagement() {
             />
 
             {paperError && <div className="errorBox" style={{ marginTop: 10 }}>{paperError}</div>}
-            {paperTask && (
+            {paperTask && !isTaskActive(paperTask) && (
               <div className="metaLine" style={{ marginTop: 10 }}>
-                {t('已删', 'Deleted')}: {paperSummaryState.deleted} · {t('失败', 'Failed')}: {paperSummaryState.failed} · {t('跳过', 'Skipped')}: {paperSummaryState.skipped}
+                {t('已删除', 'Deleted')}: {paperSummaryState.deleted} · {t('失败', 'Failed')}: {paperSummaryState.failed} · {t('跳过', 'Skipped')}: {paperSummaryState.skipped}
               </div>
             )}
-            {isTaskActive(paperTask) && <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务进行中...', 'Delete task is running...')}</div>}
+            {paperTask?.status === 'queued' && (
+              <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务已排队...', 'Delete task is queued...')}</div>
+            )}
+            {paperTask?.status === 'running' && (
+              <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务执行中...', 'Delete task is running...')}</div>
+            )}
 
-            <div className="itemTitle" style={{ marginTop: 14 }}>{t('已导入论文', 'Ingested Papers')}</div>
+            <div className="split" style={{ marginTop: 14, gap: 12, alignItems: 'center' }}>
+              <div className="itemTitle">{t('已导入论文', 'Ingested Papers')}</div>
+              <label className="metaLine" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  ref={paperSelectAllRef}
+                  type="checkbox"
+                  aria-label={t('全选当前论文', 'Select all visible papers')}
+                  checked={allVisiblePapersSelected}
+                  disabled={visibleIngestedPaperIds.length === 0}
+                  onChange={(e) => handleToggleAllVisiblePapers(e.target.checked)}
+                />
+                <span>{t('全选当前论文', 'Select all visible papers')}</span>
+              </label>
+            </div>
             <div className="list" style={{ marginTop: 8 }}>
               {ingestedPapers.map((row) => {
                 const label = row.display_title || row.title || row.paper_source || row.paper_id
@@ -320,13 +443,30 @@ export default function ImportedSourceManagement() {
 
             <div className="itemTitle" style={{ marginTop: 14 }}>{t('仅元数据论文', 'Metadata-only Papers')}</div>
             <div className="list" style={{ marginTop: 8 }}>
-              {metadataOnlyPapers.map((row) => {
+              {metadataOnlyPapers.length > 0 && (
+                <div className="itemCard">
+                  <div className="split" style={{ gap: 12, alignItems: 'center' }}>
+                    <button
+                      className="btn btnSecondary btnSmall"
+                      onClick={() => setShowMetadataOnly((current) => !current)}
+                    >
+                      {metadataOnlyExpanded
+                        ? t(`收起仅元数据论文（${metadataOnlyPapers.length}）`, `Hide metadata-only papers (${metadataOnlyPapers.length})`)
+                        : t(`展开仅元数据论文（${metadataOnlyPapers.length}）`, `Show metadata-only papers (${metadataOnlyPapers.length})`)}
+                    </button>
+                    <div className="metaLine">
+                      {t('暂不支持删除，仅展示为只读元数据。', 'Deletion unavailable in v1')}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {metadataOnlyExpanded && metadataOnlyPapers.map((row) => {
                 const label = row.display_title || row.title || row.paper_source || row.paper_id
                 return (
                   <div key={row.paper_id} className="itemCard">
                     <div className="itemTitle">{label}</div>
                     <div className="metaLine" style={{ marginTop: 4 }}>
-                      {t('v1 暂不支持删除，仅展示为只读元数据。', 'Deletion unavailable in v1')}
+                      {t('暂不支持删除，仅展示为只读元数据。', 'Deletion unavailable in v1')}
                     </div>
                   </div>
                 )
@@ -348,14 +488,34 @@ export default function ImportedSourceManagement() {
             </div>
 
             {textbookError && <div className="errorBox" style={{ marginTop: 10 }}>{textbookError}</div>}
-            {textbookTask && (
+            {textbookTask && !isTaskActive(textbookTask) && (
               <div className="metaLine" style={{ marginTop: 10 }}>
-                {t('已删', 'Deleted')}: {textbookSummaryState.deleted} · {t('失败', 'Failed')}: {textbookSummaryState.failed} · {t('跳过', 'Skipped')}: {textbookSummaryState.skipped}
+                {t('已删除', 'Deleted')}: {textbookSummaryState.deleted} · {t('失败', 'Failed')}: {textbookSummaryState.failed} · {t('跳过', 'Skipped')}: {textbookSummaryState.skipped}
               </div>
             )}
-            {isTaskActive(textbookTask) && <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务进行中...', 'Delete task is running...')}</div>}
+            {textbookTask?.status === 'queued' && (
+              <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务已排队...', 'Delete task is queued...')}</div>
+            )}
+            {textbookTask?.status === 'running' && (
+              <div className="metaLine" style={{ marginTop: 10 }}>{t('删除任务执行中...', 'Delete task is running...')}</div>
+            )}
 
-            <div className="list" style={{ marginTop: 14 }}>
+            <div className="split" style={{ marginTop: 14, gap: 12, alignItems: 'center' }}>
+              <div className="metaLine">{t('可见教材列表', 'Visible textbook list')}</div>
+              <label className="metaLine" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  ref={textbookSelectAllRef}
+                  type="checkbox"
+                  aria-label={t('全选教材', 'Select all textbooks')}
+                  checked={allVisibleTextbooksSelected}
+                  disabled={visibleTextbookIds.length === 0}
+                  onChange={(e) => handleToggleAllTextbooks(e.target.checked)}
+                />
+                <span>{t('全选教材', 'Select all textbooks')}</span>
+              </label>
+            </div>
+
+            <div className="list" style={{ marginTop: 8 }}>
               {textbookRows.map((row) => (
                 <label key={row.textbook_id} className="itemCard" style={{ display: 'block' }}>
                   <div className="split" style={{ gap: 10 }}>

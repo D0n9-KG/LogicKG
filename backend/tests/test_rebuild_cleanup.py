@@ -141,7 +141,7 @@ def test_rebuild_global_faiss_keeps_only_community_corpora_and_removes_stale_pro
     assert not stale_dir.exists()
 
 
-def test_cleanup_legacy_proposition_artifacts_rebuilds_communities_and_faiss(monkeypatch, tmp_path) -> None:
+def test_cleanup_legacy_proposition_artifacts_keeps_community_rebuild_manual(monkeypatch, tmp_path) -> None:
     fake_client = _FakeNeo4jClient()
     calls: list[str] = []
     progress_events: list[tuple[str, float, str | None]] = []
@@ -149,14 +149,6 @@ def test_cleanup_legacy_proposition_artifacts_rebuilds_communities_and_faiss(mon
 
     monkeypatch.setattr(rebuild_mod, "Neo4jClient", lambda *args, **kwargs: fake_client)  # noqa: ARG005
     monkeypatch.setattr(rebuild_mod, "_storage_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        rebuild_mod,
-        "rebuild_global_communities",
-        lambda progress=None, log=None: calls.append("community") or {
-            "ok": True,
-            "communities_written": 3,
-        },
-    )
     monkeypatch.setattr(
         rebuild_mod,
         "rebuild_global_faiss",
@@ -175,7 +167,7 @@ def test_cleanup_legacy_proposition_artifacts_rebuilds_communities_and_faiss(mon
         log=log_lines.append,
     )
 
-    assert calls == ["community", "faiss"]
+    assert calls == ["faiss"]
     assert result["cleanup"]["graph"]["deleted_proposition_groups"] == 2
     assert result["cleanup"]["schema"]["dropped_constraints"] == 3
     assert result["cleanup"]["removed_corpora"]
@@ -183,7 +175,7 @@ def test_cleanup_legacy_proposition_artifacts_rebuilds_communities_and_faiss(mon
         "proposition_groups",
         "propositions",
     ]
-    assert result["community"]["communities_written"] == 3
+    assert "community" not in result
     assert "faiss" in result
     assert progress_events[0][0] == "cleanup:legacy:init"
     assert progress_events[-1][0] == "cleanup:legacy:done"

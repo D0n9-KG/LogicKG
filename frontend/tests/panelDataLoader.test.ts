@@ -26,12 +26,6 @@ vi.mock('../src/api', () => ({
       }
     }
 
-    if (path === '/discovery/candidates') {
-      return {
-        candidates: [{ candidate_id: 'd1', status: 'accepted', quality_score: 0.8 }],
-      }
-    }
-
     if (path === '/textbooks?limit=100') {
       return {
         textbooks: [{ textbook_id: 't1', title: 'Textbook', chapter_count: 10, entity_count: 80 }],
@@ -64,8 +58,8 @@ describe('panelData loader cache', () => {
     const second = await loadOverviewStatsSnapshot()
 
     expect(first.paperCount).toBe(2)
-    expect(second.discoveryItems).toHaveLength(1)
-    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(2)
+    expect(second).not.toHaveProperty('discoveryItems')
+    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1)
   })
 
   test('caches paper collections and catalog by filter key', async () => {

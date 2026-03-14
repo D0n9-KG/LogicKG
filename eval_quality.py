@@ -223,46 +223,6 @@ def fmt(v, fmt_str=".2f") -> str:
     return str(v)
 
 
-def compute_discovery_metrics(candidates: list[dict]) -> dict:
-    rows = [dict(x) for x in (candidates or []) if isinstance(x, dict)]
-    total = len(rows)
-    if total == 0:
-        return {
-            "candidate_count": 0,
-            "support_coverage": 0.0,
-            "challenge_coverage": 0.0,
-            "needs_more_evidence_rate": 0.0,
-            "avg_support_count": 0.0,
-            "avg_challenge_count": 0.0,
-        }
-
-    support_present = 0
-    challenge_present = 0
-    needs_more = 0
-    support_total = 0
-    challenge_total = 0
-    for row in rows:
-        support_ids = [str(x).strip() for x in (row.get("support_evidence_ids") or []) if str(x).strip()]
-        challenge_ids = [str(x).strip() for x in (row.get("challenge_evidence_ids") or []) if str(x).strip()]
-        support_total += len(support_ids)
-        challenge_total += len(challenge_ids)
-        if support_ids:
-            support_present += 1
-        if challenge_ids:
-            challenge_present += 1
-        if str(row.get("status") or "").strip().lower() == "needs_more_evidence":
-            needs_more += 1
-
-    return {
-        "candidate_count": total,
-        "support_coverage": support_present / max(1, total),
-        "challenge_coverage": challenge_present / max(1, total),
-        "needs_more_evidence_rate": needs_more / max(1, total),
-        "avg_support_count": support_total / max(1, total),
-        "avg_challenge_count": challenge_total / max(1, total),
-    }
-
-
 def print_report(papers: list[dict], evolution: dict, rag: list[dict]) -> dict:
     print("\n" + "═" * 70)
     print("  LogicKG DEM 20 篇质量评测报告")

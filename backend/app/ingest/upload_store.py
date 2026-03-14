@@ -45,7 +45,7 @@ def normalize_doi_strategy(value: str | None) -> str:
     s = str(value or "").strip().lower()
     if s in DOI_STRATEGIES:
         return s
-    return "extract_only"
+    return "title_crossref"
 
 
 @dataclass
@@ -63,7 +63,7 @@ class UploadManifest:
     total_chunks: int | None = None
     filename: str | None = None
     files: list[UploadFileEntry] = field(default_factory=list)
-    doi_strategy: str = "extract_only"  # extract_only | title_crossref
+    doi_strategy: str = "title_crossref"  # extract_only | title_crossref
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:

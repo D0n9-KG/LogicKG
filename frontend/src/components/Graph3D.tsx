@@ -15,11 +15,16 @@ type FGNode = {
   id: string
   label: string
   kind: string
+  description?: string
   clusterKey?: string
   qualityTier?: string
   ingested?: boolean
   paperId?: string
+  paperSource?: string
+  paperTitle?: string
+  stepType?: string
   textbookId?: string
+  chapterId?: string
   val: number
   color: string
   x?: number
@@ -304,11 +309,16 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         id: e.data.id,
         label: e.data.label,
         kind: e.data.kind,
+        description: e.data.description,
         clusterKey: e.data.clusterKey,
         qualityTier: e.data.qualityTier,
         ingested: e.data.ingested,
         paperId: e.data.paperId,
+        paperSource: e.data.paperSource,
+        paperTitle: e.data.paperTitle,
+        stepType: e.data.stepType,
         textbookId: e.data.textbookId,
+        chapterId: e.data.chapterId,
         val: nodeSize(e.data.kind, degreeMap.get(e.data.id), e.data.ingested),
         color: nodeColor(e.data.kind, e.data.qualityTier, e.data.ingested),
       }))
@@ -467,8 +477,13 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
           id: node.id,
           kind: node.kind,
           label: node.label,
+          description: node.description,
           paperId: node.paperId,
+          paperSource: node.paperSource,
+          paperTitle: node.paperTitle,
+          stepType: node.stepType,
           textbookId: node.textbookId,
+          chapterId: node.chapterId,
         })
       })
       .onNodeHover((n) => {

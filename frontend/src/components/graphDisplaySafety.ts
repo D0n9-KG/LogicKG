@@ -1,4 +1,4 @@
-import type { GraphEdgeData, GraphElement, GraphNodeData } from '../state/types'
+import type { GraphEdgeData, GraphElement } from '../state/types'
 
 type LimitOptions = {
   activeModule: string

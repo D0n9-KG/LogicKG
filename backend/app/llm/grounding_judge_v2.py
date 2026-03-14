@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any
 
+from app.ops_config_store import merge_runtime_config
+
 
 logger = logging.getLogger(__name__)
 
@@ -241,10 +243,15 @@ def judge_claim_support_batch(
     # Parallel execution (Phase 2.2)
     from concurrent.futures import ThreadPoolExecutor
 
+    from app.llm.client import recommend_llm_subtask_workers, submit_with_current_llm_context
     from app.settings import settings as app_settings
 
-    max_workers = min(app_settings.phase1_grounding_max_workers, len(batches))
-    max_workers = max(1, max_workers)
+    runtime = merge_runtime_config({})
+    max_workers = recommend_llm_subtask_workers(
+        configured=int(runtime.get("phase1_grounding_max_workers") or app_settings.phase1_grounding_max_workers),
+        batch_count=len(batches),
+        hard_cap=4,
+    )
 
     all_results: list[dict[str, Any]] = []
     fallback_count = 0
@@ -258,7 +265,7 @@ def judge_claim_support_batch(
     else:
         indexed_results: list[tuple[int, list[dict[str, Any]], bool]] = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_run_batch, b): bi for bi, b in enumerate(batches)}
+            futures = {submit_with_current_llm_context(executor, _run_batch, b): bi for bi, b in enumerate(batches)}
             for future in futures:
                 bi = futures[future]
                 try:

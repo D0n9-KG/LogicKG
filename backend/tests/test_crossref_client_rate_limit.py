@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import app.crossref.client as crossref_module
 from app.crossref.client import CrossrefClient
 
 
@@ -12,6 +14,14 @@ class _Resp:
         self.headers = {}
         if retry_after is not None:
             self.headers["Retry-After"] = retry_after
+
+
+class _JsonResp(_Resp):
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"message": {"items": []}}
 
 
 class CrossrefClientRateLimitTests(unittest.TestCase):
@@ -33,6 +43,28 @@ class CrossrefClientRateLimitTests(unittest.TestCase):
         with patch("app.crossref.client.time.sleep") as sleep:
             client._raise_if_rate_limited(_Resp(status_code=200))
         sleep.assert_not_called()
+
+    def test_query_uses_configured_mailto_and_user_agent(self) -> None:
+        fake_settings = SimpleNamespace(
+            crossref_mailto="ops@example.com",
+            crossref_user_agent="LogicKG-Test/1.0",
+            crossref_max_concurrent=2,
+            crossref_min_interval_seconds=0.12,
+        )
+        with patch.object(crossref_module, "settings", fake_settings, create=True):
+            client = CrossrefClient()
+            calls: list[dict] = []
+
+            def fake_get(url: str, params: dict | None = None, timeout: int | float | None = None):
+                calls.append({"url": url, "params": dict(params or {}), "timeout": timeout})
+                return _JsonResp(status_code=200)
+
+            with patch.object(client._session, "get", side_effect=fake_get):
+                client._query("granular flow", rows=3)
+
+        self.assertEqual(client._mailto, "ops@example.com")
+        self.assertIn("LogicKG-Test/1.0", client._session.headers.get("User-Agent", ""))
+        self.assertEqual(calls[0]["params"].get("mailto"), "ops@example.com")
 
 
 if __name__ == "__main__":

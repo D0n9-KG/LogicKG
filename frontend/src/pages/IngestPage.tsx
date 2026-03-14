@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPostForm } from '../api'
+import { useI18n } from '../i18n'
 import ImportedSourceManagement from './ImportedSourceManagement'
 import { TERMS } from '../ui/terms'
 
@@ -32,6 +33,26 @@ type UploadScan = {
   doi_strategy?: string
   root: string
   units: ScanUnit[]
+  errors?: unknown[]
+}
+
+type TextbookScanUnit = {
+  unit_id: string
+  unit_rel_dir: string
+  main_md_rel_path: string
+  title: string
+  textbook_id: string
+  asset_count: number
+  status: string
+  error?: string | null
+  existing_textbook_id?: string | null
+}
+
+type TextbookUploadScan = {
+  upload_id: string
+  mode: string
+  root?: string
+  units: TextbookScanUnit[]
   errors?: unknown[]
 }
 
@@ -107,6 +128,7 @@ function taskStatusLabel(status: string | null | undefined) {
 function taskStageLabel(stage: string | null | undefined) {
   const s = String(stage ?? '')
   if (!s) return ''
+  if (s.includes('community')) return '重建全局聚类'
   if (s.includes('crossref')) return `${TERMS.crossref} 解析`
   if (s.includes('neo4j_clear')) return '清理 Neo4j'
   if (s.includes('neo4j_write')) return '写入 Neo4j'
@@ -130,15 +152,506 @@ function parseApiDetailMessage(msg: string): string {
   return s
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function asInteger(value: unknown): number | null {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return Math.trunc(n)
+}
+
+function parseTaskResult(value: string): TaskInfo | null {
+  const text = String(value ?? '').trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return asObject(parsed) as TaskInfo | null
+  } catch {
+    return null
+  }
+}
+
+function summarizeTaskResult(task: TaskInfo | null) {
+  if (!task) return null
+  const status = String(task.status ?? '').trim()
+  if (!status || ['queued', 'running'].includes(status)) return null
+
+  const payload = asObject(task.payload)
+  const result = asObject(task.result)
+  const nestedResult = asObject(result?.result)
+  const uploadId = String(payload?.upload_id ?? '').trim()
+  const runId = String(nestedResult?.run_id ?? result?.run_id ?? '').trim()
+  const mdFiles = Array.isArray(nestedResult?.md_files) ? nestedResult.md_files : Array.isArray(result?.md_files) ? result.md_files : []
+
+  return {
+    taskId: String(task.task_id ?? '').trim(),
+    type: String(task.type ?? '').trim(),
+    status,
+    stage: String(task.stage ?? '').trim(),
+    uploadId,
+    runId,
+    ok: typeof result?.ok === 'boolean' ? result.ok : null,
+    ingested: asInteger(result?.ingested),
+    mdFileCount: mdFiles.length,
+  }
+}
+
 function normalizeDoiStrategy(v: unknown): DoiStrategy {
-  return String(v ?? '').trim().toLowerCase() === 'title_crossref' ? 'title_crossref' : 'extract_only'
+  return String(v ?? '').trim().toLowerCase() === 'extract_only' ? 'extract_only' : 'title_crossref'
+}
+
+function paperTypeOptionLabel(locale: 'zh-CN' | 'en-US', value: string) {
+  if (locale === 'zh-CN') {
+    if (value === 'research') return '研究型'
+    if (value === 'review') return '综述型'
+    if (value === 'software') return '软件型'
+    if (value === 'theoretical') return '理论型'
+    if (value === 'case_study') return '案例型'
+    return value
+  }
+  if (value === 'research') return 'Research'
+  if (value === 'review') return 'Review'
+  if (value === 'software') return 'Software'
+  if (value === 'theoretical') return 'Theoretical'
+  if (value === 'case_study') return 'Case Study'
+  return value
+}
+
+function groupTextbookScan(scan: TextbookUploadScan | null) {
+  const units = scan?.units ?? []
+  return {
+    ready: units.filter((u) => u.status === 'ready'),
+    conflicts: units.filter((u) => u.status === 'conflict'),
+    skipped: units.filter((u) => u.status === 'skipped'),
+    errors: units.filter((u) => u.status === 'error'),
+  }
+}
+
+function TextbookUploadPanel({ chunkBytes }: { chunkBytes: number }) {
+  const { t } = useI18n()
+  const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [zipFile, setZipFile] = useState<File | null>(null)
+  const [folderFiles, setFolderFiles] = useState<FolderFile[]>([])
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadId, setUploadId] = useState('')
+  const [loadUploadId, setLoadUploadId] = useState('')
+  const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number }>({ sent: 0, total: 0 })
+  const [scan, setScan] = useState<TextbookUploadScan | null>(null)
+  const [taskId, setTaskId] = useState('')
+  const [task, setTask] = useState<TaskInfo | null>(null)
+  const [refreshedForTaskId, setRefreshedForTaskId] = useState('')
+
+  const scanGroups = useMemo(() => groupTextbookScan(scan), [scan])
+  const uploadPct = useMemo(() => {
+    if (!uploadProgress.total) return 0
+    return Math.round((uploadProgress.sent / uploadProgress.total) * 100)
+  }, [uploadProgress.sent, uploadProgress.total])
+  const unitCount = scan?.units.length ?? 0
+  const readyCount = scanGroups.ready.length
+  const issueCount = scanGroups.conflicts.length + scanGroups.errors.length
+  const taskProgressPct = Math.round(Math.max(0, Math.min(1, Number(task?.progress ?? 0))) * 100)
+  const taskIsActive = ['queued', 'running'].includes(String(task?.status ?? ''))
+
+  const refreshScan = useCallback(async (id: string) => {
+    const next = await apiGet<TextbookUploadScan>(`/textbooks/upload/scan?upload_id=${encodeURIComponent(id)}`)
+    setScan(next)
+    setUploadId(id)
+    setLoadUploadId(id)
+    return next
+  }, [])
+
+  const pollTask = useCallback(async (id: string): Promise<{ isFinal: boolean }> => {
+    const next = await apiGet<TaskInfo>(`/tasks/${encodeURIComponent(id)}`)
+    setTask(next)
+    const status = String(next?.status ?? '')
+    const isFinal = Boolean(status) && !['queued', 'running'].includes(status)
+    const payloadUploadId = String(
+      ((next as { payload?: { upload_id?: unknown } } | null)?.payload?.upload_id as string | undefined) ?? uploadId,
+    ).trim()
+    if (isFinal && payloadUploadId && id !== refreshedForTaskId) {
+      setRefreshedForTaskId(id)
+      await refreshScan(payloadUploadId)
+    }
+    return { isFinal }
+  }, [refreshedForTaskId, refreshScan, uploadId])
+
+  useEffect(() => {
+    if (!taskId) return
+    let alive = true
+    let timer: ReturnType<typeof setInterval> | null = null
+
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const result = await pollTask(taskId)
+        if (result.isFinal && timer) {
+          clearInterval(timer)
+          timer = null
+        }
+      } catch (e: unknown) {
+        if (alive) setError(String((e as { message?: unknown } | null)?.message ?? e))
+      }
+    }
+
+    tick().catch(() => {})
+    timer = setInterval(() => {
+      tick().catch(() => {})
+    }, 1200)
+
+    return () => {
+      alive = false
+      if (timer) clearInterval(timer)
+    }
+  }, [pollTask, taskId])
+
+  async function uploadChunksZip(id: string, file: File) {
+    const totalChunks = Math.ceil(file.size / chunkBytes)
+    const status = await apiGet<{ received?: number[] }>(`/textbooks/upload/status?upload_id=${encodeURIComponent(id)}`)
+    const received = new Set<number>((status?.received ?? []) as number[])
+    setUploadProgress({ sent: 0, total: file.size })
+    for (let idx = 0; idx < totalChunks; idx++) {
+      if (received.has(idx)) continue
+      const start = idx * chunkBytes
+      const end = Math.min(file.size, start + chunkBytes)
+      const blob = file.slice(start, end)
+      const form = new FormData()
+      form.append('upload_id', id)
+      form.append('index', String(idx))
+      form.append('blob', blob, `textbook-chunk-${idx}.bin`)
+      await apiPostForm('/textbooks/upload/chunk', form)
+      setUploadProgress((current) => ({ sent: Math.min(current.total, current.sent + (end - start)), total: current.total }))
+    }
+  }
+
+  async function uploadChunksFolder(id: string, files: FolderFile[]) {
+    const total = files.reduce((sum, file) => sum + file.size, 0)
+    setUploadProgress({ sent: 0, total })
+    for (const file of files) {
+      const totalChunks = Math.max(1, Math.ceil(file.size / chunkBytes))
+      const status = await apiGet<{ received?: number[] }>(
+        `/textbooks/upload/status?upload_id=${encodeURIComponent(id)}&file_path=${encodeURIComponent(file.path)}`,
+      )
+      const received = new Set<number>((status?.received ?? []) as number[])
+      for (let idx = 0; idx < totalChunks; idx++) {
+        if (received.has(idx)) continue
+        const start = idx * chunkBytes
+        const end = Math.min(file.size, start + chunkBytes)
+        const blob = file.file.slice(start, end)
+        const form = new FormData()
+        form.append('upload_id', id)
+        form.append('index', String(idx))
+        form.append('file_path', file.path)
+        form.append('blob', blob, `textbook-file-${idx}.bin`)
+        await apiPostForm('/textbooks/upload/chunk', form)
+        setUploadProgress((current) => ({ sent: Math.min(current.total, current.sent + (end - start)), total: current.total }))
+      }
+    }
+  }
+
+  async function startUpload(mode: 'zip' | 'folder') {
+    setUploadBusy(true)
+    setError('')
+    setInfo('')
+    setTask(null)
+    setTaskId('')
+    setRefreshedForTaskId('')
+    try {
+      if (mode === 'zip') {
+        if (!zipFile) throw new Error(t('请先选择教材 ZIP 文件。', 'Please choose a textbook ZIP file first.'))
+        const start = await apiPost<{ upload_id: string }>('/textbooks/upload/start', {
+          mode: 'zip',
+          chunk_bytes: chunkBytes,
+          total_bytes: zipFile.size,
+          filename: zipFile.name,
+        })
+        const id = String(start.upload_id ?? '')
+        setUploadId(id)
+        setLoadUploadId(id)
+        await uploadChunksZip(id, zipFile)
+        const next = await apiPost<TextbookUploadScan>(`/textbooks/upload/finish?upload_id=${encodeURIComponent(id)}`, {})
+        setScan(next)
+        setInfo(t(`教材扫描已完成：${id}`, `Textbook scan completed: ${id}`))
+      } else {
+        if (folderFiles.length === 0) throw new Error(t('请先选择教材文件夹。', 'Please choose a textbook folder first.'))
+        const start = await apiPost<{ upload_id: string }>('/textbooks/upload/start', {
+          mode: 'folder',
+          chunk_bytes: chunkBytes,
+          files: folderFiles.map((file) => ({ path: file.path, size: file.size })),
+        })
+        const id = String(start.upload_id ?? '')
+        setUploadId(id)
+        setLoadUploadId(id)
+        await uploadChunksFolder(id, folderFiles)
+        const next = await apiPost<TextbookUploadScan>(`/textbooks/upload/finish?upload_id=${encodeURIComponent(id)}`, {})
+        setScan(next)
+        setInfo(t(`教材扫描已完成：${id}`, `Textbook scan completed: ${id}`))
+      }
+    } catch (e: unknown) {
+      setError(String((e as { message?: unknown } | null)?.message ?? e))
+    } finally {
+      setUploadBusy(false)
+    }
+  }
+
+  async function skipUnit(unitId: string) {
+    if (!uploadId) return
+    setError('')
+    try {
+      const next = await apiPost<TextbookUploadScan>('/textbooks/upload/skip', { upload_id: uploadId, unit_id: unitId })
+      setScan(next)
+      setInfo(t('教材条目已标记为跳过。', 'The textbook unit has been marked as skipped.'))
+    } catch (e: unknown) {
+      setError(String((e as { message?: unknown } | null)?.message ?? e))
+    }
+  }
+
+  async function commitReady() {
+    if (!uploadId) return
+    setError('')
+    setTask(null)
+    try {
+      const next = await apiPost<{ task_id: string }>('/textbooks/upload/commit_ready', { upload_id: uploadId })
+      setTaskId(String(next.task_id ?? ''))
+      setInfo(t(`已提交教材导入任务：${next.task_id ?? ''}`, `Submitted textbook import task: ${next.task_id ?? ''}`))
+    } catch (e: unknown) {
+      setError(String((e as { message?: unknown } | null)?.message ?? e))
+    }
+  }
+
+  return (
+    <div className="panel ingestTextbookPanel">
+      <div className="panelHeader">
+        <div className="split">
+          <div>
+            <div className="panelTitle">{t('教材导入', 'Textbook Import')}</div>
+            <div className="metaLine ingestSectionSubtitle">
+              {t('支持 ZIP 或文件夹上传，递归识别多层嵌套教材子目录中的主 Markdown。', 'Upload textbook ZIPs or folders and recursively detect nested textbook units.')}
+            </div>
+          </div>
+          {uploadId && (
+            <span className="pill">
+              <span className="kicker">upload_id</span>
+              <code>{uploadId}</code>
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="panelBody">
+        {error && <div className="errorBox">{error}</div>}
+        {info && <div className="infoBox" style={{ marginTop: error ? 10 : 0 }}>{info}</div>}
+
+        <div className="ingestSummaryRow">
+          <div className="ingestSummaryCard">
+            <div className="kicker">{t('当前会话', 'Session')}</div>
+            <div className="ingestSummaryValue">{uploadId ? <code>{uploadId}</code> : '--'}</div>
+            <div className="metaLine">{t('教材上传上下文', 'Current textbook upload context')}</div>
+          </div>
+          <div className="ingestSummaryCard">
+            <div className="kicker">{t('识别教材', 'Detected')}</div>
+            <div className="ingestSummaryValue">{unitCount}</div>
+            <div className="metaLine">{t('递归识别到的教材单元', 'Detected textbook units')}</div>
+          </div>
+          <div className="ingestSummaryCard">
+            <div className="kicker">{t('待导入', 'Ready')}</div>
+            <div className="ingestSummaryValue">{readyCount}</div>
+            <div className="metaLine">{t('可直接提交导入的教材', 'Units ready to import')}</div>
+          </div>
+          <div className="ingestSummaryCard">
+            <div className="kicker">{t('任务', 'Task')}</div>
+            <div className="ingestSummaryValue">{taskId ? `${taskProgressPct}%` : '--'}</div>
+            <div className="metaLine">
+              {taskId
+                ? (taskIsActive ? t('执行中', 'Running') : t('已完成', 'Completed'))
+                : t(`冲突 ${scanGroups.conflicts.length} / 错误 ${issueCount - scanGroups.conflicts.length}`, `Conflicts ${scanGroups.conflicts.length} / Errors ${issueCount - scanGroups.conflicts.length}`)}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid2 ingestTopGrid">
+          <div className="itemCard">
+            {uploadProgress.total > 0 && (
+              <div className="progress" style={{ marginBottom: 12 }}>
+                <div className="progressBar" style={{ width: `${uploadPct}%` }} />
+              </div>
+            )}
+
+            <div className="itemTitle">{t('教材 ZIP（压缩包）', 'Textbook ZIP')}</div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <input type="file" name="textbook_zip_file" accept=".zip" onChange={(e) => setZipFile(e.target.files?.[0] ?? null)} />
+              <button className="btn btnPrimary" disabled={uploadBusy} onClick={() => startUpload('zip')}>
+                {uploadBusy ? t('上传中…', 'Uploading...') : t('上传教材 ZIP', 'Upload textbook ZIP')}
+              </button>
+            </div>
+            <div className="hint">{t('适合一次上传多个教材目录；系统会在后台递归识别教材子文件夹。', 'Upload one ZIP that contains many textbook folders and let the backend detect them recursively.')}</div>
+
+            <div className="itemTitle" style={{ marginTop: 18 }}>{t('教材文件夹', 'Textbook Folder')}</div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <input
+                type="file"
+                name="textbook_folder_files"
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                // @ts-ignore
+                webkitdirectory="true"
+                multiple
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  const mapped: FolderFile[] = files.map((file) => {
+                    const wf = file as WebkitFile
+                    return { path: String(wf.webkitRelativePath ?? file.name), file, size: file.size }
+                  })
+                  setFolderFiles(mapped)
+                }}
+              />
+              <button className="btn btnPrimary" disabled={uploadBusy} onClick={() => startUpload('folder')}>
+                {uploadBusy ? t('上传中…', 'Uploading...') : t(`上传教材文件夹（${folderFiles.length} 个文件）`, `Upload textbook folder (${folderFiles.length} files)`)}
+              </button>
+            </div>
+
+            <div
+              className={`dropZone ${folderFiles.length > 0 ? 'dropZoneStrong' : ''}`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={async (e) => {
+                e.preventDefault()
+                setError('')
+                try {
+                  const items = Array.from(e.dataTransfer.items ?? [])
+                  const out: FolderFile[] = []
+                  for (const item of items) {
+                    const entry = (item as unknown as { webkitGetAsEntry?: () => WebkitEntry | null }).webkitGetAsEntry?.() ?? null
+                    if (!entry) continue
+                    out.push(...(await walkEntry(entry, '')))
+                  }
+                  if (out.length === 0) {
+                    throw new Error(t('这里暂不支持直接拖入，请使用文件夹选择器或 ZIP。', 'Please use the folder picker or a ZIP file instead of direct drop here.'))
+                  }
+                  setFolderFiles(out)
+                } catch (err: unknown) {
+                  setError(String((err as { message?: unknown } | null)?.message ?? err))
+                }
+              }}
+              style={{ marginTop: 10 }}
+            >
+              <div className="itemTitle">{t('拖拽教材文件夹', 'Drop textbook folder')}</div>
+              <div className="metaLine" style={{ marginTop: 6 }}>
+                {t('支持多层嵌套教材目录；Chrome / Edge 可保留文件夹结构。', 'Nested folders are supported; Chrome and Edge preserve the folder structure.')}
+              </div>
+            </div>
+          </div>
+
+          <div className="itemCard">
+            <div className="itemTitle">{t('教材会话 / 任务', 'Textbook Session / Task')}</div>
+            <div className="metaLine" style={{ marginTop: 8 }}>
+              {taskId
+                ? `${taskStatusLabel(task?.status)} / ${taskStageLabel(task?.stage)}`
+                : t('可通过 upload_id 重新载入教材扫描结果。', 'Restore textbook scans later with the upload_id.')}
+            </div>
+            <div className="row" style={{ marginTop: 12 }}>
+              <input
+                className="input ingestLoadInput"
+                name="textbook_load_upload_id"
+                value={loadUploadId}
+                onChange={(e) => setLoadUploadId(e.target.value)}
+                placeholder={t('教材 upload_id（例如 tb-upload-xxxx）', 'Textbook upload_id')}
+              />
+              <button
+                className="btn"
+                disabled={uploadBusy || !loadUploadId.trim()}
+                onClick={() => {
+                  refreshScan(loadUploadId.trim()).catch((e: unknown) => setError(String((e as { message?: unknown } | null)?.message ?? e)))
+                }}
+              >
+                {t('载入教材会话', 'Load textbook session')}
+              </button>
+            </div>
+            <div className="row ingestOpsActions" style={{ marginTop: 14 }}>
+              <button className="btn btnPrimary" disabled={uploadBusy || readyCount === 0} onClick={commitReady}>
+                {t('导入待处理教材（异步）', 'Import ready textbooks (async)')}
+              </button>
+              <button
+                className="btn"
+                disabled={uploadBusy || !uploadId}
+                onClick={() => {
+                  if (!uploadId) return
+                  refreshScan(uploadId).catch((e: unknown) => setError(String((e as { message?: unknown } | null)?.message ?? e)))
+                }}
+              >
+                {t('刷新教材扫描', 'Refresh textbook scan')}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {scan && (
+          <div className="itemCard ingestTextbookResults" style={{ marginTop: 14 }}>
+            <div className="split">
+              <div className="itemTitle">{t('教材扫描结果', 'Textbook scan results')}</div>
+              <div className="row">
+                <span className="badge badgeOk">{t(`可导入 ${scanGroups.ready.length}`, `Ready ${scanGroups.ready.length}`)}</span>
+                <span className="badge badgeWarn">{t(`冲突 ${scanGroups.conflicts.length}`, `Conflicts ${scanGroups.conflicts.length}`)}</span>
+                <span className="badge">{t(`已跳过 ${scanGroups.skipped.length}`, `Skipped ${scanGroups.skipped.length}`)}</span>
+                <span className="badge badgeDanger">{t(`错误 ${scanGroups.errors.length}`, `Errors ${scanGroups.errors.length}`)}</span>
+              </div>
+            </div>
+
+            <div className="list ingestBucketList" style={{ marginTop: 12 }}>
+              {scan.units.map((unit) => (
+                <div key={unit.unit_id} className="itemCard">
+                  <div className="split" style={{ gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="itemTitle">{unit.title || unit.main_md_rel_path}</div>
+                      <div className="itemMeta">
+                        <code>{unit.main_md_rel_path}</code>
+                      </div>
+                      <div className="metaLine" style={{ marginTop: 6 }}>
+                        {t(`目录：${unit.unit_rel_dir} · 资源文件 ${unit.asset_count}`, `Root: ${unit.unit_rel_dir} · Assets ${unit.asset_count}`)}
+                      </div>
+                      {unit.error && (
+                        <div className="metaLine" style={{ marginTop: 6 }}>
+                          {unit.error}
+                        </div>
+                      )}
+                    </div>
+                    <div className="stack" style={{ alignItems: 'flex-end' }}>
+                      <span className={`badge ${unit.status === 'ready' ? 'badgeOk' : unit.status === 'conflict' ? 'badgeWarn' : unit.status === 'error' ? 'badgeDanger' : ''}`}>
+                        {unit.status === 'ready'
+                          ? t('可导入', 'Ready')
+                          : unit.status === 'conflict'
+                            ? t('已存在', 'Conflict')
+                            : unit.status === 'skipped'
+                              ? t('已跳过', 'Skipped')
+                              : unit.status === 'error'
+                                ? t('错误', 'Error')
+                                : unit.status}
+                      </span>
+                      {unit.status !== 'skipped' && (
+                        <button className="btn btnSmall" onClick={() => skipUnit(unit.unit_id)}>
+                          {t('跳过', 'Skip')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {scan.units.length === 0 && <div className="metaLine">{t('当前会话未识别到教材。', 'No textbook units detected in this session.')}</div>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function IngestPage() {
+  const { locale, t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [error, setError] = useState<string>('')
   const [info, setInfo] = useState<string>('')
   const [result, setResult] = useState<string>('')
+  const [showRawResult, setShowRawResult] = useState(false)
 
   // Upload ingest
   const [chunkMB, setChunkMB] = useState<number>(8)
@@ -149,7 +662,7 @@ export default function IngestPage() {
   const [uploadId, setUploadId] = useState<string>('')
   const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number }>({ sent: 0, total: 0 })
   const [scan, setScan] = useState<UploadScan | null>(null)
-  const [doiStrategy, setDoiStrategy] = useState<DoiStrategy>('extract_only')
+  const [doiStrategy, setDoiStrategy] = useState<DoiStrategy>('title_crossref')
   const [doiByUnit, setDoiByUnit] = useState<Record<string, string>>({})
   const [paperTypeByUnit, setPaperTypeByUnit] = useState<Record<string, string>>({})
 
@@ -275,6 +788,8 @@ export default function IngestPage() {
   }, [uploadId, refreshScan])
 
   const scanGroups = useMemo(() => groupScan(scan), [scan])
+  const parsedTaskResult = useMemo(() => parseTaskResult(result), [result])
+  const taskResultSummary = useMemo(() => summarizeTaskResult(parsedTaskResult), [parsedTaskResult])
   const uploadPct = useMemo(() => {
     if (!uploadProgress.total) return 0
     return Math.round((uploadProgress.sent / uploadProgress.total) * 100)
@@ -283,6 +798,10 @@ export default function IngestPage() {
   const scanIssueCount = scanGroups.conflicts.length + scanGroups.needDoi.length + scanGroups.errors.length
   const taskProgressPct = Math.round(Math.max(0, Math.min(1, Number(task?.progress ?? 0))) * 100)
   const taskIsActive = ['queued', 'running'].includes(String(task?.status ?? ''))
+
+  useEffect(() => {
+    setShowRawResult(false)
+  }, [result])
 
   const pollTask = useCallback(async (id: string): Promise<{ isFinal: boolean }> => {
     let t: TaskInfo
@@ -372,6 +891,19 @@ export default function IngestPage() {
       const res = await apiPost<{ task_id: string }>('/tasks/rebuild/faiss', {})
       setTaskId(res.task_id ?? '')
       setInfo(`已提交任务：重建全局 FAISS（${res.task_id ?? ''}）`)
+    } catch (e: unknown) {
+      setError(String((e as { message?: unknown } | null)?.message ?? e))
+    }
+  }
+
+  async function rebuildCommunities() {
+    setError('')
+    setResult('')
+    setTask(null)
+    try {
+      const res = await apiPost<{ task_id: string }>('/tasks/rebuild/community', {})
+      setTaskId(res.task_id ?? '')
+      setInfo(`已提交任务：重建全局聚类（${res.task_id ?? ''}）`)
     } catch (e: unknown) {
       setError(String((e as { message?: unknown } | null)?.message ?? e))
     }
@@ -516,8 +1048,9 @@ export default function IngestPage() {
     setError('')
     setResult('')
     try {
-      await apiPost<Record<string, unknown>>('/ingest/upload/keep_existing', { upload_id: uploadId, unit_id: unitId })
-      await refreshScan(uploadId)
+      const s = await apiPost<UploadScan>('/ingest/upload/keep_existing', { upload_id: uploadId, unit_id: unitId })
+      setScan(s)
+      if (s?.doi_strategy) setDoiStrategy(normalizeDoiStrategy(s.doi_strategy))
       setInfo(`已从本次上传中移除该条目（保留库中现有 DOI）。`)
     } catch (e: unknown) {
       setError(String((e as { message?: unknown } | null)?.message ?? e))
@@ -572,7 +1105,7 @@ export default function IngestPage() {
           </span>
           {uploadId && (
             <span className="pill">
-              <span className="kicker">upload_id</span> <code>{uploadId}</code>
+              <span className="kicker">{t('上传ID', 'Upload ID')}</span> <code>{uploadId}</code>
             </span>
           )}
         </div>
@@ -590,26 +1123,33 @@ export default function IngestPage() {
         </div>
       )}
 
+      <div className="ingestSectionBanner">
+        <div className="ingestSectionTitle">{t('论文导入', 'Paper Import')}</div>
+        <div className="ingestSectionSubtitle">
+          {t('上传论文文件夹或 ZIP，处理 DOI、冲突与替换后异步入库。', 'Upload paper folders or ZIPs, resolve DOI conflicts, and ingest them asynchronously.')}
+        </div>
+      </div>
+
       <div className="ingestSummaryRow">
         <div className="ingestSummaryCard">
-          <div className="kicker">Session</div>
+          <div className="kicker">{t('会话', 'Session')}</div>
           <div className="ingestSummaryValue">{uploadId ? <code>{uploadId}</code> : '--'}</div>
-          <div className="metaLine">Current upload context</div>
+          <div className="metaLine">{t('当前上传上下文', 'Current upload context')}</div>
         </div>
         <div className="ingestSummaryCard">
-          <div className="kicker">Units</div>
+          <div className="kicker">{t('单元数', 'Units')}</div>
           <div className="ingestSummaryValue">{scanTotal}</div>
-          <div className="metaLine">Detected scan units</div>
+          <div className="metaLine">{t('已识别扫描单元', 'Detected scan units')}</div>
         </div>
         <div className="ingestSummaryCard">
-          <div className="kicker">Pending</div>
+          <div className="kicker">{t('待处理', 'Pending')}</div>
           <div className="ingestSummaryValue">{scanIssueCount}</div>
-          <div className="metaLine">Conflicts / DOI / Errors</div>
+          <div className="metaLine">{t('冲突 / DOI / 错误', 'Conflicts / DOI / Errors')}</div>
         </div>
         <div className="ingestSummaryCard">
-          <div className="kicker">Task</div>
+          <div className="kicker">{t('任务', 'Task')}</div>
           <div className="ingestSummaryValue">{taskId ? `${taskProgressPct}%` : '--'}</div>
-          <div className="metaLine">{taskId ? (taskIsActive ? 'Running' : 'Completed') : 'No active task'}</div>
+          <div className="metaLine">{taskId ? (taskIsActive ? t('进行中', 'Running') : t('已完成', 'Completed')) : t('暂无任务', 'No active task')}</div>
         </div>
       </div>
 
@@ -741,6 +1281,9 @@ export default function IngestPage() {
                 <Link className="btn" to="/tasks" style={{ display: 'inline-flex', alignItems: 'center' }}>
                   打开任务列表
                 </Link>
+                <button className="btn" disabled={uploadBusy} onClick={rebuildCommunities}>
+                  重建全局聚类
+                </button>
                 <button className="btn" disabled={uploadBusy} onClick={rebuildFaiss}>
                   重建全局 FAISS
                 </button>
@@ -748,7 +1291,7 @@ export default function IngestPage() {
                   全链路重建
                 </button>
               </div>
-              <div className="hint ingestOpsHint">提示：导入 / 替换后如需增强问答证据覆盖，可在此重建全局 FAISS。</div>
+              <div className="hint ingestOpsHint">提示：导入 / 替换后，聚类与全局 FAISS 都改为手动触发，由你决定何时重建。</div>
             </div>
           </div>
         </div>
@@ -806,11 +1349,11 @@ export default function IngestPage() {
                             setPaperType(u.unit_id, v).catch(() => {})
                           }}
                         >
-                          <option value="research">研究型(Research)</option>
-                          <option value="review">综述型(Review)</option>
-                          <option value="software">软件型(Software)</option>
-                          <option value="theoretical">理论型(Theoretical)</option>
-                          <option value="case_study">案例型(Case Study)</option>
+                          <option value="research">{paperTypeOptionLabel(locale, 'research')}</option>
+                          <option value="review">{paperTypeOptionLabel(locale, 'review')}</option>
+                          <option value="software">{paperTypeOptionLabel(locale, 'software')}</option>
+                          <option value="theoretical">{paperTypeOptionLabel(locale, 'theoretical')}</option>
+                          <option value="case_study">{paperTypeOptionLabel(locale, 'case_study')}</option>
                         </select>
                       </div>
                       <div className="row" style={{ marginTop: 10 }}>
@@ -853,11 +1396,11 @@ export default function IngestPage() {
                             setPaperType(u.unit_id, v).catch(() => {})
                           }}
                         >
-                          <option value="research">研究型(Research)</option>
-                          <option value="review">综述型(Review)</option>
-                          <option value="software">软件型(Software)</option>
-                          <option value="theoretical">理论型(Theoretical)</option>
-                          <option value="case_study">案例型(Case Study)</option>
+                          <option value="research">{paperTypeOptionLabel(locale, 'research')}</option>
+                          <option value="review">{paperTypeOptionLabel(locale, 'review')}</option>
+                          <option value="software">{paperTypeOptionLabel(locale, 'software')}</option>
+                          <option value="theoretical">{paperTypeOptionLabel(locale, 'theoretical')}</option>
+                          <option value="case_study">{paperTypeOptionLabel(locale, 'case_study')}</option>
                         </select>
                       </div>
                       <div className="row" style={{ marginTop: 10 }}>
@@ -891,16 +1434,56 @@ export default function IngestPage() {
         </div>
       )}
 
-      {result && (
+      {taskResultSummary && result && (
         <div className="panel ingestResultPanel">
           <div className="panelHeader">
-            <div className="panelTitle">结果 JSON</div>
+            <div className="split">
+              <div className="panelTitle">{t('任务结果', 'Task Result')}</div>
+              <button className="btn btnSmall" onClick={() => setShowRawResult((value) => !value)}>
+                {showRawResult ? t('隐藏原始结果', 'Hide Raw Result') : t('查看原始结果', 'View Raw Result')}
+              </button>
+            </div>
           </div>
           <div className="panelBody">
-            <pre style={{ whiteSpace: 'pre-wrap' }}>{result}</pre>
+            <div className="ingestSummaryRow">
+              <div className="ingestSummaryCard">
+                <div className="kicker">{t('状态', 'Status')}</div>
+                <div className="ingestSummaryValue">{taskStatusLabel(taskResultSummary.status) || taskResultSummary.status}</div>
+                <div className="metaLine">{taskStageLabel(taskResultSummary.stage) || t('任务已结束', 'Task finished')}</div>
+              </div>
+              <div className="ingestSummaryCard">
+                <div className="kicker">{t('导入结果', 'Import Result')}</div>
+                <div className="ingestSummaryValue">
+                  {taskResultSummary.ingested != null ? t(`已导入 ${taskResultSummary.ingested} 篇`, `${taskResultSummary.ingested} ingested`) : '--'}
+                </div>
+                <div className="metaLine">
+                  {taskResultSummary.mdFileCount > 0 ? t(`Markdown 文件 ${taskResultSummary.mdFileCount} 个`, `${taskResultSummary.mdFileCount} markdown files`) : t('未返回 Markdown 文件列表', 'No markdown file list returned')}
+                </div>
+              </div>
+              <div className="ingestSummaryCard">
+                <div className="kicker">upload_id</div>
+                <div className="ingestSummaryValue">{taskResultSummary.uploadId ? <code>{taskResultSummary.uploadId}</code> : '--'}</div>
+                <div className="metaLine">{taskResultSummary.type || t('无任务类型', 'No task type')}</div>
+              </div>
+              <div className="ingestSummaryCard">
+                <div className="kicker">run_id</div>
+                <div className="ingestSummaryValue">{taskResultSummary.runId ? <code>{taskResultSummary.runId}</code> : '--'}</div>
+                <div className="metaLine">
+                  {taskResultSummary.ok == null ? t('未返回 OK 标记', 'No OK flag returned') : taskResultSummary.ok ? t('结果标记为成功', 'Result marked ok') : t('结果标记为失败', 'Result marked failed')}
+                </div>
+              </div>
+            </div>
+            {!showRawResult ? (
+              <div className="hint" style={{ marginTop: 10 }}>
+                {t('原始结果默认收起，避免长 JSON 占满页面；需要排查细节时再展开查看。', 'Raw JSON is collapsed by default to keep the page compact. Expand it when you need details.')}
+              </div>
+            ) : (
+              <pre style={{ marginTop: 10, whiteSpace: 'pre-wrap' }}>{result}</pre>
+            )}
           </div>
         </div>
       )}
+      <TextbookUploadPanel chunkBytes={chunkBytes} />
       <ImportedSourceManagement />
     </div>
   )

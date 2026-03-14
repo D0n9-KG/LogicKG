@@ -137,11 +137,11 @@ class TestSettingsParallelFields:
             neo4j_password="test",
         )
         assert s.phase1_chunk_claim_max_workers == 4
-        assert s.phase1_grounding_max_workers == 2
+        assert s.phase1_grounding_max_workers == 3
         assert s.phase2_conflict_max_workers == 3
-        assert s.ingest_pre_llm_max_workers == 4
-        assert s.faiss_embed_max_workers == 3
-        assert s.llm_global_max_concurrent == 16
+        assert s.ingest_pre_llm_max_workers == 6
+        assert s.faiss_embed_max_workers == 4
+        assert s.llm_global_max_concurrent == 32
 
 
 class TestBatchSchemas:

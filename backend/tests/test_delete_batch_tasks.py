@@ -9,24 +9,19 @@ from app.tasks.store import load_task
 import pytest
 
 
-def test_delete_papers_batch_reports_partial_success_and_rebuild_once(monkeypatch) -> None:
-    calls = {"community": 0, "faiss": 0}
+def test_delete_papers_batch_reports_partial_success_and_only_rebuilds_faiss(monkeypatch) -> None:
+    calls = {"faiss": 0}
 
     def _fake_delete(paper_id: str, hard_delete: bool = True) -> dict:
         if paper_id == "doi:10.1234/bad":
             raise RuntimeError("boom")
         return {"ok": True, "paper_id": paper_id, "status": "deleted", "skipped": False}
 
-    def _fake_community(*args, **kwargs) -> dict:
-        calls["community"] += 1
-        return {"communities": 3}
-
     def _fake_faiss(*args, **kwargs) -> dict:
         calls["faiss"] += 1
         return {"index_size": 9}
 
     monkeypatch.setattr("app.tasks.handlers.delete_paper_asset", _fake_delete)
-    monkeypatch.setattr("app.tasks.handlers.rebuild_global_communities", _fake_community)
     monkeypatch.setattr("app.tasks.handlers.rebuild_global_faiss", _fake_faiss)
 
     result = run_delete_papers_batch(
@@ -38,7 +33,8 @@ def test_delete_papers_batch_reports_partial_success_and_rebuild_once(monkeypatc
     assert result["deleted_count"] == 1
     assert result["failed_count"] == 1
     assert result["rebuild"]["status"] == "succeeded"
-    assert calls == {"community": 1, "faiss": 1}
+    assert "community" not in result["rebuild"]
+    assert calls == {"faiss": 1}
 
 
 def test_delete_papers_batch_skips_metadata_only_and_duplicates(monkeypatch) -> None:

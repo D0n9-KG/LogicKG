@@ -6,6 +6,8 @@ from typing import Any
 
 from json_repair import repair_json
 
+from app.ops_config_store import merge_runtime_config
+
 
 _TPL_RE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}")
 _JSON_BLOCK_RE = re.compile(r"```json\s*(?P<body>.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -267,10 +269,15 @@ def judge_conflict_pairs_batch(*, pairs: list[dict[str, Any]], schema: dict[str,
     # Parallel execution (Phase 2.3)
     from concurrent.futures import ThreadPoolExecutor
 
+    from app.llm.client import recommend_llm_subtask_workers, submit_with_current_llm_context
     from app.settings import settings as app_settings
 
-    max_workers = min(app_settings.phase2_conflict_max_workers, len(batches))
-    max_workers = max(1, max_workers)
+    runtime = merge_runtime_config({})
+    max_workers = recommend_llm_subtask_workers(
+        configured=int(runtime.get("phase2_conflict_max_workers") or app_settings.phase2_conflict_max_workers),
+        batch_count=len(batches),
+        hard_cap=4,
+    )
 
     all_results: list[dict[str, Any]] = []
 
@@ -280,7 +287,7 @@ def judge_conflict_pairs_batch(*, pairs: list[dict[str, Any]], schema: dict[str,
     else:
         indexed_results: list[tuple[int, list[dict[str, Any]]]] = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_run_batch, b): bi for bi, b in enumerate(batches)}
+            futures = {submit_with_current_llm_context(executor, _run_batch, b): bi for bi, b in enumerate(batches)}
             for future in futures:
                 bi = futures[future]
                 try:

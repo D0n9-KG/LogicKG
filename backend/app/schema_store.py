@@ -140,30 +140,32 @@ def _default_schema(paper_type: PaperType) -> dict[str, Any]:
             "require_targets_for_kinds": ["Gap", "Critique", "Limitation", "Comparison"],
             "evidence_verification": "llm",
             "phase1_claim_worker_count": 3,
-            "phase1_logic_chunks_max": 56,
-            "phase1_logic_chunk_chars_max": 420,
-            "phase1_logic_lexical_topk_min": 6,
+            "phase1_logic_chunks_max": 64,
+            "phase1_logic_chunk_chars_max": 460,
+            "phase1_logic_lexical_topk_min": 7,
             "phase1_logic_lexical_topk_multiplier": 3,
             "phase1_logic_evidence_weak_score_threshold": 2.0,
             "phase1_claim_chunks_max": 36,
             "phase1_claims_per_chunk_max": 3,
-            "phase1_chunk_chars_max": 1800,
-            "phase1_doc_chars_max": 18000,
+            "phase1_claim_batch_size": 6,
+            "phase1_claim_batch_chars_max": 9600,
+            "phase1_chunk_chars_max": 2200,
+            "phase1_doc_chars_max": 32000,
             "phase1_filter_reference_sections": True,
             "phase1_excluded_section_terms": [],
             "phase1_evidence_verify_batch_size": 6,
             "phase1_evidence_lexical_topk": 10,
             "phase1_evidence_verify_candidates_max": 6,
-            "phase1_gate_supported_ratio_min": 0.5,
-            "phase1_gate_step_coverage_min": 0.4,
-            "phase1_grounding_mode": "lexical",
+            "phase1_gate_supported_ratio_min": 0.55,
+            "phase1_gate_step_coverage_min": 0.45,
+            "phase1_grounding_mode": "hybrid",
             "phase1_grounding_semantic_supported_min": 0.75,
             "phase1_grounding_semantic_weak_min": 0.55,
-            "phase1_grounding_supported_overlap_min": 0.65,
+            "phase1_grounding_supported_overlap_min": 0.66,
             "phase1_grounding_weak_overlap_min": 0.42,
-            "phase1_grounding_supported_score_substring": 0.78,
-            "phase1_grounding_supported_score_overlap": 0.72,
-            "phase1_grounding_weak_score": 0.55,
+            "phase1_grounding_supported_score_substring": 0.80,
+            "phase1_grounding_supported_score_overlap": 0.74,
+            "phase1_grounding_weak_score": 0.56,
             "phase1_grounding_insufficient_score": 0.18,
             "phase1_grounding_unsupported_score": 0.22,
             "phase1_grounding_empty_score": 0.0,
@@ -173,7 +175,7 @@ def _default_schema(paper_type: PaperType) -> dict[str, Any]:
             "phase2_auto_step_kind_map_enabled": True,
             "phase2_auto_step_kind_map_trigger_slots": 12,
             "phase2_auto_step_kind_map_max_kinds_per_step": 1,
-            "phase2_gate_critical_slot_coverage_min": 0.4,
+            "phase2_gate_critical_slot_coverage_min": 0.50,
             # Backward-compatible default: disabled unless schema explicitly enables it.
             "phase2_gate_step_coverage_bypass_excellent": False,
             "phase2_gate_logic_steps_coverage_min": 0.83,
@@ -188,28 +190,35 @@ def _default_schema(paper_type: PaperType) -> dict[str, Any]:
             "phase2_gate_base_min_non_method_critical_claims": 0,
             "phase2_gate_base_min_result_like_claims": 0,
             "phase2_gate_base_min_result_like_ratio": 0.0,
-            "phase2_gate_conflict_rate_max": 0.35,
-            "phase2_conflict_mode": "lexical",
-            "phase2_conflict_semantic_threshold": 0.75,
+            "phase2_gate_conflict_rate_max": 0.30,
+            "phase2_conflict_mode": "hybrid",
+            "phase2_conflict_semantic_threshold": 0.74,
             "phase2_conflict_candidate_max_pairs": 120,
             "phase2_conflict_shared_tokens_min": 2,
-            "phase2_conflict_samples_max": 8,
-            "phase2_conflict_gate_min_comparable_pairs": 3,
+            "phase2_conflict_samples_max": 10,
+            "phase2_conflict_gate_min_comparable_pairs": 4,
             "phase2_conflict_gate_min_conflict_pairs": 1,
             "phase2_quality_tier_strategy": "a1_fail_count",
             "phase2_quality_tier_yellow_max_failures": 1,
             "phase2_quality_tier_red_min_failures": 2,
-            "phase2_conflict_positive_terms_en": [],
-            "phase2_conflict_negative_terms_en": [],
-            "phase2_conflict_positive_terms_zh": [],
-            "phase2_conflict_negative_terms_zh": [],
-            "phase2_conflict_stop_terms_en": [],
-            "phase2_conflict_stop_terms_zh": [],
+            "phase2_conflict_positive_terms_en": [
+                "increase", "improve", "outperform", "higher", "gain", "enhance", "boost", "better",
+            ],
+            "phase2_conflict_negative_terms_en": [
+                "decrease", "reduce", "lower", "worse", "decline", "drop", "weaken", "underperform",
+            ],
+            "phase2_conflict_positive_terms_zh": ["提高", "增加", "改善", "优于", "更高", "增强"],
+            "phase2_conflict_negative_terms_zh": ["降低", "减少", "恶化", "劣于", "更低", "下降", "削弱"],
+            "phase2_conflict_stop_terms_en": [
+                "the", "and", "of", "to", "in", "for", "with", "we", "our", "paper", "method", "result",
+                "is", "are", "was", "were", "can", "could", "may", "might", "will", "would", "should", "which",
+            ],
+            "phase2_conflict_stop_terms_zh": ["本文", "该文", "我们", "共同", "通过", "方法", "结果", "进行"],
             "citation_purpose_max_contexts_per_cite": 3,
             "citation_purpose_max_context_chars": 900,
-            "citation_purpose_max_cites_per_batch": 60,
+            "citation_purpose_max_cites_per_batch": 72,
             "citation_purpose_max_labels_per_cite": 3,
-            "citation_purpose_fallback_score": 0.4,
+            "citation_purpose_fallback_score": 0.35,
             "reference_recovery_enabled": True,
             "reference_recovery_trigger_max_existing_refs": 0,
             "reference_recovery_max_refs": 180,
@@ -314,7 +323,15 @@ def validate_schema(schema: dict[str, Any]) -> None:
     cmax_per_chunk = int(rules.get("phase1_claims_per_chunk_max") or 3)
     if cmax_per_chunk < 1 or cmax_per_chunk > 12:
         raise ValueError("Invalid phase1_claims_per_chunk_max")
-    chunk_chars = int(rules.get("phase1_chunk_chars_max") or 1800)
+    claim_batch_size_raw = rules.get("phase1_claim_batch_size", 6)
+    claim_batch_size = int(6 if claim_batch_size_raw is None else claim_batch_size_raw)
+    if claim_batch_size < 1 or claim_batch_size > 12:
+        raise ValueError("Invalid phase1_claim_batch_size")
+    claim_batch_chars_raw = rules.get("phase1_claim_batch_chars_max", 9600)
+    claim_batch_chars = int(9600 if claim_batch_chars_raw is None else claim_batch_chars_raw)
+    if claim_batch_chars < 1000 or claim_batch_chars > 60000:
+        raise ValueError("Invalid phase1_claim_batch_chars_max")
+    chunk_chars = int(rules.get("phase1_chunk_chars_max") or 2200)
     if chunk_chars < 200 or chunk_chars > 20000:
         raise ValueError("Invalid phase1_chunk_chars_max")
     doc_chars = int(rules.get("phase1_doc_chars_max") or 18000)

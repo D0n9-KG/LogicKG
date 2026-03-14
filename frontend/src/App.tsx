@@ -12,7 +12,6 @@ import TextbookDetailPage from './pages/TextbookDetailPage'
 import PageWorkbench from './components/PageWorkbench'
 import OpsWorkbench from './pages/OpsWorkbench'
 import IngestPage from './pages/IngestPage'
-import DiscoveryPage from './pages/DiscoveryPage'
 import { I18nProvider, useI18n } from './i18n'
 import type { ModuleId, SelectedNode } from './state/types'
 import './components/layout.css'
@@ -48,6 +47,7 @@ function Shell() {
   const [leftWidth, setLeftWidth] = useState(300)
   const [rightWidth, setRightWidth] = useState(340)
   const [resizing, setResizing] = useState<null | 'left' | 'right'>(null)
+
   const panelState = resolveOverview3DPanelState({
     activeModule,
     overviewMode: overviewGraphMode,
@@ -182,9 +182,6 @@ function Shell() {
           <button className="kgBtn kgBtn--sm kgBtn--primary" onClick={() => nav('/ingest')}>
             {t('导入中心', 'Import Center')}
           </button>
-          <button className="kgBtn kgBtn--sm" onClick={() => nav('/discovery')}>
-            {t('科学发现', 'Discovery')}
-          </button>
           <button className="kgBtn kgBtn--sm" onClick={() => dispatch({ type: 'RELAYOUT' })}>
             {t('重新布局', 'Re-layout')}
           </button>
@@ -265,6 +262,7 @@ function ShellRoute({ module }: { module?: ModuleId }) {
 
 function AppRoutes() {
   const { t } = useI18n()
+
   return (
     <Routes>
       <Route path="/ask" element={<ShellRoute module="ask" />} />
@@ -286,14 +284,7 @@ function AppRoutes() {
           </PageWorkbench>
         }
       />
-      <Route
-        path="/discovery"
-        element={
-          <PageWorkbench title={t('科学问题发现', 'Scientific Discovery')}>
-            <DiscoveryPage />
-          </PageWorkbench>
-        }
-      />
+      <Route path="/discovery" element={<Navigate to="/ops" replace />} />
       <Route path="/paper/:paperId" element={<PaperDetailWrapper />} />
       <Route path="/textbooks/:textbookId" element={<TextbookDetailWrapper />} />
       <Route path="*" element={<ShellRoute />} />
@@ -304,6 +295,7 @@ function AppRoutes() {
 function PaperDetailWrapper() {
   const nav = useNavigate()
   const { t } = useI18n()
+
   return (
     <div style={{ height: '100vh', overflow: 'auto', background: 'var(--bg)', color: 'var(--text)', padding: 20 }}>
       <button className="kgBtn kgBtn--sm" onClick={() => nav(-1)} style={{ marginBottom: 16 }}>
@@ -317,6 +309,7 @@ function PaperDetailWrapper() {
 function TextbookDetailWrapper() {
   const nav = useNavigate()
   const { t } = useI18n()
+
   return (
     <div style={{ height: '100vh', overflow: 'auto', background: 'var(--bg)', color: 'var(--text)', padding: 20 }}>
       <button className="kgBtn kgBtn--sm" onClick={() => nav(-1)} style={{ marginBottom: 16 }}>

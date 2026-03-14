@@ -20,6 +20,7 @@ from app.ingest.upload_store import (
     overrides_set,
     paper_type_overrides_set,
     safe_relpath,
+    scan_path,
     storage_dir,
 )
 
@@ -138,6 +139,30 @@ def _delete_staged_unit(upload_id: str, unit: dict[str, Any]) -> None:
     shutil.rmtree(p, ignore_errors=True)
 
 
+def _load_cached_scan(upload_id: str) -> dict[str, Any] | None:
+    p = scan_path(upload_id)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_cached_scan(upload_id: str, scan: dict[str, Any]) -> None:
+    p = scan_path(upload_id)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _remove_unit_from_scan(scan: dict[str, Any], unit_id: str) -> dict[str, Any]:
+    out = dict(scan)
+    out["units"] = [u for u in list(scan.get("units") or []) if str(u.get("unit_id")) != unit_id]
+    return out
+
+
 def set_doi_override(upload_id: str, unit_id: str, doi: str) -> dict[str, Any]:
     d = doi.strip().lower()
     if not _DOI_RE.match(d):
@@ -189,13 +214,19 @@ def commit_ready(upload_id: str, progress: ProgressFn | None = None, log: LogFn 
 
 
 def keep_existing(upload_id: str, unit_id: str) -> dict[str, Any]:
-    scan = scan_upload(upload_id)
+    scan = _load_cached_scan(upload_id) or scan_upload(upload_id)
     units: list[dict[str, Any]] = list(scan.get("units") or [])
     u = next((x for x in units if str(x.get("unit_id")) == unit_id), None)
     if not u:
+        scan = scan_upload(upload_id)
+        units = list(scan.get("units") or [])
+        u = next((x for x in units if str(x.get("unit_id")) == unit_id), None)
+    if not u:
         raise FileNotFoundError(f"Unit not found: {unit_id}")
     _delete_staged_unit(upload_id, u)
-    return scan_upload(upload_id)
+    updated = _remove_unit_from_scan(scan, unit_id)
+    _save_cached_scan(upload_id, updated)
+    return updated
 
 
 def replace_with_new(upload_id: str, unit_id: str, progress: ProgressFn | None = None, log: LogFn | None = None) -> dict[str, Any]:

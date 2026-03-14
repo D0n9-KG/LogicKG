@@ -87,3 +87,36 @@ def list_tasks(limit: int = 50, keep_finished: int = 10, prune_finished: bool = 
         if len(kept) >= limit:
             break
     return kept
+
+
+def delete_tasks_by_type_name(type_name: str) -> dict[str, object]:
+    normalized = str(type_name or '').strip()
+    deleted = 0
+    failed_paths: list[str] = []
+    if not normalized:
+        return {
+            'type_name': normalized,
+            'deleted_count': deleted,
+            'failed_paths': failed_paths,
+            'status': 'ok',
+        }
+
+    for path in tasks_dir().glob('*.json'):
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if str(payload.get('type') or '').strip() != normalized:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            deleted += 1
+        except Exception:
+            failed_paths.append(str(path))
+
+    return {
+        'type_name': normalized,
+        'deleted_count': deleted,
+        'failed_paths': failed_paths,
+        'status': 'ok' if not failed_paths else 'error',
+    }

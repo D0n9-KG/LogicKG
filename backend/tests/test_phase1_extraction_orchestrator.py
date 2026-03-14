@@ -1283,6 +1283,7 @@ class Phase1ExtractionOrchestratorTests(unittest.TestCase):
 
     def test_chunk_claim_extractor_honors_schema_prompt_overrides(self) -> None:
         from app.extraction.orchestrator import _extract_claims_from_chunk_llm
+        from app.llm.schemas import ChunkClaimsResponse
 
         schema = {
             **self.schema,
@@ -1296,7 +1297,22 @@ class Phase1ExtractionOrchestratorTests(unittest.TestCase):
             },
         }
 
-        with patch("app.llm.client.call_json", return_value={"claims": [{"text": "A defined claim.", "evidence_quote": "ABCDEFGHIJKLMNOPQRST", "step_type": "Background", "claim_kinds": ["Definition"], "confidence": 0.8}]}) as call_json:
+        with patch(
+            "app.llm.client.call_validated_json",
+            return_value=ChunkClaimsResponse.model_validate(
+                {
+                    "claims": [
+                        {
+                            "text": "A defined claim.",
+                            "evidence_quote": "ABCDEFGHIJKLMNOPQRST",
+                            "step_type": "Background",
+                            "claim_kinds": ["Definition"],
+                            "confidence": 0.8,
+                        }
+                    ]
+                }
+            ),
+        ) as call_validated_json:
             out = _extract_claims_from_chunk_llm(
                 chunk_text="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
                 step_ids=["Background"],
@@ -1306,7 +1322,7 @@ class Phase1ExtractionOrchestratorTests(unittest.TestCase):
             )
 
         self.assertEqual(len(out), 1)
-        args = call_json.call_args[0]
+        args = call_validated_json.call_args[0]
         self.assertEqual(args[0], "SYS-OVERRIDE")
         self.assertIn("TEXT=ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", args[1])
         self.assertIn("MAX=2", args[1])

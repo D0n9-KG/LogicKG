@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.ingest.models import DocumentIR
+from app.ops_config_store import merge_runtime_config
 from app.text_normalization import fold_symbol_confusables
 
 
@@ -351,6 +352,29 @@ def _priority_chunks(
     return [{"chunk_id": c.chunk_id, "text": c.text, "section": c.section} for c in ordered[: max(1, int(max_chunks))]]
 
 
+def _split_claim_batches_by_char_budget(
+    chunks: list[dict[str, Any]],
+    *,
+    chars_max: int,
+    count_max: int,
+) -> list[list[dict[str, Any]]]:
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_chars = 0
+    for chunk in chunks:
+        text = str(chunk.get("text") or "")
+        chunk_chars = len(text)
+        if current and (current_chars + chunk_chars > chars_max or len(current) >= count_max):
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(chunk)
+        current_chars += chunk_chars
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _truncate_to_sentence_boundary(text: str, max_chars: int) -> str:
     """Truncate *text* at a sentence boundary not exceeding *max_chars* characters.
 
@@ -498,7 +522,7 @@ def _extract_claims_from_chunk_llm(
     text = (chunk_text or "").strip()
     if not text:
         return []
-    chunk_chars_max = max(200, min(12000, _rule_int(rules, "phase1_chunk_chars_max", 1800)))
+    chunk_chars_max = max(200, min(12000, _rule_int(rules, "phase1_chunk_chars_max", 2200)))
     if len(text) > chunk_chars_max:
         text = _truncate_to_sentence_boundary(text, chunk_chars_max)
     default_system = (
@@ -682,7 +706,7 @@ def _extract_claims_from_chunks_batch_llm(
 
     rules = schema.get("rules") or {}
     prompts = schema.get("prompts") or {}
-    chunk_chars_max = max(200, min(12000, _rule_int(rules, "phase1_chunk_chars_max", 1800)))
+    chunk_chars_max = max(200, min(12000, _rule_int(rules, "phase1_chunk_chars_max", 2200)))
 
     # Prepare chunk texts (truncated)
     input_chunks: list[dict[str, str]] = []
@@ -848,6 +872,8 @@ def _default_claim_extractor(
     kind_ids = _enabled_kind_ids(schema)
 
     batch_size = max(1, min(12, int(rules.get("phase1_claim_batch_size") or 6)))
+    batch_chars_max = max(1200, min(30000, int(rules.get("phase1_claim_batch_chars_max") or 9600)))
+    chunk_chars_max = max(200, min(12000, _rule_int(rules, "phase1_chunk_chars_max", 2200)))
 
     candidates: list[dict[str, Any]] = []
     chunks = _priority_chunks(doc, logic=logic, max_chunks=max_chunks, rules=rules)
@@ -864,13 +890,17 @@ def _default_claim_extractor(
     for chunk in chunks:
         chunk_id = str(chunk.get("chunk_id") or "").strip()
         chunk_text = str(chunk.get("text") or "")
+        if len(chunk_text) > chunk_chars_max:
+            chunk_text = _truncate_to_sentence_boundary(chunk_text, chunk_chars_max)
         if chunk_id and chunk_text.strip():
             valid_chunks.append({"chunk_id": chunk_id, "text": chunk_text, "_idx": len(valid_chunks)})
 
-    # Group into batches
-    chunk_batches: list[list[dict[str, Any]]] = []
-    for i in range(0, len(valid_chunks), batch_size):
-        chunk_batches.append(valid_chunks[i : i + batch_size])
+    # Group into batches using both count cap and total character budget
+    chunk_batches = _split_claim_batches_by_char_budget(
+        valid_chunks,
+        chars_max=batch_chars_max,
+        count_max=batch_size,
+    )
 
     def _process_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Process a single batch with tiered fallback. Returns per-chunk results."""
@@ -938,10 +968,15 @@ def _default_claim_extractor(
     # Execute batches with parallel workers
     from concurrent.futures import ThreadPoolExecutor
 
+    from app.llm.client import recommend_llm_subtask_workers, submit_with_current_llm_context
     from app.settings import settings as app_settings
 
-    max_workers = min(app_settings.phase1_chunk_claim_max_workers, len(chunk_batches))
-    max_workers = max(1, max_workers)
+    runtime = merge_runtime_config({})
+    max_workers = recommend_llm_subtask_workers(
+        configured=int(runtime.get("phase1_chunk_claim_max_workers") or app_settings.phase1_chunk_claim_max_workers),
+        batch_count=len(chunk_batches),
+        hard_cap=6,
+    )
 
     batch_results: list[tuple[int, dict[str, Any]]] = []
     if max_workers == 1 or len(chunk_batches) <= 1:
@@ -951,7 +986,7 @@ def _default_claim_extractor(
             batch_results.append((bi, br))
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_process_batch, b): bi for bi, b in enumerate(chunk_batches)}
+            futures = {submit_with_current_llm_context(executor, _process_batch, b): bi for bi, b in enumerate(chunk_batches)}
             for future in futures:
                 bi = futures[future]
                 try:
@@ -1004,6 +1039,7 @@ def _default_claim_extractor(
         "chunk_fail_count": chunk_fail_count,
         "chunk_extraction_stats": {
             "batch_size": batch_size,
+            "batch_chars_max": batch_chars_max,
             "batch_count": len(chunk_batches),
             "batch_quote_mismatch_count": batch_quote_mismatch_count,
             "batch_unknown_chunk_id_count": batch_unknown_chunk_id_count,

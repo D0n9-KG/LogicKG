@@ -9,6 +9,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
 
 from app.ingest.models import Chunk
+from app.ops_config_store import merge_runtime_config
 from app.settings import settings
 
 _TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -196,7 +197,8 @@ def _build_faiss_from_texts(
 
     from concurrent.futures import ThreadPoolExecutor
 
-    embed_workers = max(1, min(settings.faiss_embed_max_workers, total_batches))
+    runtime = merge_runtime_config({})
+    embed_workers = max(1, min(int(runtime.get("faiss_embed_max_workers") or settings.faiss_embed_max_workers), total_batches))
     all_vectors: list[tuple[int, list[list[float]]]] = []
     if embed_workers == 1 or total_batches <= 1:
         for bi in range(total_batches):

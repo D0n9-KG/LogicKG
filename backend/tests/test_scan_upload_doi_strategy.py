@@ -106,6 +106,51 @@ class ScanUploadDoiStrategyTests(unittest.TestCase):
         self.assertEqual((out.get("doi_strategy") or ""), "title_crossref")
         mock_crossref.resolve_reference.assert_called_once()
 
+    @patch("app.ingest.scan_upload.Neo4jClient")
+    @patch("app.ingest.scan_upload.CrossrefClient")
+    def test_title_crossref_recovers_when_reference_section_contains_wrong_doi(self, mock_crossref_cls, mock_neo4j_cls) -> None:
+        upload_id = "u_crossref_reference_doi"
+        self._write_manifest(upload_id, "title_crossref")
+        self._write_unit_md(
+            upload_id,
+            "paperC",
+            "paper.md",
+            (
+                "# DEM investigation of particle anti-rotation effects on the micromechanical response of granular materials\n\n"
+                "Bo Zhou, Runqiu Huang\n\n"
+                "Main body paragraph.\n\n"
+                "# References\n\n"
+                "[1] Example cited paper. doi:10.1061/(ASCE)GT.1943-5606.0000890\n"
+            ),
+        )
+
+        selected = CrossrefWork(
+            doi="10.1007/s10035-013-0409-9",
+            title="DEM investigation of particle anti-rotation effects on the micromechanical response of granular materials",
+            year=2013,
+            venue="Granular Matter",
+            authors=["Bo Zhou", "Runqiu Huang"],
+            score=63.9,
+        )
+        mock_crossref = mock_crossref_cls.return_value
+        mock_crossref.resolve_reference.return_value = CrossrefResolveResult(
+            query="DEM investigation of particle anti-rotation effects on the micromechanical response of granular materials",
+            topk=[selected],
+            selected=selected,
+            confidence=0.63,
+        )
+
+        mock_neo4j = mock_neo4j_cls.return_value.__enter__.return_value
+        mock_neo4j.get_paper_basic.side_effect = KeyError("not found")
+
+        out = scan_upload(upload_id)
+
+        units = out.get("units") or []
+        self.assertEqual(len(units), 1)
+        self.assertEqual(units[0].get("status"), "ready")
+        self.assertEqual(units[0].get("doi"), "10.1007/s10035-013-0409-9")
+        mock_crossref.resolve_reference.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

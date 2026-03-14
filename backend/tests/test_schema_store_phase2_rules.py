@@ -64,6 +64,8 @@ class SchemaStorePhase2RulesTests(unittest.TestCase):
         schema["rules"].update(
             {
                 "phase1_chunk_chars_max": 2048,
+                "phase1_claim_batch_size": 6,
+                "phase1_claim_batch_chars_max": 9600,
                 "phase1_logic_chunk_chars_max": 600,
                 "phase1_logic_lexical_topk_min": 8,
                 "phase1_logic_lexical_topk_multiplier": 4,
@@ -117,6 +119,16 @@ class SchemaStorePhase2RulesTests(unittest.TestCase):
         schema2["rules"]["phase1_logic_chunk_chars_max"] = 50
         with self.assertRaisesRegex(ValueError, "phase1_logic_chunk_chars_max"):
             validate_schema(schema2)
+
+        schema2b = _base_schema()
+        schema2b["rules"]["phase1_claim_batch_size"] = 0
+        with self.assertRaisesRegex(ValueError, "phase1_claim_batch_size"):
+            validate_schema(schema2b)
+
+        schema2c = _base_schema()
+        schema2c["rules"]["phase1_claim_batch_chars_max"] = 999999
+        with self.assertRaisesRegex(ValueError, "phase1_claim_batch_chars_max"):
+            validate_schema(schema2c)
 
         schema3 = _base_schema()
         schema3["rules"]["citation_purpose_fallback_score"] = 1.5

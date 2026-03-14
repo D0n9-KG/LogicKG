@@ -9,7 +9,8 @@ from typing import Any, Callable
 
 from app.citations.aggregate import build_reference_and_cite_records
 from app.citations.citation_event_recovery import recover_citation_events_from_references
-from app.community.service import rebuild_global_communities
+from app.citations.mention_projection import build_citation_mention_rows
+from app.citations.projection import build_citation_act_rows
 from app.crossref.client import CrossrefClient
 from app.extraction.orchestrator import run_phase1_extraction
 from app.graph.neo4j_client import Neo4jClient
@@ -19,10 +20,12 @@ from app.ingest.paper_meta import load_canonical_meta
 from app.ingest.models import Chunk, MdSpan
 from app.ingest.parse_md import parse_mineru_markdown
 from app.llm.citation_purpose import classify_citation_purposes_batch
+from app.ops_config_store import remove_legacy_modules
 from app.llm.reference_recovery import recover_references_with_agent
 from app.rag.structured_retrieval import build_community_corpus_rows
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
+from app.tasks.store import delete_tasks_by_type_name
 from app.vector.faiss_store import build_faiss_for_chunks, build_faiss_for_rows
 
 
@@ -74,6 +77,220 @@ def _schema_for_md(md_path: str) -> dict[str, Any]:
         return load_active("research")  # type: ignore[arg-type]
 
 
+def _build_citation_semantic_payload(
+    *,
+    doc: Any,
+    paper_id: str,
+    cite_rec: dict[str, Any] | None,
+    purposes: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    citation_acts = build_citation_act_rows(
+        paper_id=paper_id,
+        cites_resolved=list((cite_rec or {}).get("cites_resolved") or []),
+        purposes=list(purposes or []),
+    )
+    citation_mentions = build_citation_mention_rows(
+        doc=doc,
+        paper_id=paper_id,
+        cite_rec=cite_rec,
+        citation_acts=citation_acts,
+    )
+    return citation_acts, citation_mentions
+
+
+def _write_citation_semantic_artifacts(
+    out_dir: Path,
+    *,
+    citation_acts: list[dict[str, Any]],
+    citation_mentions: list[dict[str, Any]],
+) -> dict[str, int]:
+    (out_dir / "citation_acts.json").write_text(
+        json.dumps(citation_acts, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "citation_mentions.json").write_text(
+        json.dumps(citation_mentions, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "citation_acts": len(citation_acts),
+        "citation_mentions": len(citation_mentions),
+    }
+
+
+def _persist_rebuild_artifacts(
+    *,
+    paper_id: str,
+    doc: Any,
+    cite_rec: dict[str, Any] | None,
+    logic_claims: dict[str, Any],
+    purposes: list[dict[str, Any]] | None,
+    citation_acts: list[dict[str, Any]],
+    citation_mentions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    out_dir = _storage_dir() / "derived" / "papers" / _safe_id(paper_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "document_ir.json").write_text(
+        json.dumps(
+            {
+                "paper": doc.paper.__dict__,
+                "chunks": [{**c.__dict__, "span": c.span.__dict__} for c in doc.chunks],
+                "references": [r.__dict__ for r in doc.references],
+                "citations": [{**ce.__dict__, "span": ce.span.__dict__} for ce in doc.citations],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "citations.json").write_text(json.dumps(cite_rec or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "llm_imrad.json").write_text(json.dumps(logic_claims, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "llm_citation_purposes.json").write_text(
+        json.dumps(list(purposes or []), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    citation_semantic = _write_citation_semantic_artifacts(
+        out_dir,
+        citation_acts=citation_acts,
+        citation_mentions=citation_mentions,
+    )
+    return {
+        "artifacts_dir": str(out_dir),
+        "citation_semantic": citation_semantic,
+    }
+
+
+def _legacy_discovery_policy_paths() -> list[Path]:
+    configured = str(
+        getattr(settings, 'discovery_prompt_policy_path', 'storage/discovery/prompt_policy_bandit.json') or ''
+    ).strip()
+    if not configured:
+        return []
+    raw = Path(configured)
+    resolved = raw if raw.is_absolute() else _backend_root() / raw
+    return [resolved]
+
+
+def _delete_path(path: Path) -> dict[str, Any]:
+    target = Path(path)
+    if not target.exists():
+        return {'status': 'missing', 'path': str(target), 'error': None}
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return {'status': 'deleted', 'path': str(target), 'error': None}
+    except Exception as exc:
+        return {'status': 'error', 'path': str(target), 'error': str(exc)}
+
+
+def _cleanup_discovery_filesystem() -> dict[str, Any]:
+    active_storage = _delete_path(_storage_dir() / 'discovery')
+    legacy_paths = [_delete_path(path) for path in _legacy_discovery_policy_paths()]
+    legacy_errors = [item for item in legacy_paths if item.get('status') == 'error']
+    legacy_deleted = [item for item in legacy_paths if item.get('status') == 'deleted']
+    legacy_status = 'error' if legacy_errors else 'deleted' if legacy_deleted else 'missing'
+    return {
+        'status': 'error' if active_storage.get('status') == 'error' or legacy_status == 'error' else 'ok',
+        'active_storage': active_storage,
+        'legacy_prompt_policy': {
+            'status': legacy_status,
+            'paths': legacy_paths,
+            'error': '; '.join(str(item.get('error') or '') for item in legacy_errors) or None,
+        },
+    }
+
+
+def cleanup_legacy_discovery_artifacts(
+    progress: ProgressFn | None = None,
+    log: LogFn | None = None,
+) -> dict[str, Any]:
+    def notify(stage: str, p: float, msg: str | None = None) -> None:
+        if progress:
+            progress(stage, p, msg)
+
+    def write_log(line: str) -> None:
+        if log:
+            log(line)
+
+    report: dict[str, Any] = {
+        'ok': True,
+        'graph': {'status': 'pending', 'error': None},
+        'schema': {'status': 'pending', 'error': None},
+        'filesystem': {'status': 'pending', 'error': None},
+        'config': {'status': 'pending', 'error': None},
+        'tasks': {'status': 'pending', 'error': None},
+    }
+
+    notify('cleanup:discovery:init', 0.05, 'Cleaning legacy discovery artifacts')
+    try:
+        with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
+            notify('cleanup:discovery:graph', 0.2, 'Deleting legacy discovery graph artifacts')
+            try:
+                graph_cleanup = client.clear_legacy_discovery_artifacts()
+                report['graph'].update(graph_cleanup)
+                report['graph']['status'] = 'ok'
+            except Exception as exc:
+                report['ok'] = False
+                report['graph']['status'] = 'error'
+                report['graph']['error'] = str(exc)
+
+            notify('cleanup:discovery:schema', 0.35, 'Dropping legacy discovery schema objects')
+            try:
+                schema_cleanup = client.drop_legacy_discovery_schema()
+                report['schema'].update(schema_cleanup)
+                report['schema']['status'] = 'ok'
+            except Exception as exc:
+                report['ok'] = False
+                report['schema']['status'] = 'error'
+                report['schema']['error'] = str(exc)
+    except Exception as exc:
+        report['ok'] = False
+        if report['graph']['status'] == 'pending':
+            report['graph']['status'] = 'error'
+            report['graph']['error'] = str(exc)
+        if report['schema']['status'] == 'pending':
+            report['schema']['status'] = 'error'
+            report['schema']['error'] = str(exc)
+
+    notify('cleanup:discovery:filesystem', 0.55, 'Removing discovery filesystem artifacts')
+    filesystem_cleanup = _cleanup_discovery_filesystem()
+    report['filesystem'].update(filesystem_cleanup)
+    report['filesystem']['error'] = filesystem_cleanup.get('legacy_prompt_policy', {}).get('error')
+    if filesystem_cleanup.get('status') != 'ok':
+        report['ok'] = False
+    write_log('discovery filesystem artifacts cleaned')
+
+    notify('cleanup:discovery:config', 0.72, 'Removing discovery configuration residue')
+    try:
+        config_cleanup = remove_legacy_modules({'discovery'})
+        report['config'].update(config_cleanup)
+        report['config']['status'] = str(config_cleanup.get('status') or 'ok')
+        if report['config']['status'] != 'ok':
+            report['ok'] = False
+    except Exception as exc:
+        report['ok'] = False
+        report['config']['status'] = 'error'
+        report['config']['error'] = str(exc)
+
+    notify('cleanup:discovery:tasks', 0.88, 'Removing discovery task history')
+    try:
+        tasks_cleanup = delete_tasks_by_type_name('discovery_batch')
+        report['tasks'].update(tasks_cleanup)
+        report['tasks']['status'] = str(tasks_cleanup.get('status') or 'ok')
+        if report['tasks']['status'] != 'ok':
+            report['ok'] = False
+            report['tasks']['error'] = ', '.join(report['tasks'].get('failed_paths') or []) or 'task delete failed'
+    except Exception as exc:
+        report['ok'] = False
+        report['tasks']['status'] = 'error'
+        report['tasks']['error'] = str(exc)
+
+    notify('cleanup:discovery:done', 1.0, 'Legacy discovery cleanup complete')
+    return report
+
+
 def cleanup_legacy_proposition_artifacts(
     progress: ProgressFn | None = None,
     log: LogFn | None = None,
@@ -100,13 +317,8 @@ def cleanup_legacy_proposition_artifacts(
 
     write_log("legacy proposition artifacts removed from graph, schema, and stale FAISS exports")
 
-    def community_progress(stage: str, p: float, msg: str | None = None) -> None:
-        notify(stage, 0.4 + 0.35 * float(max(0.0, min(1.0, p))), msg)
-
-    community = rebuild_global_communities(progress=community_progress, log=log)
-
     def faiss_progress(stage: str, p: float, msg: str | None = None) -> None:
-        notify(stage, 0.78 + 0.17 * float(max(0.0, min(1.0, p))), msg)
+        notify(stage, 0.52 + 0.43 * float(max(0.0, min(1.0, p))), msg)
 
     faiss = rebuild_global_faiss(progress=faiss_progress, log=log)
     notify("cleanup:legacy:done", 1.0, "Legacy proposition cleanup complete")
@@ -117,7 +329,6 @@ def cleanup_legacy_proposition_artifacts(
             "schema": schema_cleanup,
             "removed_corpora": list(faiss_cleanup.get("removed_corpora") or []),
         },
-        "community": community,
         "faiss": faiss,
     }
 
@@ -312,6 +523,12 @@ def rebuild_paper(
             continue
         x = by_id.get(str(cited_paper_id)) or {"labels": ["Unknown"], "scores": [0.0]}
         purposes.append({"cited_paper_id": cited_paper_id, "labels": x["labels"], "scores": x["scores"]})
+    citation_acts, citation_mentions = _build_citation_semantic_payload(
+        doc=doc,
+        paper_id=paper_id,
+        cite_rec=cite_rec,
+        purposes=purposes,
+    )
 
     notify("rebuild:neo4j_llm", 0.78, "Writing LLM outputs to Neo4j")
 
@@ -339,12 +556,38 @@ def rebuild_paper(
             0.80,
             f"Phase1 gate failed (tier={quality_report.get('quality_tier')}), skipping canonical write",
         )
+        notify("rebuild:artifacts", 0.86, "Writing rebuilt artifacts to storage")
+        artifact_payload = _persist_rebuild_artifacts(
+            paper_id=paper_id,
+            doc=doc,
+            cite_rec=cite_rec,
+            logic_claims=logic_claims,
+            purposes=purposes,
+            citation_acts=citation_acts,
+            citation_mentions=citation_mentions,
+        )
+        write_log(f"rebuilt artifacts in {artifact_payload['artifacts_dir']}")
         write_log(f"gate_failed: paper_id={paper_id} tier={quality_report.get('quality_tier')}")
         return {
             "paper_id": paper_id,
+            "source_md_path": md_path,
             "gate_passed": False,
             "quality_report": quality_report,
             "skipped_canonical_write": True,
+            "artifacts_dir": artifact_payload["artifacts_dir"],
+            "citations": {
+                "refs": len(cite_rec.get("refs") or []),
+                "cites_resolved": len(cite_rec.get("cites_resolved") or []),
+                "cites_unresolved": len(cite_rec.get("cites_unresolved") or []),
+            },
+            "llm": {
+                "purposes": len(purposes),
+                "claims": len(logic_claims.get("claims") or []),
+                "gate_passed": False,
+                "quality_tier": str(quality_report.get("quality_tier") or ""),
+                "quality_report": quality_report,
+            },
+            "citation_semantic": artifact_payload["citation_semantic"],
         }
 
     with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
@@ -393,33 +636,24 @@ def rebuild_paper(
             pass
 
     notify("rebuild:artifacts", 0.86, "Writing rebuilt artifacts to storage")
-    out_dir = _storage_dir() / "derived" / "papers" / _safe_id(paper_id)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "document_ir.json").write_text(
-        json.dumps(
-            {
-                "paper": doc.paper.__dict__,
-                "chunks": [{**c.__dict__, "span": c.span.__dict__} for c in doc.chunks],
-                "references": [r.__dict__ for r in doc.references],
-                "citations": [{**ce.__dict__, "span": ce.span.__dict__} for ce in doc.citations],
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    artifact_payload = _persist_rebuild_artifacts(
+        paper_id=paper_id,
+        doc=doc,
+        cite_rec=cite_rec,
+        logic_claims=logic_claims,
+        purposes=purposes,
+        citation_acts=citation_acts,
+        citation_mentions=citation_mentions,
     )
-    (out_dir / "citations.json").write_text(json.dumps(cite_rec, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out_dir / "llm_imrad.json").write_text(json.dumps(logic_claims, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out_dir / "llm_citation_purposes.json").write_text(json.dumps(purposes, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    write_log(f"rebuilt artifacts in {out_dir}")
+    write_log(f"rebuilt artifacts in {artifact_payload['artifacts_dir']}")
     notify("rebuild:paper_done", 0.92, "Paper rebuild done")
     return {
         "paper_id": paper_id,
         "source_md_path": md_path,
         "reference_recovery": reference_recovery,
         "citation_event_recovery": citation_event_recovery,
-        "artifacts_dir": str(out_dir),
+        "artifacts_dir": artifact_payload["artifacts_dir"],
         "citations": {
             "refs": len(cite_rec.get("refs") or []),
             "cites_resolved": len(cite_rec.get("cites_resolved") or []),
@@ -432,6 +666,7 @@ def rebuild_paper(
             "quality_tier": str((logic_claims.get("quality_report") or {}).get("quality_tier") or ""),
             "quality_report": logic_claims.get("quality_report") or {},
         },
+        "citation_semantic": artifact_payload["citation_semantic"],
     }
 
 
@@ -609,6 +844,12 @@ def replace_paper_from_md_path(
             continue
         x = by_id.get(str(cited_paper_id)) or {"labels": ["Unknown"], "scores": [0.0]}
         purposes.append({"cited_paper_id": cited_paper_id, "labels": x["labels"], "scores": x["scores"]})
+    citation_acts, citation_mentions = _build_citation_semantic_payload(
+        doc=doc,
+        paper_id=paper_id,
+        cite_rec=cite_rec,
+        purposes=purposes,
+    )
 
     notify("replace:neo4j_llm", 0.82, "Writing LLM outputs to Neo4j")
 
@@ -635,6 +876,17 @@ def replace_paper_from_md_path(
             0.84,
             f"Phase1 gate failed (tier={quality_report.get('quality_tier')}), skipping canonical write",
         )
+        notify("replace:artifacts", 0.90, "Writing rebuilt artifacts to storage")
+        artifact_payload = _persist_rebuild_artifacts(
+            paper_id=paper_id,
+            doc=doc,
+            cite_rec=cite_rec,
+            logic_claims=logic_claims,
+            purposes=purposes,
+            citation_acts=citation_acts,
+            citation_mentions=citation_mentions,
+        )
+        write_log(f"rebuilt artifacts in {artifact_payload['artifacts_dir']}")
         write_log(f"gate_failed: paper_id={paper_id} tier={quality_report.get('quality_tier')}")
         return {
             "paper_id": paper_id,
@@ -642,6 +894,8 @@ def replace_paper_from_md_path(
             "gate_passed": False,
             "quality_report": quality_report,
             "skipped_canonical_write": True,
+            "artifacts_dir": artifact_payload["artifacts_dir"],
+            "citation_semantic": artifact_payload["citation_semantic"],
         }
 
     with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
@@ -688,6 +942,17 @@ def replace_paper_from_md_path(
         except Exception:
             pass
 
+    notify("replace:artifacts", 0.90, "Writing rebuilt artifacts to storage")
+    artifact_payload = _persist_rebuild_artifacts(
+        paper_id=paper_id,
+        doc=doc,
+        cite_rec=cite_rec,
+        logic_claims=logic_claims,
+        purposes=purposes,
+        citation_acts=citation_acts,
+        citation_mentions=citation_mentions,
+    )
+    write_log(f"rebuilt artifacts in {artifact_payload['artifacts_dir']}")
     write_log(f"replaced {paper_id} from {md_path}")
     notify("replace:done", 1.0, "Done")
     return {
@@ -695,10 +960,12 @@ def replace_paper_from_md_path(
         "source_md_path": md_path,
         "reference_recovery": reference_recovery,
         "citation_event_recovery": citation_event_recovery,
+        "artifacts_dir": artifact_payload["artifacts_dir"],
         "claims": len(logic_claims.get("claims") or []),
         "gate_passed": bool((logic_claims.get("quality_report") or {}).get("gate_passed")),
         "quality_tier": str((logic_claims.get("quality_report") or {}).get("quality_tier") or ""),
         "quality_report": logic_claims.get("quality_report") or {},
+        "citation_semantic": artifact_payload["citation_semantic"],
     }
 
 

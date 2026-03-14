@@ -7,6 +7,7 @@ describe('api resolver', () => {
 
   beforeEach(() => {
     vi.resetModules()
+    vi.stubEnv('VITE_API_URL', '')
 
     const storage = new Map<string, string>()
     const sessionStorageMock = {
@@ -61,6 +62,7 @@ describe('api resolver', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    vi.unstubAllEnvs()
     if (originalWindow === undefined) {
       vi.unstubAllGlobals()
     } else {
@@ -129,7 +131,7 @@ describe('api resolver', () => {
           headers: { 'Content-Type': 'application/json' },
         })
       }
-      if (url === 'http://127.0.0.1:8001/textbooks/tb-1/graph?entity_limit=260&edge_limit=520') {
+      if (url === 'http://127.0.0.1:8080/textbooks/tb-1/graph?entity_limit=260&edge_limit=520') {
         return new Response(JSON.stringify({ scope: 'textbook', textbook: { textbook_id: 'tb-1', title: 'TB' } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -146,6 +148,33 @@ describe('api resolver', () => {
     const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
 
     expect(calls).not.toContain('http://127.0.0.1:8000/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
-    expect(calls).toContain('http://127.0.0.1:8001/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
+    expect(calls).toContain('http://127.0.0.1:8080/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
+  })
+
+  test('fails over to the next preferred backend for community overview graph when the stored base returns 404', async () => {
+    globalThis.sessionStorage.setItem('logickg.api.base', 'http://127.0.0.1:8000')
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'http://127.0.0.1:8000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240') {
+        return new Response('missing', { status: 404 })
+      }
+      if (url === 'http://127.0.0.1:8080/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240') {
+        return new Response(JSON.stringify({ nodes: [], edges: [], stats: { truncated: false } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+
+    const { apiGet } = await import('../src/api')
+
+    const payload = await apiGet('/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
+    const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
+
+    expect(payload).toEqual({ nodes: [], edges: [], stats: { truncated: false } })
+    expect(calls).toContain('http://127.0.0.1:8000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
+    expect(calls).toContain('http://127.0.0.1:8080/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
   })
 })

@@ -162,6 +162,16 @@ def test_global_community_read_helpers_return_keywords_and_members() -> None:
     ]
 
 
+def test_global_community_members_query_falls_back_to_paper_node_source() -> None:
+    fake_session = _FakeSession()
+    client = _client_with_fake_driver(fake_session)
+
+    client.list_global_community_members("gc:demo", limit=10)
+
+    queries = "\n".join(query for query, _ in fake_session.calls)
+    assert "coalesce(member.paper_source, p.paper_source)" in queries
+
+
 def test_legacy_proposition_cleanup_helper_deletes_groups_nodes_and_relation_edges() -> None:
     class _CleanupSession(_FakeSession):
         def run(self, query: str, **params):

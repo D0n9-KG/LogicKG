@@ -26,6 +26,7 @@ input, textarea, select {
   font: inherit;
   background: var(--bg-input);
   color: var(--text);
+  color-scheme: dark;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
@@ -33,6 +34,23 @@ input, textarea, select {
   transition: border-color 0.15s;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--border-hover); }
+
+select option,
+select optgroup {
+  background: rgb(10, 19, 38);
+  color: rgb(238, 246, 255);
+}
+
+select optgroup {
+  font-weight: 700;
+}
+
+select option:checked,
+select option:hover,
+select option:focus {
+  background: rgb(22, 49, 90);
+  color: rgb(247, 251, 255);
+}
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

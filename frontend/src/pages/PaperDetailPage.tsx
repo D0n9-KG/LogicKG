@@ -97,6 +97,23 @@ type PaperDetail = {
     purpose_source?: string | null
     pending_machine_purpose_labels?: string[] | null
     pending_machine_purpose_scores?: number[] | null
+    semantic?: {
+      polarity?: string | null
+      semantic_signals?: string[] | null
+      target_scopes?: string[] | null
+      evidence_chunk_ids?: string[] | null
+      evidence_spans?: string[] | null
+    } | null
+    mentions?: Array<{
+      mention_id?: string | null
+      ref_num?: number | null
+      source_chunk_id?: string | null
+      span_start?: number | null
+      span_end?: number | null
+      section?: string | null
+      context_text?: string | null
+      target_scopes?: string[] | null
+    }> | null
   }>
   unresolved: Array<{
     ref_id: string
@@ -141,6 +158,28 @@ const PURPOSE_LABELS: Record<string, string> = {
   FutureDirection: '未来方向',
 }
 
+const CITATION_POLARITY_LABELS: Record<string, string> = {
+  positive: '正向',
+  negative: '批判',
+  mixed: '混合',
+  neutral: '中性',
+}
+
+const CITATION_SIGNAL_LABELS: Record<string, string> = {
+  gap_hint: '缺口提示',
+  future_opportunity_hint: '未来机会提示',
+  method_transfer_hint: '方法迁移提示',
+  benchmark_instability_hint: '基线不稳定提示',
+}
+
+const CITATION_SCOPE_LABELS: Record<string, string> = {
+  paper: '论文',
+  method: '方法',
+  dataset: '数据/工具',
+  claim: '论断',
+  gap: '缺口',
+}
+
 const STEP_TYPE_LABELS: Record<string, string> = {
   Background: '背景',
   Problem: '问题',
@@ -168,6 +207,21 @@ function kindLabel(schema: PaperDetail['schema'] | null | undefined, kindId: str
   return zh
 }
 
+function citationPolarityLabel(value: string | null | undefined) {
+  const key = String(value ?? '').trim()
+  return CITATION_POLARITY_LABELS[key] ?? (key || '中性')
+}
+
+function citationSignalLabel(value: string | null | undefined) {
+  const key = String(value ?? '').trim()
+  return CITATION_SIGNAL_LABELS[key] ?? key
+}
+
+function citationScopeLabel(value: string | null | undefined) {
+  const key = String(value ?? '').trim()
+  return CITATION_SCOPE_LABELS[key] ?? key
+}
+
 function clamp01(v: number) {
   if (Number.isNaN(v)) return 0
   return Math.max(0, Math.min(1, v))
@@ -178,6 +232,22 @@ function shorten(text: string | null | undefined, maxLen: number) {
   if (!t) return ''
   if (t.length <= maxLen) return t
   return `${t.slice(0, maxLen - 1)}…`
+}
+
+function buildLogicPreviewLabel(schema: PaperDetail['schema'] | null | undefined, stepType: string) {
+  return stepLabel(schema, stepType)
+}
+
+function buildClaimPreviewLabel(
+  schema: PaperDetail['schema'] | null | undefined,
+  claim: NonNullable<PaperDetail['claims']>[number],
+  index: number,
+) {
+  const primaryKind = String(claim.kinds?.[0] ?? '').trim()
+  const kind = primaryKind ? kindLabel(schema, primaryKind) : `论断 ${index + 1}`
+  const snippet = shorten(claim.text, 14)
+  if (!snippet) return kind
+  return `${kind} | ${snippet}`
 }
 
 function splitSubfigureCaption(captionText: string): string[] | null {
@@ -238,6 +308,19 @@ function taskStageLabel(stage: string | null | undefined) {
   if (s === 'canceled') return '已取消'
   if (s === 'failed') return '失败'
   return s
+}
+
+function qualityTierLabel(tier: string | null | undefined) {
+  const value = String(tier ?? '').trim().toLowerCase()
+  if (!value) return '未标注'
+  if (value === 'green') return '绿色'
+  if (value === 'yellow') return '黄色'
+  if (value === 'red') return '红色'
+  return String(tier ?? '')
+}
+
+function graphAnchorId(kind: 'logic' | 'claim', key: string) {
+  return `${kind}-detail-${encodeURIComponent(key)}`
 }
 
 type HighlightRange = { start: number; end: number } | null
@@ -387,28 +470,32 @@ export default function PaperDetailPage() {
   type PaperTab = 'logic' | 'claims' | 'cites' | 'figures' | 'content'
   type GraphMeta = {
     title: string
+    typeLabel: string
     detail: string
     tab?: PaperTab
+    actionLabel?: string
+    focusId?: string
   }
   const [searchParams, setSearchParams] = useSearchParams()
   const tab0 = String(searchParams.get('tab') || 'logic') as PaperTab
   const tab: PaperTab = (['logic', 'claims', 'cites', 'figures', 'content'] as const).includes(tab0) ? tab0 : 'logic'
   const isPinned = searchParams.get('pin') === '1'
-  function selectTab(t: PaperTab) {
+  const selectTab = useCallback((t: PaperTab) => {
     const next = new URLSearchParams(searchParams)
     next.set('tab', t)
     setSearchParams(next, { replace: true })
-  }
-  function togglePin(force?: boolean) {
+  }, [searchParams, setSearchParams])
+  const togglePin = useCallback((force?: boolean) => {
     const next = new URLSearchParams(searchParams)
     const val = force !== undefined ? force : !isPinned
     if (val) { next.set('pin', '1') } else { next.delete('pin') }
     setSearchParams(next, { replace: true })
-  }
+  }, [isPinned, searchParams, setSearchParams])
 
   const [highlightRange, setHighlightRange] = useState<HighlightRange>(null)
   const [showContentModal, setShowContentModal] = useState(false)
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState('paper:root')
+  const [pendingGraphJump, setPendingGraphJump] = useState<{ tab: PaperTab; focusId: string } | null>(null)
 
   function locateEvidence(startLine?: number | null, endLine?: number | null) {
     if (typeof startLine !== 'number') return
@@ -420,6 +507,8 @@ export default function PaperDetailPage() {
   useEffect(() => { setHighlightRange(null); setShowContentModal(false) }, [id])
   useEffect(() => {
     setSelectedGraphNodeId('paper:root')
+    setExpandedCitationMentions({})
+    setShowCitationPurposeEditor(false)
   }, [id])
 
   const [detail, setDetail] = useState<PaperDetail | null>(null)
@@ -446,6 +535,8 @@ export default function PaperDetailPage() {
   const [reviewOpen, setReviewOpen] = useState<boolean>(false)
   const [reviewChoice, setReviewChoice] = useState<Record<string, 'keep_human' | 'use_machine' | 'clear'>>({})
   const [reviewBusy, setReviewBusy] = useState<boolean>(false)
+  const [showCitationPurposeEditor, setShowCitationPurposeEditor] = useState<boolean>(false)
+  const [expandedCitationMentions, setExpandedCitationMentions] = useState<Record<string, boolean>>({})
   const [logicEdit, setLogicEdit] = useState<Record<string, boolean>>({})
   const [logicDraft, setLogicDraft] = useState<Record<string, string>>({})
   const [claimEdit, setClaimEdit] = useState<Record<string, boolean>>({})
@@ -764,35 +855,65 @@ export default function PaperDetailPage() {
     putNode(
       {
         id: rootId,
-        label: shorten(detail.paper.title ?? detail.paper.paper_source ?? detail.paper.paper_id, 46),
+        label: shorten(detail.paper.title ?? detail.paper.paper_source ?? detail.paper.paper_id, 30),
         kind: 'root',
         weight: 1,
       },
       {
         title: detail.paper.title ?? detail.paper.paper_source ?? detail.paper.paper_id,
+        typeLabel: '论文',
         detail: `论文ID ${detail.paper.paper_id}${detail.paper.doi ? ` | DOI ${detail.paper.doi}` : ''}`,
       },
     )
+
+    const claims = detail.claims ?? []
+    const claimsByStep = new Map<string, typeof claims>()
+    for (const claim of claims) {
+      const stepType = String(claim.step_type ?? '').trim() || 'unassigned'
+      const group = claimsByStep.get(stepType) ?? []
+      group.push(claim)
+      claimsByStep.set(stepType, group)
+    }
 
     const logicIdByType = new Map<string, string>()
     const logicSteps = detail.logic_steps ?? []
     for (let idx = 0; idx < logicSteps.length; idx += 1) {
       const step = logicSteps[idx]
       const stepType = String(step.step_type ?? '').trim() || `logic-${idx + 1}`
-      const nodeId = `logic:${stepType}:${idx}`
+      const nodeSuffix = `${stepType}:${idx}`
+      const nodeId = `logic:${nodeSuffix}`
+      const clusterId = `cluster:${nodeSuffix}`
+      const claimCount = (claimsByStep.get(stepType) ?? []).length
       logicIdByType.set(stepType, nodeId)
 
       putNode(
         {
+          id: clusterId,
+          label: '',
+          kind: 'cluster',
+          weight: clamp01(Math.min(1, 0.3 + claimCount / 8)),
+        },
+        {
+          title: `${stepLabel(detail.schema, stepType)} 论断簇`,
+          typeLabel: '论断簇',
+          detail: `包含 ${claimCount} 条论断`,
+        },
+      )
+
+      putNode(
+        {
           id: nodeId,
-          label: shorten(step.summary || stepType, 34),
+          label: buildLogicPreviewLabel(detail.schema, stepType),
           kind: 'logic',
-          weight: 0.28,
+          weight: 0.62,
         },
         {
           title: stepLabel(detail.schema, stepType),
+          typeLabel: '逻辑步骤',
           detail: shorten(step.summary ?? '', 220),
           tab: 'logic',
+          actionLabel: '打开逻辑步骤',
+          focusId: graphAnchorId('logic', stepType),
         },
       )
 
@@ -805,80 +926,89 @@ export default function PaperDetailPage() {
       })
     }
 
-    const claims = detail.claims ?? []
-    for (let idx = 0; idx < claims.length; idx += 1) {
-      const claim = claims[idx]
-      const claimKey = String(claim.claim_key ?? '').trim() || `claim-${idx + 1}`
-      const claimNodeId = `claim:${claimKey}`
-      const confidence = Number(claim.confidence ?? 0)
+    for (const [stepType, group] of claimsByStep.entries()) {
+      const linkedLogic = logicIdByType.get(stepType)
+      const sortedClaims = group
+        .slice()
+        .sort((a, b) => Number(b.confidence ?? 0) - Number(a.confidence ?? 0))
 
-      putNode(
-        {
-          id: claimNodeId,
-          label: shorten(claim.text || claimKey, 34),
-          kind: 'claim',
-          weight: clamp01(Number.isFinite(confidence) ? 0.2 + confidence * 0.7 : 0.3),
-        },
-        {
-          title: claim.step_type ? `${stepLabel(detail.schema, String(claim.step_type))} / Claim` : 'Claim',
-          detail: shorten(claim.text, 220),
-          tab: 'claims',
-        },
-      )
+      for (let idx = 0; idx < sortedClaims.length; idx += 1) {
+        const claim = sortedClaims[idx]
+        const claimKey = String(claim.claim_key ?? '').trim() || `claim-${stepType}-${idx + 1}`
+        const claimNodeId = `claim:${claimKey}`
+        const confidence = Number(claim.confidence ?? 0)
 
-      const stepType = String(claim.step_type ?? '').trim()
-      const linkedLogic = stepType ? logicIdByType.get(stepType) : undefined
-      putEdge({
-        id: `${linkedLogic ?? rootId}->${claimNodeId}`,
-        source: linkedLogic ?? rootId,
-        target: claimNodeId,
-        kind: 'supports',
-        weight: clamp01(Number.isFinite(confidence) ? 0.4 + confidence * 0.5 : 0.45),
-      })
+        putNode(
+          {
+            id: claimNodeId,
+            label: buildClaimPreviewLabel(detail.schema, claim, idx),
+            kind: 'claim',
+            weight: clamp01(Number.isFinite(confidence) ? 0.34 + confidence * 0.5 : 0.42),
+          },
+          {
+            title: claim.text || claimKey,
+            typeLabel: '论断',
+            detail: shorten(claim.text, 220),
+            tab: 'claims',
+            actionLabel: '打开完整论断',
+            focusId: graphAnchorId('claim', claimKey),
+          },
+        )
+
+        putEdge({
+          id: `${linkedLogic ?? rootId}->${claimNodeId}`,
+          source: linkedLogic ?? rootId,
+          target: claimNodeId,
+          kind: 'supports',
+          weight: clamp01(Number.isFinite(confidence) ? 0.45 + confidence * 0.4 : 0.5),
+        })
+      }
     }
 
-    const cites = detail.outgoing_cites ?? []
-    for (let idx = 0; idx < cites.length; idx += 1) {
-      const cite = cites[idx]
-      const citeId = `cite:${cite.cited_paper_id}`
-      const label = cite.cited_title ?? cite.cited_doi ?? cite.cited_paper_id
-      putNode(
-        {
-          id: citeId,
-          label: shorten(label, 34),
-          kind: 'citation',
-          weight: clamp01(0.25 + Math.min(1, Number(cite.total_mentions ?? 0) / 6) * 0.6),
-        },
-        {
-          title: label,
-          detail: `引用次数 ${cite.total_mentions ?? 0} | ${(cite.purpose_labels ?? []).join(', ') || '未标注'}`,
-          tab: 'cites',
-        },
-      )
-
-      putEdge({
-        id: `${rootId}->${citeId}`,
-        source: rootId,
-        target: citeId,
-        kind: 'cites',
-        weight: clamp01(0.28 + Math.min(1, Number(cite.total_mentions ?? 0) / 8) * 0.58),
-      })
-    }
-
-    return { nodes: Array.from(nodes.values()).slice(0, 120), edges: Array.from(edges.values()).slice(0, 220), metaMap }
+    return { nodes: Array.from(nodes.values()).slice(0, 220), edges: Array.from(edges.values()).slice(0, 320), metaMap }
   }, [detail])
 
   const selectedGraphMeta = useMemo(
     () => paperGraph.metaMap.get(selectedGraphNodeId),
     [paperGraph.metaMap, selectedGraphNodeId],
   )
+  const graphPreviewStats = useMemo(() => {
+    const visibleClaims = paperGraph.nodes.filter((node) => node.kind === 'claim').length
+    return {
+      logicCount: detail?.logic_steps?.length ?? 0,
+      visibleClaims,
+      totalClaims: detail?.claims?.length ?? 0,
+    }
+  }, [detail, paperGraph.nodes])
+  const visibleGraphNodeCount = useMemo(
+    () => paperGraph.nodes.filter((node) => node.kind !== 'cluster').length,
+    [paperGraph.nodes],
+  )
 
-  function handleSelectPaperGraphNode(nodeId: string) {
+  const handleSelectPaperGraphNode = useCallback((nodeId: string) => {
     setSelectedGraphNodeId(nodeId)
-    if (!nodeId) return
-    const meta = paperGraph.metaMap.get(nodeId)
-    if (meta?.tab) selectTab(meta.tab)
-  }
+  }, [])
+
+  const jumpToGraphDetail = useCallback((meta: GraphMeta | undefined) => {
+    if (!meta?.tab) return
+    selectTab(meta.tab)
+    if (meta.focusId) {
+      setPendingGraphJump({ tab: meta.tab, focusId: meta.focusId })
+    }
+  }, [selectTab])
+
+  useEffect(() => {
+    if (!pendingGraphJump) return
+    if (tab !== pendingGraphJump.tab) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(pendingGraphJump.focusId)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      setPendingGraphJump(null)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [pendingGraphJump, tab])
 
   function reviewChoiceOf(id: string) {
     return reviewChoice[id] ?? 'keep_human'
@@ -1183,7 +1313,7 @@ export default function PaperDetailPage() {
       }
       closeEvidenceEditor()
       await refresh()
-      setInfo(action === 'set' ? '已保存证据(Evidence)。' : action === 'use_machine' ? '已恢复机器证据(Evidence)。' : '已清空证据(Evidence)。')
+      setInfo(action === 'set' ? '已保存证据。' : action === 'use_machine' ? '已恢复机器证据。' : '已清空证据。')
     } catch (e: unknown) {
       setError(String((e as { message?: unknown } | null)?.message ?? e))
     }
@@ -1279,8 +1409,8 @@ export default function PaperDetailPage() {
             >
               <option value="" disabled>导出…</option>
               <option value="json">JSON</option>
-              <option value="csv">CSV (Claims)</option>
-              <option value="bibtex">BibTeX</option>
+              <option value="csv">CSV（论断）</option>
+              <option value="bibtex">BibTeX 文献</option>
             </select>
           )}
         </div>
@@ -1292,46 +1422,46 @@ export default function PaperDetailPage() {
       {detail && (
         <div className="paperDetailSummary">
           <div className="paperDetailSummaryCard">
-            <div className="kicker">Paper</div>
+            <div className="kicker">论文</div>
             <div className="paperDetailSummaryValue">
               <code>{stats.paperId}</code>
             </div>
-            <div className="metaLine">Current node id</div>
+            <div className="metaLine">当前论文节点</div>
           </div>
           <div className="paperDetailSummaryCard">
             <div className="kicker">DOI</div>
             <div className="paperDetailSummaryValue">{stats.doi ? '已关联' : '待补充'}</div>
-            <div className="metaLine">{stats.doi || 'No DOI yet'}</div>
+            <div className="metaLine">{stats.doi || '暂无 DOI'}</div>
           </div>
           <div className="paperDetailSummaryCard">
-            <div className="kicker">Coverage</div>
+            <div className="kicker">覆盖概览</div>
             <div className="paperDetailSummaryValue">
               {stats.chunks} / {stats.refs} / {stats.figures}
             </div>
-            <div className="metaLine">Chunks / Cites / Figures</div>
+            <div className="metaLine">片段 / 引用 / 图片</div>
           </div>
           <div className="paperDetailSummaryCard">
-            <div className="kicker">Review</div>
+            <div className="kicker">审核</div>
             <div className="paperDetailSummaryValue">{reviewPendingCount}</div>
-            <div className="metaLine">{reviewNeedsReview ? 'Need human arbitration' : 'No pending review'}</div>
+            <div className="metaLine">{reviewNeedsReview ? '待人工裁决' : '暂无待审核项'}</div>
           </div>
           {detail.paper.ingested && (
             <div className="paperDetailSummaryCard">
-              <div className="kicker">Quality</div>
+              <div className="kicker">质量</div>
               <div className="paperDetailSummaryValue" style={{ color: detail.paper.phase1_gate_passed ? '#22c55e' : '#ef4444' }}>
-                {detail.paper.phase1_gate_passed ? '✓ Pass' : '✗ Fail'}
+                {detail.paper.phase1_gate_passed ? '通过' : '未通过'}
               </div>
               <div className="metaLine">
-                {detail.paper.phase1_quality_tier || '—'}
+                {qualityTierLabel(detail.paper.phase1_quality_tier) || '—'}
                 {typeof detail.paper.phase1_quality_tier_score === 'number' ? ` (${detail.paper.phase1_quality_tier_score.toFixed(1)})` : ''}
               </div>
             </div>
           )}
           {rebuildTaskId && (
             <div className="paperDetailSummaryCard">
-              <div className="kicker">Rebuild Task</div>
+              <div className="kicker">重建任务</div>
               <div className="paperDetailSummaryValue">{Math.round(clamp01(Number(rebuildTask?.progress ?? 0)) * 100)}%</div>
-              <div className="metaLine">{taskStatusLabel(String(rebuildTask?.status ?? '')) || 'Queued'}</div>
+              <div className="metaLine">{taskStatusLabel(String(rebuildTask?.status ?? '')) || '排队中'}</div>
             </div>
           )}
         </div>
@@ -1343,34 +1473,54 @@ export default function PaperDetailPage() {
             <div className="split">
               <div className="panelTitle">论文知识图谱视图</div>
               <span className="pill">
-                <span className="kicker">节点</span> {paperGraph.nodes.length}
+                <span className="kicker">节点</span> {visibleGraphNodeCount}
               </span>
             </div>
           </div>
           <div className="panelBody">
-            <SignalGraph
-              nodes={paperGraph.nodes}
-              edges={paperGraph.edges}
-              selectedId={selectedGraphNodeId}
-              onSelect={handleSelectPaperGraphNode}
-              height={420}
-            />
-            <div className="split" style={{ marginTop: 10 }}>
-              <div className="metaLine">
-                {selectedGraphMeta
-                  ? `${selectedGraphMeta.title} | ${shorten(selectedGraphMeta.detail, 180)}`
-                  : '点击图谱节点可高亮关联信息，并自动切换到对应子模块。'}
+            <div className="paperGraphWorkbench">
+              <div className="paperGraphStage">
+                <div className="paperGraphStageHeader">
+                  <div>
+                    <div className="kicker">结构预览</div>
+                    <div className="paperGraphStageTitle">中心论文 · 逻辑步骤环 · 论断簇</div>
+                  </div>
+                  <div className="paperGraphLegend">
+                    <span className="paperGraphLegendChip paperGraphLegendChip--logic">逻辑 {graphPreviewStats.logicCount}</span>
+                    <span className="paperGraphLegendChip paperGraphLegendChip--claim">
+                      论断 {graphPreviewStats.visibleClaims}/{graphPreviewStats.totalClaims}
+                    </span>
+                  </div>
+                </div>
+                <div className="paperGraphStageHint">
+                  这张图只展示论文内部结构：中心论文、全部逻辑步骤与全部论断。引文节点不在这里显示；点击节点后，可在右侧查看详情并跳转到完整内容。
+                </div>
+                <SignalGraph
+                  nodes={paperGraph.nodes}
+                  edges={paperGraph.edges}
+                  selectedId={selectedGraphNodeId}
+                  onSelect={handleSelectPaperGraphNode}
+                  height={820}
+                />
               </div>
-              <div className="row" style={{ gap: 8 }}>
-                {selectedGraphMeta?.tab && (
-                  <button className="btn btnSmall" onClick={() => selectedGraphMeta.tab && selectTab(selectedGraphMeta.tab)}>
-                    打开{selectedGraphMeta.tab}
+              <aside className="paperGraphDetailCard">
+                <div className="kicker">节点详情</div>
+                <div className="paperGraphDetailTitle">{selectedGraphMeta?.title || '选择一个节点'}</div>
+                <div className="paperGraphDetailType">{selectedGraphMeta?.typeLabel || '图谱节点'}</div>
+                <div className="paperGraphDetailBody">
+                  {selectedGraphMeta?.detail || '点击左侧图谱节点后，这里会显示该节点的结构信息与跳转入口。'}
+                </div>
+                <div className="row paperGraphDetailActions">
+                  {selectedGraphMeta?.tab && (
+                    <button className="btn btnSmall" onClick={() => jumpToGraphDetail(selectedGraphMeta)}>
+                      {selectedGraphMeta.actionLabel || '打开关联内容'}
+                    </button>
+                  )}
+                  <button className="btn btnSmall" onClick={() => setSelectedGraphNodeId('')}>
+                    清空选中
                   </button>
-                )}
-                <button className="btn btnSmall" onClick={() => setSelectedGraphNodeId('')}>
-                  清空选中
-                </button>
-              </div>
+                </div>
+              </aside>
             </div>
           </div>
         </div>
@@ -1532,7 +1682,10 @@ export default function PaperDetailPage() {
                             {!isLast && <div className="logicStepConnector" />}
                           </div>
                           <div className="logicStepContent">
-                            <div className={`itemCard logicStepCard logicStepCard--${s.step_type}`}>
+                            <div
+                              id={graphAnchorId('logic', s.step_type)}
+                              className={`itemCard logicStepCard logicStepCard--${s.step_type}`}
+                            >
                               <div className="split">
                                 <div className="itemTitle">
                                   {stepLabel(detail.schema ?? null, s.step_type)}
@@ -1546,7 +1699,7 @@ export default function PaperDetailPage() {
                                     {s.source === 'human' ? '人工' : s.source === 'cleared' ? '清空' : '机器'}
                                   </span>
                                   <button className="btn btnSmall" onClick={() => openLogicEvidenceEditor(s)}>
-                                    证据(Evidence)
+                                    证据
                                   </button>
                                   <button
                                     className="btn btnSmall"
@@ -1656,7 +1809,11 @@ export default function PaperDetailPage() {
                             const evidence = (c.evidence ?? []) as Array<{ chunk_id: string; snippet?: string; weak?: boolean; start_line?: number | null; end_line?: number | null }>
                             const targets = (c.targets ?? []) as Array<{ paper_id: string; doi?: string | null; title?: string | null }>
                             return (
-                              <div key={key} className={`itemCard claimCard${src === 'human' ? ' claimCard--human' : ''}${src === 'cleared' ? ' claimCard--cleared' : ''}`}>
+                              <div
+                                key={key}
+                                id={graphAnchorId('claim', key)}
+                                className={`itemCard claimCard${src === 'human' ? ' claimCard--human' : ''}${src === 'cleared' ? ' claimCard--cleared' : ''}`}
+                              >
                                 <div className="split">
                                   <div className="itemTitle" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                                     要点 <code>{key}</code>
@@ -1667,7 +1824,7 @@ export default function PaperDetailPage() {
                                   </div>
                                   <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                                     <span className="badge" title="机器置信度">{(Number(c.confidence ?? 0) || 0).toFixed(2)}</span>
-                                    <button className="btn btnSmall" onClick={() => openClaimEvidenceEditor(c)}>证据(Evidence)</button>
+                                    <button className="btn btnSmall" onClick={() => openClaimEvidenceEditor(c)}>证据</button>
                                     <button className="btn btnSmall" onClick={() => { const open = !isEditing; setClaimEdit((m) => ({ ...m, [key]: open })); if (open) setClaimDraft((m) => ({ ...m, [key]: String(c.text ?? '') })) }}>
                                       {isEditing ? '关闭编辑' : '编辑'}
                                     </button>
@@ -1733,19 +1890,132 @@ export default function PaperDetailPage() {
               <>
               <div className="panel">
                 <div className="panelHeader">
+                  <div className="split">
                   <div className="panelTitle">引用（出站）</div>
                 </div>
+                </div>
                 <div className="panelBody">
+                  <div className="row" style={{ marginBottom: 12, justifyContent: 'flex-end' }}>
+                    <button className="btn btnSmall" onClick={() => setShowCitationPurposeEditor((value) => !value)}>
+                      {showCitationPurposeEditor ? '收起人工校正' : '人工校正引用目的'}
+                    </button>
+                  </div>
                   <div className="list">
-                    {detail.outgoing_cites.map((c) => (
+                    {detail.outgoing_cites.map((c) => {
+                      const semantic = c.semantic ?? {}
+                      const semanticGenerated = !!c.semantic
+                      const semanticSignals = (semantic.semantic_signals ?? []).filter(Boolean)
+                      const targetScopes = (semantic.target_scopes ?? []).filter(Boolean)
+                      const mentionCount = (c.mentions ?? []).length
+                      const mentionsGenerated = Array.isArray(c.mentions)
+                      const mentionsExpanded = !!expandedCitationMentions[c.cited_paper_id]
+                      const purposeLabels = (c.purpose_labels ?? []).map((p) => PURPOSE_LABELS[p] ?? p)
+                      const purposeScores = (c.purpose_scores ?? []).map((s) => s.toFixed(2))
+                      return (
                       <div key={c.cited_paper_id} className="itemCard">
                         <div className="split">
                           <div className="itemTitle" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                            {c.cited_title ?? c.cited_doi ?? c.cited_paper_id}
+                            <span>{c.cited_title ?? c.cited_doi ?? c.cited_paper_id}</span>
                             <span className={c.purpose_source === 'human' ? 'badge badgeOk' : c.purpose_source === 'cleared' ? 'badge badgeDanger' : 'badge'}>
                               {c.purpose_source === 'human' ? '人工' : c.purpose_source === 'cleared' ? '清空' : '机器'}
                             </span>
                           </div>
+                          {c.cited_doi ? (
+                            <span className="pill">
+                              <span className="kicker">DOI</span> <code>{c.cited_doi}</code>
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="itemMeta">
+                          引用次数 {c.total_mentions ?? 0} · 引用编号 {(c.ref_nums ?? []).join(', ')}
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                          <div className="kicker">引用目的</div>
+                          <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+                            {purposeLabels.map((label, index) => (
+                              <span key={`${c.cited_paper_id}:purpose:${label}:${index}`} className="chip">
+                                {label}
+                              </span>
+                            ))}
+                            {purposeLabels.length === 0 && <span className="metaLine">暂无引用目的标签。</span>}
+                          </div>
+                          <div className="itemMeta" style={{ marginTop: 8 }}>
+                            置信度 {purposeScores.join(', ') || '无'}
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                          <div className="kicker">语义画像</div>
+                          <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+                            {semanticGenerated ? (
+                              <>
+                                <span className="chip chipActive">{citationPolarityLabel(semantic.polarity)}</span>
+                                {semanticSignals.map((signal) => (
+                                  <span key={`${c.cited_paper_id}:signal:${signal}`} className="chip chipActive">
+                                    {citationSignalLabel(signal)}
+                                  </span>
+                                ))}
+                                {targetScopes.map((scope) => (
+                                  <span key={`${c.cited_paper_id}:scope:${scope}`} className="chip">
+                                    {citationScopeLabel(scope)}
+                                  </span>
+                                ))}
+                                {semanticSignals.length === 0 && targetScopes.length === 0 && (
+                                  <span className="metaLine">暂无增强语义标记。</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="metaLine">未生成增强语义。</span>
+                            )}
+                          </div>
+                        </div>
+                        {((semantic.evidence_chunk_ids ?? []).length > 0 || (semantic.evidence_spans ?? []).length > 0) && (
+                          <div style={{ marginTop: 12 }}>
+                            <div className="kicker">引用依据</div>
+                            <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+                              {(semantic.evidence_chunk_ids ?? []).map((chunkId) => (
+                                <span key={`${c.cited_paper_id}:chunk:${chunkId}`} className="chip">
+                                  <code>{chunkId}</code>
+                                </span>
+                              ))}
+                              {(semantic.evidence_spans ?? []).map((span) => (
+                                <span key={`${c.cited_paper_id}:span:${span}`} className="chip">
+                                  {span}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 12 }}>
+                          <div className="split">
+                            <div className="kicker">提及证据</div>
+                            <button
+                              className="btn btnSmall"
+                              disabled={!mentionsGenerated || mentionCount === 0}
+                              onClick={() => setExpandedCitationMentions((state) => ({ ...state, [c.cited_paper_id]: !mentionsExpanded }))}
+                            >
+                              {!mentionsGenerated ? '提及证据未生成' : mentionsExpanded ? '收起提及证据' : `提及证据 ${mentionCount}`}
+                            </button>
+                          </div>
+                          {mentionsExpanded && mentionCount > 0 && (
+                            <div className="list" style={{ marginTop: 10 }}>
+                              {(c.mentions ?? []).map((mention) => (
+                                <div key={mention.mention_id ?? `${c.cited_paper_id}:${mention.ref_num}:${mention.source_chunk_id}`} className="itemCard">
+                                  <div className="itemMeta">
+                                    ref #{mention.ref_num ?? '?'} · {mention.section || 'unknown'} · <code>{mention.source_chunk_id || '-'}</code>
+                                    {typeof mention.span_start === 'number' ? ` · L${mention.span_start}-${mention.span_end ?? mention.span_start}` : ''}
+                                  </div>
+                                  {!!mention.context_text && (
+                                    <div className="itemBody" style={{ marginTop: 8 }}>
+                                      {mention.context_text}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {showCitationPurposeEditor && (
+                        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(148, 163, 184, 0.16)' }}>
                           <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                             <button className="btn btnSmall" disabled={busy === c.cited_paper_id} onClick={() => setCitePurposeUseMachine(c.cited_paper_id)}>
                               恢复机器
@@ -1754,11 +2024,7 @@ export default function PaperDetailPage() {
                               清空
                             </button>
                           </div>
-                        </div>
-                        <div className="itemMeta">
-                          引用次数 {c.total_mentions ?? 0} · 引用编号 {(c.ref_nums ?? []).join(', ')}
-                        </div>
-                        <div className="row" style={{ marginTop: 10, gap: 8 }}>
+                        <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
                           {PURPOSES.map((p) => {
                             const selected = (c.purpose_labels ?? []).includes(p)
                             return (
@@ -1789,11 +2055,13 @@ export default function PaperDetailPage() {
                           })}
                         </div>
                         <div className="itemMeta" style={{ marginTop: 8 }}>
-                          标签 {(c.purpose_labels ?? []).map((p) => PURPOSE_LABELS[p] ?? p).join(', ')} · 置信度{' '}
-                          {(c.purpose_scores ?? []).map((s) => s.toFixed(2)).join(', ')}
+                          当前标签 {purposeLabels.join(', ') || '无'} · 置信度 {purposeScores.join(', ') || '无'}
                         </div>
                       </div>
-                    ))}
+                        )}
+                      </div>
+                    )
+                  })}
                   </div>
                   {detail.outgoing_cites.length === 0 && <div className="metaLine">暂无出站引用。</div>}
                 </div>
@@ -1801,7 +2069,7 @@ export default function PaperDetailPage() {
 
               <div className="panel">
                 <div className="panelHeader">
-                  <div className="panelTitle">未解析</div>
+                  <div className="panelTitle">未解析引用</div>
                 </div>
                 <div className="panelBody">
                   <div className="list">
@@ -1819,7 +2087,7 @@ export default function PaperDetailPage() {
                       </div>
                     ))}
                   </div>
-                  {detail.unresolved.length === 0 && <div className="metaLine">无</div>}
+                  {detail.unresolved.length === 0 && <div className="metaLine">无。</div>}
                 </div>
               </div>
               </>
@@ -1931,7 +2199,7 @@ export default function PaperDetailPage() {
         <div className="modalOverlay" onClick={() => closeEvidenceEditor()}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modalHeader">
-              <div className="modalTitle">{evidenceEditTitle || '证据(Evidence) 编辑'}</div>
+              <div className="modalTitle">{evidenceEditTitle || '证据编辑'}</div>
               <button className="btn btnSmall" disabled={evidenceBusy} onClick={() => closeEvidenceEditor()}>
                 关闭
               </button>

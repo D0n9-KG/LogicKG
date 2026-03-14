@@ -37,6 +37,7 @@ function typeLabel(type: string, locale: UILocale) {
   if (type === 'ingest_upload_ready') return locale === 'zh-CN' ? '导入（上传可导入项）' : 'Ingest (Uploaded Item)'
   if (type === 'upload_replace') return locale === 'zh-CN' ? '替换论文（按 DOI）' : 'Replace Paper (by DOI)'
   if (type === 'rebuild_paper') return locale === 'zh-CN' ? '重建论文' : 'Rebuild Paper'
+  if (type === 'rebuild_global_communities') return locale === 'zh-CN' ? '重建全局聚类' : 'Rebuild Global Communities'
   if (type === 'rebuild_faiss') return locale === 'zh-CN' ? '重建全局 FAISS' : 'Rebuild Global FAISS'
   if (type === 'rebuild_all') return locale === 'zh-CN' ? '全链路重建（所有论文）' : 'Full Pipeline Rebuild'
   if (type === 'rebuild_similarity') return locale === 'zh-CN' ? '重建相似度关系' : 'Rebuild Similarity Links'
@@ -47,6 +48,7 @@ function typeLabel(type: string, locale: UILocale) {
 function stageLabel(stage: string | null | undefined, locale: UILocale) {
   const s = String(stage ?? '')
   if (!s) return ''
+  if (s.includes('community')) return locale === 'zh-CN' ? '全局聚类重建' : 'Global Community Rebuild'
   if (s.includes('crossref')) return locale === 'zh-CN' ? '文献元数据解析' : 'Crossref Resolve'
   if (s.includes('neo4j_clear')) return locale === 'zh-CN' ? '清理 Neo4j' : 'Clear Neo4j'
   if (s.includes('neo4j_write')) return locale === 'zh-CN' ? '写入 Neo4j' : 'Write Neo4j'

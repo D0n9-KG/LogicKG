@@ -95,8 +95,10 @@ $npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if (-not $npmCmd) { $npmCmd = (Get-Command npm -ErrorAction Stop).Source }
 
 $root = $scriptDir
+$workspacePorts = Get-LogicKGPreferredPorts $root
 
 Write-Host "[LogicKG] Root: $root"
+Write-Host "[LogicKG] Workspace: $($workspacePorts.Kind) ($($workspacePorts.Name))"
 Write-Host "[LogicKG] Python: $pythonExe"
 
 # 1) Backend venv + deps
@@ -180,13 +182,25 @@ try {
 } catch { $frontendPort = $null }
 
 if (-not $backendPort) {
-  $backendPort = Find-FreePort @(8000,8001,8002,8080,18000) $excludedRanges
+  $backendPort = Find-FreePort $workspacePorts.BackendCandidates $excludedRanges
 }
 if (-not $frontendPort) {
-  $frontendPort = Find-FreePort @(5173,5174,5175,5180,15173) $excludedRanges
+  $frontendPort = Find-FreePort $workspacePorts.FrontendCandidates $excludedRanges
 }
 if ($frontendPort -eq $backendPort) {
-  $frontendPort = Find-FreePort @($frontendPort+1, $frontendPort+2, 5173,5174,5175,5180,15173) $excludedRanges
+  $frontendFallbacks = @(
+    $workspacePorts.FrontendCandidates |
+      Where-Object { $_ -ne $backendPort }
+  ) + @(
+    $frontendPort + 1,
+    $frontendPort + 2,
+    5173,
+    5174,
+    5175,
+    5180,
+    15173
+  )
+  $frontendPort = Find-FreePort ($frontendFallbacks | Select-Object -Unique) $excludedRanges
 }
 
 Set-FrontendApiUrl $feEnvLocal $backendPort

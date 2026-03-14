@@ -6,11 +6,12 @@ from app.community.service import rebuild_global_communities
 from app.delete_assets import delete_paper_asset, delete_textbook_asset
 from app.ingest.pipeline import ingest_path
 from app.ingest.rebuild import cleanup_legacy_proposition_artifacts, rebuild_global_faiss, rebuild_paper
+from app.ingest.textbook_upload_actions import ingest_textbook_upload_ready
 from app.ingest.upload_actions import commit_ready, replace_with_new
 from app.ingest.textbook_pipeline import ingest_textbook
-from app.discovery.service import run_discovery_batch
 from app.fusion.service import rebuild_fusion_graph
 from app.graph.neo4j_client import Neo4jClient
+from app.ops_config_store import merge_runtime_config
 from app.settings import settings
 from app.similarity.service import rebuild_similarity_global, update_similarity_for_paper
 from app.tasks.manager import PartialTaskFailure
@@ -57,6 +58,19 @@ def handle_ingest_upload_ready(
     return commit_ready(upload_id, progress=update, log=log)
 
 
+def handle_ingest_textbook_upload_ready(
+    task_id: str,
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    payload = _load_payload(task_id)
+    upload_id = str(payload.get("upload_id") or "").strip()
+    if not upload_id:
+        raise ValueError("Missing upload_id")
+    update("textbook_upload:commit", 0.02, f"Committing ready textbook units for upload {upload_id}")
+    return ingest_textbook_upload_ready(upload_id, progress=update, log=log)
+
+
 def _normalize_id_list(values: list[Any] | None) -> list[str]:
     out: list[str] = []
     for value in values or []:
@@ -81,13 +95,10 @@ def _run_post_delete_rebuild(
     update: Callable[[str, float, str | None], None],
     log: Callable[[str], None],
 ) -> dict[str, Any]:
-    update("delete:rebuild:community", 0.9, "Rebuilding global communities")
-    community = rebuild_global_communities(progress=update, log=log)
-    update("delete:rebuild:faiss", 0.96, "Rebuilding global FAISS index")
+    update("delete:rebuild:faiss", 0.92, "Rebuilding global FAISS index")
     faiss = rebuild_global_faiss(progress=update, log=log)
     return {
         "status": "succeeded",
-        "community": community,
         "faiss": faiss,
     }
 
@@ -295,7 +306,8 @@ def handle_rebuild_all(
         return {"ok": True, "papers": 0}
 
     total = len(paper_ids)
-    max_workers = min(total, getattr(settings, "ingest_llm_max_workers", 4))
+    runtime = merge_runtime_config({})
+    max_workers = min(total, int(runtime.get("ingest_llm_max_workers") or getattr(settings, "ingest_llm_max_workers", 3)))
     completed_count = 0
     failed_count = 0
     lock = threading.Lock()
@@ -428,58 +440,6 @@ def handle_ingest_textbook(
         update(stage, p, msg)
 
     return ingest_textbook(md_path, metadata, progress=progress, log=log)
-
-
-def handle_discovery_batch(
-    task_id: str,
-    update: Callable[[str, float, str | None], None],
-    log: Callable[[str], None],
-) -> dict[str, Any]:
-    payload = _load_payload(task_id)
-    domain = str(payload.get("domain") or "granular_flow").strip() or "granular_flow"
-    dry_run = bool(payload.get("dry_run", False))
-    max_gaps = int(payload.get("max_gaps") or 8)
-    candidates_per_gap = int(payload.get("candidates_per_gap") or 2)
-    hop_order = int(payload.get("hop_order") or 2)
-    adjacent_samples = int(payload.get("adjacent_samples") or 6)
-    random_samples = int(payload.get("random_samples") or 2)
-    rag_top_k = int(payload.get("rag_top_k") or 4)
-    prompt_optimize = bool(payload.get("prompt_optimize", True))
-    community_method = str(payload.get("community_method") or "hybrid")
-    community_samples = int(payload.get("community_samples") or 4)
-    prompt_optimization_method = str(payload.get("prompt_optimization_method") or "rl_bandit")
-    use_llm = payload.get("use_llm")
-    if use_llm is None:
-        use_llm_flag: bool | None = None
-    else:
-        use_llm_flag = bool(use_llm)
-
-    update("discovery:batch:start", 0.05, f"Starting discovery batch for {domain}")
-    result = run_discovery_batch(
-        domain=domain,
-        dry_run=dry_run,
-        max_gaps=max_gaps,
-        candidates_per_gap=candidates_per_gap,
-        use_llm=use_llm_flag,
-        hop_order=hop_order,
-        adjacent_samples=adjacent_samples,
-        random_samples=random_samples,
-        rag_top_k=rag_top_k,
-        prompt_optimize=prompt_optimize,
-        community_method=community_method,
-        community_samples=community_samples,
-        prompt_optimization_method=prompt_optimization_method,
-    )
-    update("discovery:batch:done", 1.0, f"Discovery batch complete ({len(result.get('candidates', []))} candidates)")
-    log(
-        "Discovery batch done for "
-        f"{domain}, dry_run={dry_run}, max_gaps={max_gaps}, candidates_per_gap={candidates_per_gap}, "
-        f"hop_order={hop_order}, adjacent_samples={adjacent_samples}, random_samples={random_samples}, "
-        f"rag_top_k={rag_top_k}, prompt_optimize={prompt_optimize}, "
-        f"community_method={community_method}, community_samples={community_samples}, "
-        f"prompt_optimization_method={prompt_optimization_method}, use_llm={use_llm_flag}"
-    )
-    return result
 
 
 def _load_payload(task_id: str) -> dict[str, Any]:

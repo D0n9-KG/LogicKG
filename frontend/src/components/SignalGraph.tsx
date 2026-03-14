@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import cytoscape from 'cytoscape'
 import { useEffect, useMemo, useRef } from 'react'
 import { type UiTheme } from '../ui/theme'
@@ -7,6 +8,7 @@ export type SignalGraphNode = {
   label: string
   kind?:
     | 'root'
+    | 'cluster'
     | 'group'
     | 'textbook'
     | 'chapter'
@@ -16,6 +18,7 @@ export type SignalGraphNode = {
     | 'logic'
     | 'claim'
     | 'citation'
+    | 'summary'
     | 'query'
   weight?: number
 }
@@ -32,12 +35,6 @@ function clamp01(value: number | undefined) {
   const n = Number(value ?? 0)
   if (!Number.isFinite(n)) return 0
   return Math.max(0, Math.min(1, n))
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min
-  if (value > max) return max
-  return value
 }
 
 function parseTrailingIndex(id: string): number {
@@ -57,50 +54,129 @@ function spreadLine(count: number, start: number, end: number): number[] {
   return out
 }
 
-function buildPaperFlowPositions(
+const PAPER_FLOW_ROOT_RADIUS = 42
+const PAPER_FLOW_LOGIC_RADIUS = 19
+const PAPER_FLOW_CLAIM_RADIUS = 15
+const PAPER_FLOW_FIRST_RING_RADIUS = 58
+const PAPER_FLOW_RING_STEP = 46
+const PAPER_FLOW_CLUSTER_PADDING = 26
+const PAPER_FLOW_CLUSTER_GAP = 108
+const PAPER_FLOW_ROW_GAP = 122
+const PAPER_FLOW_SIDE_PADDING = 92
+const PAPER_FLOW_TOP_PADDING = 126
+const PAPER_FLOW_BOTTOM_PADDING = 94
+
+function claimRingCapacity(radius: number): number {
+  return Math.max(5, Math.floor((2 * Math.PI * radius) / (PAPER_FLOW_CLAIM_RADIUS * 2 + 12)))
+}
+
+function computeClusterRadius(claimCount: number): number {
+  if (claimCount <= 0) return PAPER_FLOW_LOGIC_RADIUS + PAPER_FLOW_CLUSTER_PADDING + 14
+  let remaining = claimCount
+  let ringRadius = PAPER_FLOW_FIRST_RING_RADIUS
+  while (remaining > 0) {
+    const capacity = claimRingCapacity(ringRadius)
+    remaining -= capacity
+    if (remaining <= 0) return ringRadius + PAPER_FLOW_CLAIM_RADIUS + PAPER_FLOW_CLUSTER_PADDING
+    ringRadius += PAPER_FLOW_RING_STEP
+  }
+  return ringRadius + PAPER_FLOW_CLAIM_RADIUS + PAPER_FLOW_CLUSTER_PADDING
+}
+
+function buildClusterSlots(
+  radii: number[],
+  viewportWidth: number,
+  viewportHeight: number,
+): {
+  width: number
+  height: number
+  rootY: number
+  contentBottomY: number
+  slots: Array<{ x: number; y: number }>
+} {
+  const rootY = 108
+  if (radii.length <= 0) {
+    return {
+      width: Math.max(1280, Math.floor(viewportWidth)),
+      height: Math.max(940, Math.floor(viewportHeight)),
+      rootY,
+      contentBottomY: rootY + PAPER_FLOW_ROOT_RADIUS,
+      slots: [],
+    }
+  }
+
+  const columns = radii.length <= 2 ? radii.length : 2
+  const rows: number[][] = []
+  for (let index = 0; index < radii.length; index += columns) {
+    rows.push(radii.slice(index, index + columns))
+  }
+
+  const rowWidths = rows.map((row) => row.reduce((sum, radius) => sum + radius * 2, 0) + PAPER_FLOW_CLUSTER_GAP * Math.max(0, row.length - 1))
+  const widestRow = rowWidths.reduce((max, value) => Math.max(max, value), 0)
+  const width = Math.max(1280, Math.floor(viewportWidth), Math.ceil(widestRow + PAPER_FLOW_SIDE_PADDING * 2))
+
+  const slots: Array<{ x: number; y: number }> = []
+  let yCursor = rootY + PAPER_FLOW_ROOT_RADIUS + PAPER_FLOW_TOP_PADDING
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex]
+    const rowRadius = row.reduce((max, radius) => Math.max(max, radius), 0)
+    const rowWidth = rowWidths[rowIndex]
+    const startX = (width - rowWidth) / 2
+    let xCursor = startX
+    const centerY = yCursor + rowRadius
+
+    for (const radius of row) {
+      slots.push({
+        x: Math.round(xCursor + radius),
+        y: Math.round(centerY),
+      })
+      xCursor += radius * 2 + PAPER_FLOW_CLUSTER_GAP
+    }
+
+    yCursor += rowRadius * 2 + PAPER_FLOW_ROW_GAP
+  }
+
+  const contentBottomY = yCursor - PAPER_FLOW_ROW_GAP
+  const height = Math.max(
+    940,
+    Math.floor(viewportHeight),
+    Math.ceil(contentBottomY + PAPER_FLOW_BOTTOM_PADDING),
+  )
+
+  return { width, height, rootY, contentBottomY, slots }
+}
+
+function claimRingStartAngle(clusterIndex: number, ringIndex: number): number {
+  return (-Math.PI / 2) + (Math.PI / 9) * ((clusterIndex + ringIndex) % 6)
+}
+
+export function buildPaperFlowPositions(
   nodes: SignalGraphNode[],
   edges: SignalGraphEdge[],
   viewportWidth: number,
   viewportHeight: number,
 ): Map<string, { x: number; y: number }> {
-  const width = Math.max(840, Math.floor(viewportWidth))
-  const height = Math.max(340, Math.floor(viewportHeight))
   const map = new Map<string, { x: number; y: number }>()
 
   const root = nodes.find((node) => node.kind === 'root') ?? nodes[0]
   const rootId = String(root?.id ?? '')
 
+  const clusterNodes = nodes.filter((node) => node.kind === 'cluster')
   const logicNodes = nodes
     .filter((node) => node.kind === 'logic')
     .slice()
     .sort((a, b) => parseTrailingIndex(a.id) - parseTrailingIndex(b.id))
   const claimNodes = nodes.filter((node) => node.kind === 'claim')
-  const citationNodes = nodes
-    .filter((node) => node.kind === 'citation')
-    .slice()
-    .sort((a, b) => a.label.localeCompare(b.label))
   const otherNodes = nodes.filter(
     (node) =>
       node.id !== rootId &&
+      node.kind !== 'cluster' &&
       node.kind !== 'logic' &&
       node.kind !== 'claim' &&
-      node.kind !== 'citation',
+      node.kind !== 'citation' &&
+      node.kind !== 'summary',
   )
-
-  const yRoot = Math.round(height * 0.2)
-  const yLogic = Math.round(height * 0.47)
-  const yClaim = Math.round(height * 0.8)
-  const citationX = Math.round(width * 0.88)
-  const logicRightBound = citationNodes.length > 0 ? 0.74 : 0.9
-  const logicXs = spreadLine(logicNodes.length, width * 0.1, width * logicRightBound)
-
-  if (rootId) {
-    map.set(rootId, { x: Math.round(width * 0.5), y: yRoot })
-  }
-
-  for (let i = 0; i < logicNodes.length; i += 1) {
-    map.set(logicNodes[i].id, { x: Math.round(logicXs[i]), y: yLogic })
-  }
 
   const parentLogicByClaim = new Map<string, string>()
   for (const edge of edges) {
@@ -114,6 +190,7 @@ function buildPaperFlowPositions(
 
   const claimsByLogic = new Map<string, SignalGraphNode[]>()
   const danglingClaims: SignalGraphNode[] = []
+
   for (const claim of claimNodes) {
     const parentLogic = parentLogicByClaim.get(claim.id)
     if (!parentLogic) {
@@ -125,42 +202,84 @@ function buildPaperFlowPositions(
     claimsByLogic.set(parentLogic, group)
   }
 
-  for (const [logicId, group] of claimsByLogic.entries()) {
-    const anchor = map.get(logicId)
-    const centerX = anchor?.x ?? Math.round(width * 0.42)
-    const sortedGroup = group.slice().sort((a, b) => a.id.localeCompare(b.id))
-    const columns = Math.min(5, Math.max(1, Math.ceil(Math.sqrt(sortedGroup.length))))
-    for (let i = 0; i < sortedGroup.length; i += 1) {
-      const row = Math.floor(i / columns)
-      const col = i % columns
-      const offsetX = (col - (columns - 1) / 2) * 58
-      const offsetY = row * 38
-      map.set(sortedGroup[i].id, {
-        x: Math.round(clamp(centerX + offsetX, width * 0.07, width * 0.84)),
-        y: Math.round(clamp(yClaim + offsetY, height * 0.68, height * 0.95)),
-      })
+  const clusters = logicNodes.map((logicNode) => ({
+    logicNode,
+    clusterNode: clusterNodes.find((node) => node.id === logicNode.id.replace(/^logic:/, 'cluster:')),
+    claims: (claimsByLogic.get(logicNode.id) ?? []).slice().sort((a, b) => a.id.localeCompare(b.id)),
+    radius: computeClusterRadius((claimsByLogic.get(logicNode.id) ?? []).length),
+  }))
+  const layoutFrame = buildClusterSlots(
+    clusters.map((cluster) => cluster.radius),
+    viewportWidth,
+    viewportHeight,
+  )
+  let width = layoutFrame.width
+  let height = layoutFrame.height
+  const centerX = Math.round(width * 0.5)
+  const rootY = layoutFrame.rootY
+
+  if (rootId) {
+    map.set(rootId, { x: centerX, y: rootY })
+  }
+
+  for (let i = 0; i < clusters.length; i += 1) {
+    const cluster = clusters[i]
+    const slot = layoutFrame.slots[i] ?? { x: centerX, y: Math.round(height * 0.45) }
+
+    map.set(cluster.logicNode.id, { x: slot.x, y: slot.y })
+    if (cluster.clusterNode) {
+      map.set(cluster.clusterNode.id, { x: slot.x, y: slot.y })
+    }
+
+    let placed = 0
+    let ringIndex = 0
+    while (placed < cluster.claims.length) {
+      const ringRadius = PAPER_FLOW_FIRST_RING_RADIUS + ringIndex * PAPER_FLOW_RING_STEP
+      const capacity = claimRingCapacity(ringRadius)
+      const countThisRing = Math.min(capacity, cluster.claims.length - placed)
+      for (let offset = 0; offset < countThisRing; offset += 1) {
+        const angle =
+          claimRingStartAngle(i, ringIndex) +
+          (Math.PI * 2 * offset) / Math.max(1, countThisRing)
+        const claimNode = cluster.claims[placed + offset]
+        map.set(claimNode.id, {
+          x: Math.round(slot.x + ringRadius * Math.cos(angle)),
+          y: Math.round(slot.y + ringRadius * Math.sin(angle)),
+        })
+      }
+      placed += countThisRing
+      ringIndex += 1
     }
   }
 
-  const danglingXs = spreadLine(danglingClaims.length, width * 0.09, width * 0.72)
+  if (danglingClaims.length > 0) {
+    const danglingSpan =
+      danglingClaims.length * (PAPER_FLOW_CLAIM_RADIUS * 2) +
+      Math.max(0, danglingClaims.length - 1) * (PAPER_FLOW_CLAIM_RADIUS * 2 + 18)
+    width = Math.max(width, Math.ceil(danglingSpan + PAPER_FLOW_SIDE_PADDING * 2))
+  }
+  const danglingXs = spreadLine(
+    danglingClaims.length,
+    PAPER_FLOW_SIDE_PADDING + PAPER_FLOW_CLAIM_RADIUS,
+    width - PAPER_FLOW_SIDE_PADDING - PAPER_FLOW_CLAIM_RADIUS,
+  )
+  const danglingY = Math.round(layoutFrame.contentBottomY + PAPER_FLOW_ROW_GAP * 0.68)
   for (let i = 0; i < danglingClaims.length; i += 1) {
     map.set(danglingClaims[i].id, {
       x: Math.round(danglingXs[i]),
-      y: Math.round(clamp(yClaim + 44, height * 0.74, height * 0.95)),
+      y: danglingY,
     })
   }
-
-  const citationYs = spreadLine(citationNodes.length, height * 0.34, height * 0.86)
-  for (let i = 0; i < citationNodes.length; i += 1) {
-    map.set(citationNodes[i].id, { x: citationX, y: Math.round(citationYs[i]) })
+  if (danglingClaims.length > 0) {
+    height = Math.max(height, danglingY + PAPER_FLOW_CLAIM_RADIUS + PAPER_FLOW_BOTTOM_PADDING)
   }
 
-  const ringRadius = Math.min(width, height) * 0.2
+  const ringRadius = Math.min(width, height) * 0.16
   for (let i = 0; i < otherNodes.length; i += 1) {
     const angle = (Math.PI * 2 * i) / Math.max(1, otherNodes.length)
     map.set(otherNodes[i].id, {
-      x: Math.round(width * 0.5 + ringRadius * Math.cos(angle)),
-      y: Math.round(height * 0.58 + ringRadius * Math.sin(angle) * 0.55),
+      x: Math.round(centerX + ringRadius * Math.cos(angle)),
+      y: Math.round((rootY + height * 0.54) / 2 + ringRadius * Math.sin(angle)),
     })
   }
 
@@ -184,6 +303,11 @@ export default function SignalGraph({
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
+  const onSelectRef = useRef(onSelect)
+
+  useEffect(() => {
+    onSelectRef.current = onSelect
+  }, [onSelect])
 
   const graphData = useMemo(() => {
     const nodeIds = new Set(nodes.map((n) => n.id))
@@ -227,7 +351,6 @@ export default function SignalGraph({
     if (!ref.current) return
     const isExecutive = uiTheme === 'executive'
     const panelNodeColor = isExecutive ? 'rgba(101, 154, 232, 0.92)' : 'rgba(103, 154, 244, 0.92)'
-    const rootColor = isExecutive ? 'rgba(100, 187, 243, 0.9)' : 'rgba(99, 224, 255, 0.9)'
     const queryColor = isExecutive ? 'rgba(225, 170, 108, 0.92)' : 'rgba(245, 190, 127, 0.92)'
     const edgeColor = isExecutive ? 'rgba(138, 166, 210, 0.58)' : 'rgba(142, 172, 222, 0.58)'
     const selectedColor = isExecutive ? 'rgba(226, 170, 106, 1)' : 'rgba(245, 190, 127, 1)'
@@ -266,36 +389,58 @@ export default function SignalGraph({
         {
           selector: 'node',
           style: {
-            label: '',
+            label: hasPaperFlow ? '' : 'data(label)',
             color: 'rgba(233, 243, 255, 0.94)',
-            'font-size': '9.5px',
-            'text-wrap': 'ellipsis',
-            'text-max-width': '130px',
-            'text-background-color': isExecutive ? 'rgba(10, 18, 34, 0.92)' : 'rgba(8, 16, 31, 0.9)',
-            'text-background-opacity': 1,
-            'text-background-padding': '3px',
+            'font-size': '8.5px',
+            'text-wrap': 'wrap',
+            'text-max-width': '92px',
+            'text-background-color': isExecutive ? 'rgba(10, 18, 34, 0.82)' : 'rgba(8, 16, 31, 0.78)',
+            'text-background-opacity': hasPaperFlow ? 0 : 0.68,
+            'text-background-padding': '1px',
             'text-background-shape': 'roundrectangle',
-            width: 'mapData(weight, 0, 1, 24, 66)',
-            height: 'mapData(weight, 0, 1, 24, 66)',
+            'text-halign': 'center',
+            'text-valign': 'center',
+            width: hasPaperFlow ? 'mapData(weight, 0, 1, 42, 56)' : 'mapData(weight, 0, 1, 76, 108)',
+            height: hasPaperFlow ? 'mapData(weight, 0, 1, 42, 56)' : 'mapData(weight, 0, 1, 76, 108)',
             'background-color': panelNodeColor,
-            'border-width': 1.7,
+            'border-width': 1.8,
             'border-color': 'rgba(216, 232, 255, 0.88)',
             'overlay-opacity': 0,
           },
         },
         {
+          selector: 'node[kind = "cluster"]',
+          style: {
+            label: '',
+            shape: 'ellipse',
+            width: 'mapData(weight, 0, 1, 188, 268)',
+            height: 'mapData(weight, 0, 1, 188, 268)',
+            'background-color': isExecutive ? 'rgba(89, 184, 196, 0.18)' : 'rgba(77, 197, 214, 0.2)',
+            'background-opacity': 0.26,
+            'border-color': isExecutive ? 'rgba(117, 226, 235, 0.34)' : 'rgba(117, 235, 247, 0.38)',
+            'border-width': 1.4,
+            'border-style': 'dashed',
+            'overlay-opacity': 0,
+            opacity: 0.85,
+            events: 'no',
+            'z-index': 1,
+          },
+        },
+        {
           selector: 'node[kind = "root"]',
           style: {
-            label: 'data(label)',
-            shape: 'roundrectangle',
-            width: 216,
-            height: 62,
-            'font-size': '11.5px',
-            'font-weight': 700,
-            'background-color': rootColor,
-            color: 'rgba(6, 14, 24, 0.94)',
-            'text-background-opacity': 0.35,
-            'text-max-width': '210px',
+            shape: 'ellipse',
+            width: hasPaperFlow ? 84 : 150,
+            height: hasPaperFlow ? 84 : 150,
+            'font-size': hasPaperFlow ? '0px' : '10px',
+            'font-weight': 760,
+            'background-color': isExecutive ? 'rgba(60, 111, 197, 0.94)' : 'rgba(64, 108, 196, 0.94)',
+            color: 'rgba(243, 248, 255, 0.98)',
+            'text-background-opacity': hasPaperFlow ? 0 : 0.18,
+            'text-max-width': '112px',
+            'border-width': 2.4,
+            'border-color': 'rgba(172, 203, 255, 0.94)',
+            'z-index': 10,
           },
         },
         {
@@ -339,48 +484,64 @@ export default function SignalGraph({
         {
           selector: 'node[kind = "citation"]',
           style: {
-            label: hasPaperFlow ? '' : 'data(label)',
             shape: 'roundrectangle',
-            width: hasPaperFlow ? 48 : 'mapData(weight, 0, 1, 118, 176)',
-            height: hasPaperFlow ? 18 : 44,
+            width: hasPaperFlow ? 'mapData(weight, 0, 1, 82, 104)' : 'mapData(weight, 0, 1, 118, 176)',
+            height: hasPaperFlow ? 24 : 44,
             'background-color': isExecutive ? 'rgba(218, 164, 108, 0.9)' : 'rgba(245, 190, 127, 0.9)',
             color: 'rgba(33, 24, 12, 0.95)',
-            'text-background-opacity': hasPaperFlow ? 0 : 0.34,
-            'text-max-width': '156px',
-            'font-size': '10px',
+            'text-background-opacity': 0.2,
+            'text-max-width': hasPaperFlow ? '78px' : '156px',
+            'font-size': hasPaperFlow ? '7px' : '10px',
             'border-color': hasPaperFlow ? 'rgba(250, 220, 170, 0.92)' : 'rgba(216, 232, 255, 0.88)',
+            'border-width': hasPaperFlow ? 1.4 : 1.7,
           },
         },
         {
           selector: 'node[kind = "logic"]',
           style: {
-            label: 'data(label)',
-            shape: 'roundrectangle',
-            width: 'mapData(weight, 0, 1, 132, 190)',
-            height: 46,
-            'font-size': '10px',
-            'font-weight': 620,
-            'text-max-width': '168px',
-            'background-color': isExecutive ? 'rgba(115, 205, 255, 0.9)' : 'rgba(118, 224, 255, 0.92)',
+            shape: 'ellipse',
+            width: hasPaperFlow ? 'mapData(weight, 0, 1, 34, 40)' : 'mapData(weight, 0, 1, 98, 118)',
+            height: hasPaperFlow ? 'mapData(weight, 0, 1, 34, 40)' : 'mapData(weight, 0, 1, 98, 118)',
+            'font-size': hasPaperFlow ? '0px' : '8.5px',
+            'font-weight': 720,
+            'text-max-width': '82px',
+            'background-color': isExecutive ? 'rgba(77, 210, 220, 0.92)' : 'rgba(85, 214, 223, 0.94)',
             color: 'rgba(8, 16, 26, 0.95)',
-            'text-background-opacity': 0.26,
-            'border-color': 'rgba(198, 242, 255, 0.86)',
+            'text-background-opacity': hasPaperFlow ? 0 : 0.14,
+            'border-color': 'rgba(182, 247, 255, 0.9)',
+            'border-width': 2,
+            'z-index': 11,
           },
         },
         {
           selector: 'node[kind = "claim"]',
           style: {
-            label: hasPaperFlow ? '' : 'data(label)',
-            shape: 'roundrectangle',
-            width: hasPaperFlow ? 40 : 'mapData(weight, 0, 1, 136, 208)',
-            height: hasPaperFlow ? 18 : 48,
-            'font-size': hasPaperFlow ? '9px' : '10px',
+            shape: 'ellipse',
+            width: hasPaperFlow ? 'mapData(weight, 0, 1, 30, 34)' : 'mapData(weight, 0, 1, 136, 208)',
+            height: hasPaperFlow ? 'mapData(weight, 0, 1, 30, 34)' : 48,
+            'font-size': hasPaperFlow ? '0px' : '10px',
             'font-weight': 620,
-            'text-max-width': '180px',
-            'background-color': isExecutive ? 'rgba(210, 144, 238, 0.9)' : 'rgba(214, 152, 255, 0.92)',
-            color: 'rgba(18, 10, 32, 0.94)',
-            'text-background-opacity': hasPaperFlow ? 0 : 0.26,
-            'border-color': 'rgba(231, 211, 255, 0.88)',
+            'text-max-width': hasPaperFlow ? '72px' : '180px',
+            'background-color': isExecutive ? 'rgba(246, 190, 106, 0.92)' : 'rgba(245, 181, 96, 0.94)',
+            color: 'rgba(40, 24, 7, 0.96)',
+            'text-background-opacity': hasPaperFlow ? 0 : 0.14,
+            'border-color': 'rgba(255, 225, 174, 0.92)',
+            'z-index': 12,
+          },
+        },
+        {
+          selector: 'node[kind = "summary"]',
+          style: {
+            shape: 'roundrectangle',
+            width: 108,
+            height: 28,
+            'font-size': '7px',
+            'font-weight': 700,
+            'text-max-width': '92px',
+            'background-color': isExecutive ? 'rgba(130, 147, 188, 0.9)' : 'rgba(122, 141, 190, 0.92)',
+            color: 'rgba(241, 247, 255, 0.96)',
+            'border-color': 'rgba(199, 212, 241, 0.76)',
+            'text-background-opacity': 0.12,
           },
         },
         {
@@ -411,9 +572,7 @@ export default function SignalGraph({
             'target-arrow-shape': 'triangle',
             'target-arrow-color': edgeColor,
             'arrow-scale': hasPaperFlow ? 0.6 : 0.76,
-            'curve-style': hasPaperFlow ? 'taxi' : 'bezier',
-            'taxi-direction': 'downward',
-            'taxi-turn': 42,
+            'curve-style': 'bezier',
             'line-cap': 'round',
           },
         },
@@ -467,7 +626,6 @@ export default function SignalGraph({
         {
           selector: '.selected',
           style: {
-            label: 'data(label)',
             'border-width': 3,
             'border-color': selectedColor,
             'background-color': isExecutive ? 'rgba(226, 170, 106, 0.94)' : 'rgba(245, 190, 127, 0.95)',
@@ -485,13 +643,13 @@ export default function SignalGraph({
       cy.elements().addClass('faded').removeClass('active selected')
       node.closedNeighborhood().removeClass('faded').addClass('active')
       node.addClass('selected')
-      onSelect?.(nodeId)
+      onSelectRef.current?.(nodeId)
     })
 
     cy.on('tap', (evt) => {
       if (evt.target !== cy) return
       cy.elements().removeClass('faded active selected')
-      onSelect?.('')
+      onSelectRef.current?.('')
     })
 
     cyRef.current = cy
@@ -499,7 +657,7 @@ export default function SignalGraph({
       cyRef.current = null
       cy.destroy()
     }
-  }, [edges, elements, hasPaperFlow, height, nodes, onSelect, uiTheme])
+  }, [edges, elements, hasPaperFlow, height, nodes, uiTheme])
 
   useEffect(() => {
     const cy = cyRef.current

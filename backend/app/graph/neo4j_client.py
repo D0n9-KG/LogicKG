@@ -9,6 +9,7 @@ from pathlib import Path
 
 from neo4j import GraphDatabase
 
+from app.citations.models import derive_polarity, derive_semantic_signals, derive_target_scopes
 from app.graph.textbook_graph import build_community_rows, sample_connected_graph_rows
 from app.ingest.models import DocumentIR
 from app.settings import settings
@@ -27,6 +28,157 @@ def paper_id_for_md_path(md_path: str, doi: str | None = None) -> str:
 
 
 _WS_RE = re.compile(r"\s+")
+
+
+def _safe_storage_id(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or ""))
+
+
+def _author_id_for_name(name: str) -> str:
+    normalized = _WS_RE.sub(" ", str(name or "").strip()).lower()
+    if not normalized:
+        return ""
+    digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    return f"author:{digest}"
+
+
+def _read_json_list(path: Path) -> list[dict]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [dict(item) for item in payload if isinstance(item, dict)]
+
+
+def _citation_enrichment_artifact_dir(paper_id: str) -> Path:
+    return Path(str(settings.storage_dir or "backend/storage")) / "derived" / "papers" / _safe_storage_id(paper_id)
+
+
+def _load_citation_enrichment_artifacts(paper_id: str) -> tuple[list[dict], list[dict]]:
+    artifact_dir = _citation_enrichment_artifact_dir(paper_id)
+    return (
+        _read_json_list(artifact_dir / "citation_acts.json"),
+        _read_json_list(artifact_dir / "citation_mentions.json"),
+    )
+
+
+def _norm_string_list(values: object) -> list[str]:
+    out: list[str] = []
+    for item in values if isinstance(values, list) else []:
+        value = str(item or "").strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _norm_float_list(values: object) -> list[float]:
+    out: list[float] = []
+    for item in values if isinstance(values, list) else []:
+        try:
+            out.append(float(item))
+        except Exception:
+            out.append(0.0)
+    return out
+
+
+def _sort_citation_mentions(mentions: list[dict]) -> list[dict]:
+    return sorted(
+        mentions,
+        key=lambda item: (
+            int(item.get("ref_num") or 0),
+            int(item.get("span_start") or 0),
+            int(item.get("span_end") or 0),
+            str(item.get("source_chunk_id") or ""),
+            str(item.get("mention_id") or ""),
+        ),
+    )
+
+
+def _merge_outgoing_citation_enrichment(
+    *,
+    outgoing_raw: list[dict],
+    human_cites: dict | list | None,
+    cites_cleared: set[str],
+    needs_review: bool,
+    citation_acts: list[dict] | None,
+    citation_mentions: list[dict] | None,
+) -> list[dict]:
+    act_by_cited: dict[str, dict] = {}
+    for item in citation_acts or []:
+        cited_paper_id = str(item.get("cited_paper_id") or "").strip()
+        if cited_paper_id:
+            act_by_cited[cited_paper_id] = dict(item)
+
+    mentions_by_cited: dict[str, list[dict]] = defaultdict(list)
+    for item in citation_mentions or []:
+        cited_paper_id = str(item.get("cited_paper_id") or "").strip()
+        if not cited_paper_id:
+            continue
+        mentions_by_cited[cited_paper_id].append(
+            {
+                "mention_id": str(item.get("mention_id") or "").strip(),
+                "ref_num": int(item.get("ref_num") or 0),
+                "source_chunk_id": str(item.get("source_chunk_id") or "").strip(),
+                "span_start": int(item.get("span_start") or 0),
+                "span_end": int(item.get("span_end") or 0),
+                "section": str(item.get("section") or "").strip() or "unknown",
+                "context_text": str(item.get("context_text") or "").strip(),
+                "target_scopes": _norm_string_list(item.get("target_scopes")),
+            }
+        )
+
+    outgoing: list[dict] = []
+    for raw in outgoing_raw:
+        cited_id = str(raw.get("cited_paper_id") or "").strip()
+        machine_labels = _norm_string_list(raw.get("purpose_labels"))
+        machine_scores = _norm_float_list(raw.get("purpose_scores"))
+        human = human_cites.get(cited_id) if isinstance(human_cites, dict) else None
+        cleared = cited_id in cites_cleared
+        if cleared:
+            labels: list[str] = []
+            scores: list[float] = []
+            source = "cleared"
+            human_labels = None
+            human_scores = None
+        elif isinstance(human, dict) and human.get("labels") is not None:
+            labels = _norm_string_list(human.get("labels"))
+            scores = _norm_float_list(human.get("scores"))
+            source = "human"
+            human_labels = labels
+            human_scores = scores
+        else:
+            labels = machine_labels
+            scores = machine_scores
+            source = "machine"
+            human_labels = None
+            human_scores = None
+
+        act = act_by_cited.get(cited_id, {})
+        semantic = {
+            "polarity": derive_polarity(labels, scores),
+            "semantic_signals": derive_semantic_signals(labels, scores),
+            "target_scopes": derive_target_scopes(labels),
+            "evidence_chunk_ids": _norm_string_list(act.get("evidence_chunk_ids") or raw.get("evidence_chunk_ids")),
+            "evidence_spans": _norm_string_list(act.get("evidence_spans") or raw.get("evidence_spans")),
+        }
+
+        out = dict(raw)
+        out["purpose_labels_machine"] = machine_labels
+        out["purpose_scores_machine"] = machine_scores
+        out["purpose_labels_human"] = human_labels
+        out["purpose_scores_human"] = human_scores
+        out["purpose_source"] = source
+        out["purpose_labels"] = labels
+        out["purpose_scores"] = scores
+        out["semantic"] = semantic
+        out["mentions"] = _sort_citation_mentions(mentions_by_cited.get(cited_id, []))
+        if needs_review and source in {"human", "cleared"}:
+            out["pending_machine_purpose_labels"] = machine_labels
+            out["pending_machine_purpose_scores"] = machine_scores
+        outgoing.append(out)
+    return outgoing
 
 
 def iso_time_for_paper_year(year: int | None) -> str:
@@ -184,24 +336,10 @@ class Neo4jClient:
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (ke:KnowledgeEntity) REQUIRE ke.entity_id IS UNIQUE",
             "CREATE CONSTRAINT global_community_id_unique IF NOT EXISTS FOR (gc:GlobalCommunity) REQUIRE gc.community_id IS UNIQUE",
             "CREATE CONSTRAINT global_keyword_id_unique IF NOT EXISTS FOR (gk:GlobalKeyword) REQUIRE gk.keyword_id IS UNIQUE",
-            "CREATE CONSTRAINT rq_candidate_id_unique IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) REQUIRE rq.candidate_id IS UNIQUE",
-            "CREATE CONSTRAINT feedback_id_unique IF NOT EXISTS FOR (fb:FeedbackRecord) REQUIRE fb.feedback_id IS UNIQUE",
-            "CREATE CONSTRAINT knowledge_gap_id_unique IF NOT EXISTS FOR (kg:KnowledgeGap) REQUIRE kg.gap_id IS UNIQUE",
-            "CREATE CONSTRAINT research_question_id_unique IF NOT EXISTS FOR (rqg:ResearchQuestion) REQUIRE rqg.rq_id IS UNIQUE",
-            "CREATE CONSTRAINT knowledge_gap_seed_id_unique IF NOT EXISTS FOR (gs:KnowledgeGapSeed) REQUIRE gs.seed_id IS UNIQUE",
             "CREATE INDEX entity_name IF NOT EXISTS FOR (ke:KnowledgeEntity) ON (ke.name)",
             "CREATE INDEX entity_type IF NOT EXISTS FOR (ke:KnowledgeEntity) ON (ke.entity_type)",
             "CREATE INDEX global_community_version IF NOT EXISTS FOR (gc:GlobalCommunity) ON (gc.version)",
             "CREATE INDEX global_keyword_text IF NOT EXISTS FOR (gk:GlobalKeyword) ON (gk.keyword)",
-            "CREATE INDEX rq_status IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) ON (rq.status)",
-            "CREATE INDEX rq_quality_score IF NOT EXISTS FOR (rq:ResearchQuestionCandidate) ON (rq.quality_score)",
-            "CREATE INDEX feedback_candidate_id IF NOT EXISTS FOR (fb:FeedbackRecord) ON (fb.candidate_id)",
-            "CREATE INDEX knowledge_gap_domain IF NOT EXISTS FOR (kg:KnowledgeGap) ON (kg.domain)",
-            "CREATE INDEX knowledge_gap_type IF NOT EXISTS FOR (kg:KnowledgeGap) ON (kg.gap_type)",
-            "CREATE INDEX research_question_domain IF NOT EXISTS FOR (rqg:ResearchQuestion) ON (rqg.domain)",
-            "CREATE INDEX research_question_status IF NOT EXISTS FOR (rqg:ResearchQuestion) ON (rqg.status)",
-            "CREATE INDEX research_question_quality IF NOT EXISTS FOR (rqg:ResearchQuestion) ON (rqg.quality_score)",
-            "CREATE INDEX knowledge_gap_seed_kinds IF NOT EXISTS FOR (gs:KnowledgeGapSeed) ON (gs.gap_kinds)",
         ]
         with self._driver.session() as session:
             for s in stmts:
@@ -216,6 +354,33 @@ class Neo4jClient:
         indexes = [
             "DROP INDEX proposition_state IF EXISTS",
             "DROP INDEX proposition_score IF EXISTS",
+        ]
+        with self._driver.session() as session:
+            for stmt in constraints + indexes:
+                session.run(stmt)
+        return {
+            "dropped_constraints": len(constraints),
+            "dropped_indexes": len(indexes),
+        }
+
+    def drop_legacy_discovery_schema(self) -> dict[str, int]:
+        constraints = [
+            "DROP CONSTRAINT rq_candidate_id_unique IF EXISTS",
+            "DROP CONSTRAINT feedback_id_unique IF EXISTS",
+            "DROP CONSTRAINT knowledge_gap_id_unique IF EXISTS",
+            "DROP CONSTRAINT research_question_id_unique IF EXISTS",
+            "DROP CONSTRAINT knowledge_gap_seed_id_unique IF EXISTS",
+        ]
+        indexes = [
+            "DROP INDEX rq_status IF EXISTS",
+            "DROP INDEX rq_quality_score IF EXISTS",
+            "DROP INDEX feedback_candidate_id IF EXISTS",
+            "DROP INDEX knowledge_gap_domain IF EXISTS",
+            "DROP INDEX knowledge_gap_type IF EXISTS",
+            "DROP INDEX research_question_domain IF EXISTS",
+            "DROP INDEX research_question_status IF EXISTS",
+            "DROP INDEX research_question_quality IF EXISTS",
+            "DROP INDEX knowledge_gap_seed_kinds IF EXISTS",
         ]
         with self._driver.session() as session:
             for stmt in constraints + indexes:
@@ -434,57 +599,6 @@ RETURN count(*) AS claims_written
 """
         with self._driver.session() as session:
             session.run(cypher, paper_id=paper_id, steps=steps, claims=claims)
-
-        # Persist gap seeds from claim kinds for downstream scientific-question discovery.
-        gap_seed_claims = []
-        for c in claims or []:
-            kinds = [str(x).strip() for x in (c.get("kinds") or []) if str(x).strip()]
-            seed_kinds = [k for k in kinds if k in {"Gap", "FutureWork", "Limitation", "Critique"}]
-            if not seed_kinds:
-                continue
-            claim_id = str(c.get("claim_id") or "").strip()
-            if not claim_id:
-                continue
-            claim_key = str(c.get("claim_key") or claim_id).strip() or claim_id
-            seed_id = f"{paper_id}:{claim_key}"
-            gap_seed_claims.append(
-                {
-                    "seed_id": seed_id,
-                    "claim_id": claim_id,
-                    "claim_key": claim_key,
-                    "claim_text": str(c.get("text") or ""),
-                    "step_type": str(c.get("step_type") or ""),
-                    "gap_kinds": seed_kinds,
-                    "confidence": float(c.get("confidence") or 0.0),
-                }
-            )
-        if not gap_seed_claims:
-            return
-
-        cypher_seed = """
-MATCH (p:Paper {paper_id:$paper_id})
-UNWIND $items AS it
-MATCH (cl:Claim {claim_id: it.claim_id})
-MERGE (gs:KnowledgeGapSeed {seed_id: it.seed_id})
-ON CREATE SET gs.created_at = $now
-SET gs.paper_id = $paper_id,
-    gs.claim_id = it.claim_id,
-    gs.claim_key = it.claim_key,
-    gs.claim_text = it.claim_text,
-    gs.step_type = it.step_type,
-    gs.gap_kinds = it.gap_kinds,
-    gs.confidence = it.confidence,
-    gs.updated_at = $now
-MERGE (p)-[:HAS_GAP_SEED]->(gs)
-MERGE (cl)-[:INDICATES_GAP]->(gs)
-"""
-        with self._driver.session() as session:
-            session.run(
-                cypher_seed,
-                paper_id=paper_id,
-                items=gap_seed_claims,
-                now=datetime.now(tz=timezone.utc).isoformat(),
-            )
 
     def set_logic_step_evidence(self, paper_id: str, step_type: str, chunk_ids: list[str], source: str = "human") -> None:
         src = (source or "human").strip().lower()
@@ -742,11 +856,11 @@ LIMIT $limit
     def list_papers_for_management(self, limit: int = 200, query: str | None = None) -> list[dict]:
         cypher = """
 MATCH (p:Paper)
-WHERE $query = ''
-   OR toLower(coalesce(p.title, '')) CONTAINS $query
-   OR toLower(coalesce(p.paper_source, '')) CONTAINS $query
-   OR toLower(coalesce(p.doi, '')) CONTAINS $query
-   OR toLower(coalesce(p.paper_id, '')) CONTAINS $query
+WHERE $search = ''
+   OR toLower(coalesce(p.title, '')) CONTAINS $search
+   OR toLower(coalesce(p.paper_source, '')) CONTAINS $search
+   OR toLower(coalesce(p.doi, '')) CONTAINS $search
+   OR toLower(coalesce(p.paper_id, '')) CONTAINS $search
 OPTIONAL MATCH (co:Collection)-[:HAS_PAPER]->(p)
 WITH p, collect(DISTINCT co) AS cos
 RETURN p.paper_id AS paper_id,
@@ -775,7 +889,7 @@ LIMIT $limit
 """
         params = {
             "limit": int(limit),
-            "query": str(query or "").strip().lower(),
+            "search": str(query or "").strip().lower(),
         }
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, **params)]
@@ -1550,6 +1664,8 @@ RETURN q.paper_id AS cited_paper_id,
        q.title AS cited_title,
        c.total_mentions AS total_mentions,
        c.ref_nums AS ref_nums,
+       c.evidence_chunk_ids AS evidence_chunk_ids,
+       c.evidence_spans AS evidence_spans,
        c.purpose_labels AS purpose_labels,
        c.purpose_scores AS purpose_scores
 ORDER BY c.total_mentions DESC
@@ -1559,44 +1675,15 @@ LIMIT 200
                 )
             ]
 
-            # Overlay cite purpose edits
-            outgoing: list[dict] = []
-            for o in outgoing_raw:
-                cited_id = str(o.get("cited_paper_id") or "")
-                machine_labels = list(o.get("purpose_labels") or [])
-                machine_scores = list(o.get("purpose_scores") or [])
-                human = human_cites.get(cited_id) if isinstance(human_cites, dict) else None
-                cleared = cited_id in cites_cleared
-                if cleared:
-                    labels = []
-                    scores = []
-                    source = "cleared"
-                    human_labels = None
-                    human_scores = None
-                elif isinstance(human, dict) and human.get("labels") is not None:
-                    labels = list(human.get("labels") or [])
-                    scores = list(human.get("scores") or [])
-                    source = "human"
-                    human_labels = labels
-                    human_scores = scores
-                else:
-                    labels = machine_labels
-                    scores = machine_scores
-                    source = "machine"
-                    human_labels = None
-                    human_scores = None
-                out = dict(o)
-                out["purpose_labels_machine"] = machine_labels
-                out["purpose_scores_machine"] = machine_scores
-                out["purpose_labels_human"] = human_labels
-                out["purpose_scores_human"] = human_scores
-                out["purpose_source"] = source
-                out["purpose_labels"] = labels
-                out["purpose_scores"] = scores
-                if needs_review and source in {"human", "cleared"}:
-                    out["pending_machine_purpose_labels"] = machine_labels
-                    out["pending_machine_purpose_scores"] = machine_scores
-                outgoing.append(out)
+            citation_acts, citation_mentions = _load_citation_enrichment_artifacts(paper_id)
+            outgoing = _merge_outgoing_citation_enrichment(
+                outgoing_raw=outgoing_raw,
+                human_cites=human_cites,
+                cites_cleared=cites_cleared,
+                needs_review=needs_review,
+                citation_acts=citation_acts,
+                citation_mentions=citation_mentions,
+            )
 
             unresolved = [
                 dict(r)
@@ -2475,414 +2562,6 @@ LIMIT $limit
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, kinds=use_kinds, limit=limit)]
 
-    def list_gap_seeds(self, limit: int = 300, kinds: list[str] | None = None) -> list[dict]:
-        limit = max(1, min(5000, int(limit)))
-        use_kinds = [str(k).strip() for k in (kinds or ["Gap", "FutureWork", "Limitation", "Critique"]) if str(k).strip()]
-        if not use_kinds:
-            return []
-
-        cypher = """
-MATCH (gs:KnowledgeGapSeed)
-WHERE any(k IN coalesce(gs.gap_kinds, []) WHERE k IN $kinds)
-OPTIONAL MATCH (cl:Claim {claim_id: gs.claim_id})<-[:HAS_CLAIM]-(p:Paper)
-OPTIONAL MATCH (cl)-[:IN_GLOBAL_COMMUNITY]->(gc:GlobalCommunity)
-RETURN gs.seed_id AS seed_id,
-       gs.claim_id AS claim_id,
-       gs.claim_key AS claim_key,
-       gs.claim_text AS text,
-       gs.step_type AS step_type,
-       coalesce(gs.gap_kinds, []) AS kinds,
-       coalesce(gs.confidence, 0.0) AS confidence,
-       p.paper_id AS paper_id,
-       p.paper_source AS paper_source,
-       p.title AS paper_title,
-       p.year AS paper_year,
-       collect(DISTINCT gc.community_id) AS source_community_ids
-ORDER BY confidence DESC, gs.updated_at DESC, gs.seed_id ASC
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            return [dict(r) for r in session.run(cypher, kinds=use_kinds, limit=limit)]
-
-    def upsert_discovery_graph(
-        self,
-        *,
-        domain: str,
-        batch_id: str,
-        gaps: list[dict],
-        questions: list[dict],
-        built_at: str,
-    ) -> None:
-        domain_norm = str(domain or "").strip().lower()
-        bid = str(batch_id or "").strip()
-        ts = str(built_at or datetime.now(tz=timezone.utc).isoformat())
-        if not bid:
-            return
-
-        gap_items: list[dict] = []
-        for g in gaps or []:
-            gap_id = str(g.get("gap_id") or "").strip()
-            if not gap_id:
-                continue
-            gap_items.append(
-                {
-                    "gap_id": gap_id,
-                    "gap_type": str(g.get("gap_type") or "seed"),
-                    "title": str(g.get("title") or ""),
-                    "description": str(g.get("description") or ""),
-                    "missing_evidence_statement": str(g.get("missing_evidence_statement") or ""),
-                    "priority_score": float(g.get("priority_score") or 0.0),
-                    "signals_json": json.dumps(g.get("signals") or {}, ensure_ascii=False),
-                    "source_claim_ids": [str(x).strip() for x in (g.get("source_claim_ids") or []) if str(x).strip()],
-                    "source_community_ids": [str(x).strip() for x in (g.get("source_community_ids") or []) if str(x).strip()],
-                    "source_paper_ids": [str(x).strip() for x in (g.get("source_paper_ids") or []) if str(x).strip()],
-                }
-            )
-
-        if gap_items:
-            cypher_gaps = """
-UNWIND $items AS g
-MERGE (kg:KnowledgeGap {gap_id: g.gap_id})
-ON CREATE SET kg.created_at = $built_at
-SET kg.domain = $domain,
-    kg.batch_id = $batch_id,
-    kg.gap_type = g.gap_type,
-    kg.title = g.title,
-    kg.description = g.description,
-    kg.missing_evidence_statement = g.missing_evidence_statement,
-    kg.priority_score = g.priority_score,
-    kg.signals_json = g.signals_json,
-    kg.updated_at = $built_at
-WITH kg, g
-UNWIND coalesce(g.source_claim_ids, []) AS cid
-MATCH (cl:Claim {claim_id: cid})
-MERGE (kg)-[:GAP_FROM_CLAIM]->(cl)
-"""
-            cypher_gap_communities = """
-UNWIND $items AS g
-MATCH (kg:KnowledgeGap {gap_id: g.gap_id})
-UNWIND coalesce(g.source_community_ids, []) AS id
-MATCH (gc:GlobalCommunity {community_id: id})
-MERGE (kg)-[:GAP_FROM_COMMUNITY]->(gc)
-"""
-            cypher_gap_papers = """
-UNWIND $items AS g
-MATCH (kg:KnowledgeGap {gap_id: g.gap_id})
-UNWIND coalesce(g.source_paper_ids, []) AS pid
-MATCH (p:Paper {paper_id: pid})
-MERGE (kg)-[:GAP_FROM_PAPER]->(p)
-"""
-            with self._driver.session() as session:
-                session.run(
-                    cypher_gaps,
-                    items=gap_items,
-                    domain=domain_norm,
-                    batch_id=bid,
-                    built_at=ts,
-                )
-                session.run(cypher_gap_communities, items=gap_items)
-                session.run(cypher_gap_papers, items=gap_items)
-
-        question_items: list[dict] = []
-        for q in questions or []:
-            rq_id = str(q.get("candidate_id") or q.get("rq_id") or "").strip()
-            question = str(q.get("question") or "").strip()
-            if not rq_id or not question:
-                continue
-            support = _split_prefixed_evidence_ids([str(x) for x in (q.get("support_evidence_ids") or [])])
-            challenge = _split_prefixed_evidence_ids([str(x) for x in (q.get("challenge_evidence_ids") or [])])
-            question_items.append(
-                {
-                    "rq_id": rq_id,
-                    "gap_id": str(q.get("gap_id") or ""),
-                    "gap_type": str(q.get("gap_type") or "seed"),
-                    "question": question,
-                    "motivation": str(q.get("motivation") or ""),
-                    "novelty": str(q.get("novelty") or ""),
-                    "proposed_method": str(q.get("proposed_method") or ""),
-                    "difference": str(q.get("difference") or ""),
-                    "feasibility": str(q.get("feasibility") or ""),
-                    "risk_statement": str(q.get("risk_statement") or ""),
-                    "timeline": str(q.get("timeline") or ""),
-                    "evaluation_metrics": [str(x).strip() for x in (q.get("evaluation_metrics") or []) if str(x).strip()],
-                    "generation_mode": str(q.get("generation_mode") or "template"),
-                    "prompt_variant": str(q.get("prompt_variant") or ""),
-                    "generation_confidence": float(q.get("generation_confidence") or 0.0),
-                    "optimization_score": float(q.get("optimization_score") or 0.0),
-                    "novelty_score": float(q.get("novelty_score") or 0.0),
-                    "feasibility_score": float(q.get("feasibility_score") or 0.0),
-                    "relevance_score": float(q.get("relevance_score") or 0.0),
-                    "support_coverage": float(q.get("support_coverage") or 0.0),
-                    "challenge_coverage": float(q.get("challenge_coverage") or 0.0),
-                    "quality_score": float(q.get("quality_score") or 0.0),
-                    "status": str(q.get("status") or "draft"),
-                    "rank": int(q.get("rank") or 0),
-                    "support_claim_ids": support["claim_ids"],
-                    "support_community_ids": support["community_ids"],
-                    "support_chunk_ids": support["chunk_ids"],
-                    "support_event_ids": support["event_ids"],
-                    "challenge_claim_ids": challenge["claim_ids"],
-                    "challenge_community_ids": challenge["community_ids"],
-                    "challenge_chunk_ids": challenge["chunk_ids"],
-                    "challenge_event_ids": challenge["event_ids"],
-                    "source_claim_ids": [str(x).strip() for x in (q.get("source_claim_ids") or []) if str(x).strip()],
-                    "source_community_ids": [str(x).strip() for x in (q.get("source_community_ids") or []) if str(x).strip()],
-                    "source_paper_ids": [str(x).strip() for x in (q.get("source_paper_ids") or []) if str(x).strip()],
-                    "inspiration_adjacent_paper_ids": [
-                        str(x).strip() for x in (q.get("inspiration_adjacent_paper_ids") or []) if str(x).strip()
-                    ],
-                    "inspiration_random_paper_ids": [
-                        str(x).strip() for x in (q.get("inspiration_random_paper_ids") or []) if str(x).strip()
-                    ],
-                    "inspiration_community_paper_ids": [
-                        str(x).strip() for x in (q.get("inspiration_community_paper_ids") or []) if str(x).strip()
-                    ],
-                }
-            )
-        if not question_items:
-            return
-
-        cypher_rq = """
-UNWIND $items AS q
-MERGE (rq:ResearchQuestion {rq_id: q.rq_id})
-ON CREATE SET rq.created_at = $built_at
-SET rq.domain = $domain,
-    rq.batch_id = $batch_id,
-    rq.gap_id = q.gap_id,
-    rq.gap_type = q.gap_type,
-    rq.question = q.question,
-    rq.motivation = q.motivation,
-    rq.novelty = q.novelty,
-    rq.proposed_method = q.proposed_method,
-    rq.difference = q.difference,
-    rq.feasibility = q.feasibility,
-    rq.risk_statement = q.risk_statement,
-    rq.timeline = q.timeline,
-    rq.evaluation_metrics = q.evaluation_metrics,
-    rq.generation_mode = q.generation_mode,
-    rq.prompt_variant = q.prompt_variant,
-    rq.generation_confidence = q.generation_confidence,
-    rq.optimization_score = q.optimization_score,
-    rq.novelty_score = q.novelty_score,
-    rq.feasibility_score = q.feasibility_score,
-    rq.relevance_score = q.relevance_score,
-    rq.support_coverage = q.support_coverage,
-    rq.challenge_coverage = q.challenge_coverage,
-    rq.quality_score = q.quality_score,
-    rq.status = q.status,
-    rq.rank = q.rank,
-    rq.updated_at = $built_at
-WITH rq, q
-FOREACH (_ IN CASE WHEN q.gap_id = '' THEN [] ELSE [1] END |
-    MERGE (kg:KnowledgeGap {gap_id: q.gap_id})
-    ON CREATE SET kg.created_at = $built_at, kg.domain = $domain, kg.batch_id = $batch_id
-    MERGE (rq)-[:ADDRESSES_GAP]->(kg)
-)
-"""
-        with self._driver.session() as session:
-            session.run(
-                cypher_rq,
-                items=question_items,
-                domain=domain_norm,
-                batch_id=bid,
-                built_at=ts,
-            )
-
-            for row in question_items:
-                rid = row["rq_id"]
-                # support edges
-                if row["support_claim_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (cl:Claim {claim_id:id})
-MERGE (rq)-[:SUPPORTED_BY]->(cl)
-""",
-                        rq_id=rid,
-                        ids=row["support_claim_ids"],
-                    )
-                if row["support_community_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (gc:GlobalCommunity {community_id:id})
-MERGE (rq)-[:SUPPORTED_BY]->(gc)
-""",
-                        rq_id=rid,
-                        ids=row["support_community_ids"],
-                    )
-                if row["support_chunk_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (ch:Chunk {chunk_id:id})
-MERGE (rq)-[:SUPPORTED_BY]->(ch)
-""",
-                        rq_id=rid,
-                        ids=row["support_chunk_ids"],
-                    )
-                if row["support_event_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (ev:EvidenceEvent {event_id:id})
-MERGE (rq)-[:SUPPORTED_BY]->(ev)
-""",
-                        rq_id=rid,
-                        ids=row["support_event_ids"],
-                    )
-                # challenge edges
-                if row["challenge_claim_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (cl:Claim {claim_id:id})
-MERGE (rq)-[:CHALLENGED_BY]->(cl)
-""",
-                        rq_id=rid,
-                        ids=row["challenge_claim_ids"],
-                    )
-                if row["challenge_community_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (gc:GlobalCommunity {community_id:id})
-MERGE (rq)-[:CHALLENGED_BY]->(gc)
-""",
-                        rq_id=rid,
-                        ids=row["challenge_community_ids"],
-                    )
-                if row["challenge_chunk_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (ch:Chunk {chunk_id:id})
-MERGE (rq)-[:CHALLENGED_BY]->(ch)
-""",
-                        rq_id=rid,
-                        ids=row["challenge_chunk_ids"],
-                    )
-                if row["challenge_event_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (ev:EvidenceEvent {event_id:id})
-MERGE (rq)-[:CHALLENGED_BY]->(ev)
-""",
-                        rq_id=rid,
-                        ids=row["challenge_event_ids"],
-                    )
-                if row["source_community_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (gc:GlobalCommunity {community_id:id})
-MERGE (rq)-[:USES_SOURCE_COMMUNITY]->(gc)
-""",
-                        rq_id=rid,
-                        ids=row["source_community_ids"],
-                    )
-                if row["source_paper_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (p:Paper {paper_id:id})
-MERGE (rq)-[:USES_SOURCE_PAPER]->(p)
-""",
-                        rq_id=rid,
-                        ids=row["source_paper_ids"],
-                    )
-                if row["inspiration_adjacent_paper_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (p:Paper {paper_id:id})
-MERGE (rq)-[:INSPIRED_BY_ADJACENT]->(p)
-""",
-                        rq_id=rid,
-                        ids=row["inspiration_adjacent_paper_ids"],
-                    )
-                if row["inspiration_random_paper_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (p:Paper {paper_id:id})
-MERGE (rq)-[:INSPIRED_BY_RANDOM]->(p)
-""",
-                        rq_id=rid,
-                        ids=row["inspiration_random_paper_ids"],
-                    )
-                if row["inspiration_community_paper_ids"]:
-                    session.run(
-                        """
-MATCH (rq:ResearchQuestion {rq_id:$rq_id})
-UNWIND $ids AS id
-MATCH (p:Paper {paper_id:id})
-MERGE (rq)-[:INSPIRED_BY_COMMUNITY]->(p)
-""",
-                        rq_id=rid,
-                        ids=row["inspiration_community_paper_ids"],
-                    )
-
-    def list_latest_research_questions(self, domain: str | None = None, limit: int = 200) -> list[dict]:
-        limit = max(1, min(2000, int(limit)))
-        domain_norm = str(domain or "").strip().lower()
-        cypher = """
-MATCH (rq:ResearchQuestion)
-WHERE ($domain = '' OR toLower(coalesce(rq.domain, '')) = $domain)
-RETURN rq.rq_id AS candidate_id,
-       rq.question AS question,
-       rq.gap_id AS gap_id,
-       rq.gap_type AS gap_type,
-       rq.status AS status,
-       rq.rank AS rank,
-       rq.quality_score AS quality_score,
-       rq.support_coverage AS support_coverage,
-       rq.challenge_coverage AS challenge_coverage,
-       rq.novelty_score AS novelty_score,
-       rq.feasibility_score AS feasibility_score,
-       rq.relevance_score AS relevance_score,
-       rq.generation_mode AS generation_mode,
-       rq.prompt_variant AS prompt_variant,
-       rq.generation_confidence AS generation_confidence,
-       rq.optimization_score AS optimization_score,
-       rq.motivation AS motivation,
-       rq.novelty AS novelty,
-       rq.proposed_method AS proposed_method,
-       rq.difference AS difference,
-       rq.feasibility AS feasibility,
-       rq.risk_statement AS risk_statement,
-       rq.timeline AS timeline,
-       rq.evaluation_metrics AS evaluation_metrics,
-       rq.updated_at AS updated_at
-ORDER BY coalesce(rq.updated_at, rq.created_at) DESC, coalesce(rq.rank, 999999) ASC, coalesce(rq.quality_score, 0.0) DESC
-LIMIT $limit
-"""
-        with self._driver.session() as session:
-            rows = [dict(r) for r in session.run(cypher, domain=domain_norm, limit=limit)]
-        # Deduplicate by candidate_id while keeping first (latest)
-        out: list[dict] = []
-        seen: set[str] = set()
-        for row in rows:
-            cid = str(row.get("candidate_id") or "").strip()
-            if not cid or cid in seen:
-                continue
-            seen.add(cid)
-            out.append(row)
-        return out
-
     def replace_similar_claim_edges_batch(self, items: list[dict], model: str, built_at: str, mode: str = "embedding") -> None:
         """
         Replace outgoing SIMILAR_CLAIM edges for each source claim.
@@ -3539,6 +3218,30 @@ RETURN deleted_proposition_groups,
             "deleted_relation_edges": int((row or {}).get("deleted_relation_edges") or 0),
         }
 
+    def clear_legacy_discovery_artifacts(self) -> dict[str, dict[str, int]]:
+        labels = [
+            "KnowledgeGap",
+            "ResearchQuestion",
+            "ResearchQuestionCandidate",
+            "FeedbackRecord",
+            "KnowledgeGapSeed",
+        ]
+        deleted_labels: dict[str, int] = {}
+        with self._driver.session() as session:
+            for label in labels:
+                row = session.run(
+                    f"""
+MATCH (n:{label})
+WITH count(n) AS deleted_count, collect(n) AS rows
+FOREACH (item IN rows | DETACH DELETE item)
+RETURN deleted_count
+"""
+                ).single()
+                deleted_labels[label] = int((row or {}).get("deleted_count") or 0)
+        return {
+            "deleted_labels": deleted_labels,
+        }
+
     def upsert_global_communities(self, items: list[dict]) -> int:
         if not items:
             return 0
@@ -3702,7 +3405,9 @@ LIMIT $limit
     def list_global_community_members(self, community_id: str, limit: int = 200) -> list[dict]:
         cypher = """
 MATCH (gc:GlobalCommunity {community_id: $community_id})<-[:IN_GLOBAL_COMMUNITY]-(member)
+OPTIONAL MATCH (p:Paper {paper_id: member.paper_id})
 WITH member,
+     p,
      CASE
        WHEN member:LogicStep THEN member.logic_step_id
        WHEN member:Claim THEN member.claim_id
@@ -3718,7 +3423,27 @@ WITH member,
      coalesce(member.summary, member.text, member.name, member.title, '') AS text
 RETURN member_id AS member_id,
        member_kind AS member_kind,
-       text AS text
+       text AS text,
+       CASE
+         WHEN member:LogicStep OR member:Claim THEN member.paper_id
+         ELSE NULL
+       END AS paper_id,
+       CASE
+         WHEN member:LogicStep OR member:Claim THEN coalesce(member.paper_source, p.paper_source)
+         ELSE NULL
+       END AS paper_source,
+       CASE
+         WHEN member:LogicStep OR member:Claim THEN coalesce(member.paper_title, p.title)
+         ELSE NULL
+       END AS paper_title,
+       CASE
+         WHEN member:LogicStep OR member:Claim THEN member.step_type
+         ELSE NULL
+       END AS step_type,
+       CASE
+         WHEN member:KnowledgeEntity THEN member.source_chapter_id
+         ELSE NULL
+       END AS source_chapter_id
 ORDER BY member_kind ASC, member_id ASC
 LIMIT $limit
 """

@@ -30,6 +30,9 @@ type OverviewCommunityNode = {
   cluster_key?: string
   community_id?: string
   paper_id?: string
+  paper_source?: string
+  paper_title?: string
+  step_type?: string
   chapter_id?: string
 }
 
@@ -218,6 +221,9 @@ export async function loadOverviewCommunity3DGraph(options: {
             clusterKey: String(node.cluster_key ?? '').trim() || undefined,
             communityId: String(node.community_id ?? '').trim() || undefined,
             paperId: String(node.paper_id ?? '').trim() || undefined,
+            paperSource: String(node.paper_source ?? '').trim() || undefined,
+            paperTitle: String(node.paper_title ?? '').trim() || undefined,
+            stepType: String(node.step_type ?? '').trim() || undefined,
             chapterId: String(node.chapter_id ?? '').trim() || undefined,
           } satisfies GraphNodeData,
         })

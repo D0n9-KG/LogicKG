@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import anyio
+
 from app.main import app, register_task_handlers
 from app.tasks.models import TaskType
 
@@ -24,6 +26,7 @@ def test_register_task_handlers_registers_all_expected_task_types():
     assert set(manager.registered) == {
         TaskType.ingest_path,
         TaskType.ingest_upload_ready,
+        TaskType.ingest_textbook_upload_ready,
         TaskType.upload_replace,
         TaskType.delete_papers_batch,
         TaskType.delete_textbooks_batch,
@@ -36,12 +39,29 @@ def test_register_task_handlers_registers_all_expected_task_types():
         TaskType.rebuild_similarity,
         TaskType.update_similarity_paper,
         TaskType.ingest_textbook,
-        TaskType.discovery_batch,
     }
 
 
 def test_app_uses_lifespan_instead_of_deprecated_startup_hooks():
     assert app.router.on_startup == []
+
+
+def test_lifespan_applies_profile_settings_on_startup(monkeypatch):
+    import app.main as main_module
+
+    applied: list[bool] = []
+
+    monkeypatch.setattr(main_module, "apply_profile_to_settings", lambda: applied.append(True) or {})
+    monkeypatch.setattr(main_module.task_manager, "start", lambda: None)
+    monkeypatch.setattr(main_module.task_manager, "stop", lambda: None)
+
+    async def _exercise() -> None:
+        async with main_module.lifespan(main_module.app):
+            pass
+
+    anyio.run(_exercise)
+
+    assert applied == [True]
 
 
 def test_importing_app_main_does_not_emit_faiss_swig_warnings():
@@ -69,8 +89,10 @@ def test_app_exposes_global_community_routes():
 
     assert ("/community/list", ("GET",)) in routes
     assert ("/community/{community_id}", ("GET",)) in routes
+    assert ("/community/overview-graph", ("GET",)) in routes
     assert ("/tasks/delete/papers", ("POST",)) in routes
     assert ("/tasks/delete/textbooks", ("POST",)) in routes
     assert ("/tasks/rebuild/community", ("POST",)) in routes
     assert ("/tasks/cleanup/propositions", ("POST",)) in routes
     assert ("/tasks/rebuild/evolution", ("POST",)) not in routes
+    assert ("/discovery/batch", ("POST",)) not in routes

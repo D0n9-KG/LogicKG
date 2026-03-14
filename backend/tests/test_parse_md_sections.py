@@ -30,6 +30,21 @@ class ParseMarkdownSectionsTests(unittest.TestCase):
         self.assertEqual(intro_blocks[0].section, "Intro")
         self.assertEqual(method_blocks[0].section, "Method")
 
+    def test_reference_section_doi_is_not_promoted_to_paper_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "paper.md"
+            p.write_text(
+                "# DEM investigation of particle anti-rotation effects on the micromechanical response of granular materials\n\n"
+                "Bo Zhou, Runqiu Huang\n\n"
+                "Main body paragraph.\n\n"
+                "# References\n\n"
+                "[1] Example cited paper. doi:10.1061/(ASCE)GT.1943-5606.0000890\n",
+                encoding="utf-8",
+            )
+            doc = parse_mineru_markdown(str(p))
+
+        self.assertIsNone(doc.paper.doi)
+
 
 if __name__ == "__main__":
     unittest.main()

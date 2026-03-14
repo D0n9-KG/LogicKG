@@ -122,8 +122,26 @@ def parse_mineru_markdown(md_path: str) -> DocumentIR:
     authors: list[str] = []
     doi: str | None = None
     year: int | None = None
+    ref_line_idxs: list[int] = []
+    ref_heading_idx: int | None = None
 
-    # Heuristics: top headings for titles, early non-empty line for authors, DOI line anywhere.
+    for idx, line in enumerate(lines, start=1):
+        if _REF_ENTRY_RE.match(line.strip()):
+            ref_line_idxs.append(idx)
+        if _REF_HEADING_RE.match(line.strip()):
+            ref_heading_idx = idx
+
+    ref_start = None
+    if ref_line_idxs:
+        ref_start = ref_line_idxs[0]
+        cutoff = int(len(lines) * 0.7)
+        tail_refs = [i for i in ref_line_idxs if i >= cutoff]
+        if tail_refs:
+            ref_start = min(tail_refs)
+    elif ref_heading_idx:
+        ref_start = ref_heading_idx
+
+    # Heuristics: top headings for titles, early non-empty line for authors, DOI only before references.
     for i, line in enumerate(lines[:80], start=1):
         m = _HEADING_RE.match(line)
         if m:
@@ -137,7 +155,8 @@ def parse_mineru_markdown(md_path: str) -> DocumentIR:
                 candidates = re.split(r"\s+and\s+|,\s*", line.strip())
                 authors = [c.strip() for c in candidates if c.strip()]
 
-    m = _DOI_RE.search(raw)
+    doi_search_lines = lines[: max(0, ref_start - 1)] if ref_start else lines
+    m = _DOI_RE.search("\n".join(doi_search_lines))
     if m:
         doi = m.group("doi").rstrip(").,;")
 
@@ -170,29 +189,6 @@ def parse_mineru_markdown(md_path: str) -> DocumentIR:
     chunks: list[Chunk] = []
     references: list[ReferenceEntry] = []
     citations: list[CitationEvent] = []
-
-    # Identify reference entries near the end: collect all lines that look like "[n] ..."
-    ref_line_idxs: list[int] = []
-    ref_heading_idx: int | None = None
-    for idx, line in enumerate(lines, start=1):
-        if _REF_ENTRY_RE.match(line.strip()):
-            ref_line_idxs.append(idx)
-        # Also detect reference section headings (take last match to avoid early TOC/mentions)
-        if _REF_HEADING_RE.match(line.strip()):
-            ref_heading_idx = idx
-
-    ref_start = None
-    if ref_line_idxs:
-        # assume references start at the first ref line after the last non-ref block near the end
-        ref_start = ref_line_idxs[0]
-        # a better heuristic: if ref lines are concentrated near end, choose first within last 30% of file
-        cutoff = int(len(lines) * 0.7)
-        tail_refs = [i for i in ref_line_idxs if i >= cutoff]
-        if tail_refs:
-            ref_start = min(tail_refs)
-    elif ref_heading_idx:
-        # No numbered refs found, but we have a reference heading - use it
-        ref_start = ref_heading_idx
 
     # Build paragraph-like chunks by blank-line separation, but stop parsing at reference section for "content chunks".
     blocks: list[tuple[int, int, str, str | None]] = []

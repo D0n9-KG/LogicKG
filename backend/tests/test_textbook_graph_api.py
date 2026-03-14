@@ -96,7 +96,7 @@ def test_textbook_fusion_link_endpoint_submits_global_community_rebuild_task(mon
     assert captured["payload"] == {"textbook_id": "tb-1"}
 
 
-def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypatch, tmp_path: Path) -> None:
+def test_ingest_textbook_keeps_global_community_rebuild_manual(monkeypatch, tmp_path: Path) -> None:
     source_md = tmp_path / "textbook.md"
     source_md.write_text("# Chapter 1\ncontent", encoding="utf-8")
     graph_json = tmp_path / "graph.json"
@@ -128,8 +128,6 @@ def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypa
         def upsert_textbook_chapter(self, **kwargs) -> None:
             return None
 
-    rebuild_calls: list[dict] = []
-
     monkeypatch.setattr(textbook_pipeline, "Neo4jClient", _FakeNeo4jClient)
     monkeypatch.setattr(textbook_pipeline, "split_textbook_md", lambda md_path: [_FakeChapter()])
     monkeypatch.setattr(textbook_pipeline, "_run_autoyoutu_pipeline", lambda chapter_md_path, output_dir, log: graph_json)
@@ -142,12 +140,6 @@ def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypa
             "community_count": 0,
         },
     )
-    monkeypatch.setattr(
-        textbook_pipeline,
-        "rebuild_global_communities",
-        lambda progress=None, log=None: rebuild_calls.append({"progress": progress, "log": log}) or {"communities": 1},
-        raising=False,
-    )
     monkeypatch.setattr(textbook_pipeline.settings, "storage_dir", str(tmp_path / "storage"), raising=False)
 
     result = textbook_pipeline.ingest_textbook(
@@ -157,4 +149,5 @@ def test_ingest_textbook_triggers_global_community_rebuild_after_import(monkeypa
 
     assert result["ok"] is True
     assert "mapped_propositions" not in result
-    assert len(rebuild_calls) == 1
+    assert result["global_communities"] == 0
+    assert result["global_keywords"] == 0

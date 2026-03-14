@@ -1,5 +1,6 @@
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://127.0.0.1:8000'
+const API_URL = String((import.meta.env.VITE_API_URL as string | undefined) ?? '').trim().replace(/\/+$/, '')
 const API_BASE_STORAGE_KEY = 'logickg.api.base'
+const MAIN_WORKSPACE_BACKEND_PORTS = [8000, 8080, 18000, 8001, 8002]
 
 function readStoredApiUrl() {
   if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') return ''
@@ -21,22 +22,26 @@ function uniq(values: string[]) {
   return Array.from(new Set(values.map((v) => String(v || '').trim().replace(/\/+$/, '')).filter(Boolean)))
 }
 
+function candidateUrlsForHost(host: string) {
+  return MAIN_WORKSPACE_BACKEND_PORTS.map((port) => `http://${host}:${port}`)
+}
+
 function candidateApiUrls() {
-  const staticCandidates = ['http://127.0.0.1:8000', 'http://127.0.0.1:8001', 'http://localhost:8000', 'http://localhost:8001']
+  const staticCandidates = [...candidateUrlsForHost('127.0.0.1'), ...candidateUrlsForHost('localhost')]
   const stored = readStoredApiUrl()
 
   if (typeof window === 'undefined') return uniq([stored, resolvedApiUrl, API_URL, ...staticCandidates])
 
   const host = window.location.hostname || '127.0.0.1'
-  const runtimeCandidates = [`http://${host}:8000`, `http://${host}:8001`]
-  if (host === '127.0.0.1') runtimeCandidates.push('http://localhost:8000', 'http://localhost:8001')
-  if (host === 'localhost') runtimeCandidates.push('http://127.0.0.1:8000', 'http://127.0.0.1:8001')
+  const runtimeCandidates = candidateUrlsForHost(host)
+  if (host === '127.0.0.1') runtimeCandidates.push(...candidateUrlsForHost('localhost'))
+  if (host === 'localhost') runtimeCandidates.push(...candidateUrlsForHost('127.0.0.1'))
 
   return uniq([stored, resolvedApiUrl, API_URL, ...runtimeCandidates, ...staticCandidates])
 }
 
 const REQUIRED_API_PATHS = ['/graph/network', '/graph/papers', '/rag/ask_v2', '/textbooks']
-const CRITICAL_API_PATH_PREFIXES = ['/graph/network', '/graph/papers', '/rag/ask_v2', '/textbooks', '/discovery', '/config-center']
+const CRITICAL_API_PATH_PREFIXES = ['/graph/network', '/graph/papers', '/rag/ask_v2', '/textbooks', '/config-center', '/community']
 
 function isCriticalApiPath(path: string) {
   return CRITICAL_API_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))

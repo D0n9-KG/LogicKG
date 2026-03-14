@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useI18n, type UILocale } from '../i18n'
-import type { AskItem, GraphEdgeData, GraphNodeData } from '../state/types'
+import type { AskItem, GraphEdgeData, GraphElement, GraphNodeData } from '../state/types'
 import { apiGet } from '../api'
 import { buildEvidenceNodeId } from '../loaders/ask'
+import { loadOverviewCommunity3DGraph } from '../loaders/overview'
 import { buildNodeAskQuestion } from '../nodeAskPrompt'
 import {
   buildFusionEvidenceStats,
@@ -20,6 +21,8 @@ import type { AskModuleState } from '../state/types'
 import { assistantTurnText, buildEvidenceStats, toConversationTurns } from '../panels/askPanelModel'
 
 type PaperPreviewApi = {
+  title?: string
+  paper_source?: string
   logic_steps?: Array<{ step_type?: string; summary?: string }>
   claims?: Array<{ step_type?: string; text?: string }>
 }
@@ -174,9 +177,10 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
   const [showRaw, setShowRaw] = useState(false)
   const [evidenceQuery, setEvidenceQuery] = useState('')
   const [snapshot, setSnapshot] = useState<AskModuleState | null>(() => loadAskSnapshot())
-  const [paperPreview, setPaperPreview] = useState<{ logic: string[]; claims: string[] } | null>(null)
+  const [paperPreview, setPaperPreview] = useState<{ title: string; paperSource: string; logic: string[]; claims: string[] } | null>(null)
   const [paperPreviewLoading, setPaperPreviewLoading] = useState(false)
   const [paperPreviewError, setPaperPreviewError] = useState('')
+  const [overview3dDetailElements, setOverview3dDetailElements] = useState<GraphElement[]>([])
   const [, setScopeVersion] = useState(0)
 
   useEffect(() => {
@@ -314,21 +318,62 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
     )
   }, [askContext, locale])
 
+  const selectedNodeInBaseGraph = useMemo(() => {
+    if (!selectedNode || activeModule === 'ask') return false
+    return graphElements.some((element) => element.group === 'nodes' && element.data.id === selectedNode.id)
+  }, [activeModule, graphElements, selectedNode])
+
+  useEffect(() => {
+    if (activeModule !== 'overview' || !selectedNode || selectedNodeInBaseGraph) {
+      const timer = window.setTimeout(() => setOverview3dDetailElements([]), 0)
+      return () => window.clearTimeout(timer)
+    }
+
+    let cancelled = false
+    void loadOverviewCommunity3DGraph({
+      communityLimit: 18,
+      memberLimitPerCommunity: 6,
+      maxNodes: 160,
+      maxEdges: 240,
+    })
+      .then((elements) => {
+        if (!cancelled) setOverview3dDetailElements(elements)
+      })
+      .catch(() => {
+        if (!cancelled) setOverview3dDetailElements([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeModule, selectedNode, selectedNodeInBaseGraph])
+
+  const genericGraphElements = useMemo(() => {
+    if (activeModule === 'ask') return graphElements
+    if (!selectedNode || selectedNodeInBaseGraph) return graphElements
+    const fallbackHasSelectedNode = overview3dDetailElements.some(
+      (element) => element.group === 'nodes' && element.data.id === selectedNode.id,
+    )
+    return fallbackHasSelectedNode ? overview3dDetailElements : graphElements
+  }, [activeModule, graphElements, overview3dDetailElements, selectedNode, selectedNodeInBaseGraph])
+
   const genericContext = useMemo(() => {
     if (activeModule === 'ask') return null
-    const nodes = graphElements.filter((element) => element.group === 'nodes').map((element) => element.data as GraphNodeData)
-    const edges = graphElements.filter((element) => element.group === 'edges').map((element) => element.data as GraphEdgeData)
+    const nodes = genericGraphElements.filter((element) => element.group === 'nodes').map((element) => element.data as GraphNodeData)
+    const edges = genericGraphElements.filter((element) => element.group === 'edges').map((element) => element.data as GraphEdgeData)
     return buildGenericNodeContext({ selectedNode, nodes, edges })
-  }, [activeModule, graphElements, selectedNode])
+  }, [activeModule, genericGraphElements, selectedNode])
 
   const genericPaperId = useMemo(() => {
     if (!genericContext) return ''
+    const rawPaperId = normalizeText(genericContext.center?.paperId ?? genericContext.raw.selectedNode.paperId)
+    if (!rawPaperId && activeModule === 'overview' && selectedNode && !selectedNodeInBaseGraph && !genericContext.center) return ''
     return paperRefForAskScope({
       id: normalizeText(genericContext.center?.id ?? genericContext.raw.selectedNode.id),
       kind: normalizeText(genericContext.center?.kind ?? genericContext.raw.selectedNode.kind),
-      paperId: normalizeText(genericContext.center?.paperId ?? genericContext.raw.selectedNode.paperId),
+      paperId: rawPaperId,
     })
-  }, [genericContext])
+  }, [activeModule, genericContext, selectedNode, selectedNodeInBaseGraph])
 
   const askScopePaperIds = (() => {
     const scope = loadScope()
@@ -365,7 +410,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
         const claims = (res.claims ?? [])
           .map((row) => shortText(`${normalizeText(row.step_type)} ${normalizeText(row.text)}`, 110))
           .filter(Boolean)
-        setPaperPreview({ logic: logic.slice(0, 3), claims: claims.slice(0, 3) })
+        setPaperPreview({ title: normalizeText(res.title), paperSource: normalizeText(res.paper_source), logic: logic.slice(0, 3), claims: claims.slice(0, 3) })
       })
       .catch((error: unknown) => {
         if (cancelled) return
@@ -381,6 +426,20 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       window.clearTimeout(startTimer)
     }
   }, [activeModule, genericPaperId])
+
+  const resolvedPaperSource = useMemo(() => {
+    if (!genericContext) return ''
+    return normalizeText(
+      genericContext.center?.paperSource ?? genericContext.raw.selectedNode.paperSource ?? paperPreview?.paperSource,
+    )
+  }, [genericContext, paperPreview?.paperSource])
+
+  const resolvedPaperTitle = useMemo(() => {
+    if (!genericContext) return ''
+    return normalizeText(
+      genericContext.center?.paperTitle ?? genericContext.raw.selectedNode.paperTitle ?? paperPreview?.title,
+    )
+  }, [genericContext, paperPreview?.title])
 
   const findEvidenceTarget = (row: NonNullable<AskItem['evidence']>[number], index: number): GraphNodeData | null => {
     if (!askContext) return null
@@ -420,6 +479,9 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
         label: node.label,
         description: node.description,
         paperId: node.paperId,
+        paperSource: node.paperSource,
+        paperTitle: node.paperTitle,
+        stepType: node.stepType,
         textbookId: node.textbookId,
         chapterId: node.chapterId,
       },
@@ -1352,6 +1414,18 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                   <b>{prettyValue(genericContext.center?.paperId ?? genericContext.raw.selectedNode.paperId)}</b>
                 </div>
                 <div className="kgInfoLine">
+                  <span>paperSource</span>
+                  <b>{prettyValue(resolvedPaperSource)}</b>
+                </div>
+                <div className="kgInfoLine">
+                  <span>paperTitle</span>
+                  <b>{prettyValue(resolvedPaperTitle)}</b>
+                </div>
+                <div className="kgInfoLine">
+                  <span>stepType</span>
+                  <b>{prettyValue(genericContext.center?.stepType ?? genericContext.raw.selectedNode.stepType)}</b>
+                </div>
+                <div className="kgInfoLine">
                   <span>textbookId</span>
                   <b>{prettyValue(genericContext.center?.textbookId ?? genericContext.raw.selectedNode.textbookId)}</b>
                 </div>
@@ -1375,7 +1449,11 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                   <div className="kgInfoSection">
                     <div className="kgInfoLine">
                       <span>{t('论文', 'Paper')}</span>
-                      <b>{genericPaperId}</b>
+                      <b>{resolvedPaperTitle || resolvedPaperSource || genericPaperId}</b>
+                    </div>
+                    <div className="kgInfoLine">
+                      <span>{t('来源', 'Source')}</span>
+                      <b>{prettyValue(resolvedPaperSource)}</b>
                     </div>
                     {paperPreviewLoading && <div className="kgInfoNeighborMeta">{t('正在加载逻辑步骤与论断...', 'Loading logic steps and claims...')}</div>}
                     {!paperPreviewLoading && paperPreviewError && (

@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     )
 
     ingest_llm_max_workers: int = Field(
-        default=4,
+        default=5,
         validation_alias=AliasChoices("INGEST_LLM_MAX_WORKERS"),
     )
 
@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     )
 
     phase1_grounding_max_workers: int = Field(
-        default=2, ge=1, le=6,
+        default=3, ge=1, le=6,
         validation_alias=AliasChoices("PHASE1_GROUNDING_MAX_WORKERS"),
     )
 
@@ -128,18 +128,38 @@ class Settings(BaseSettings):
     )
 
     ingest_pre_llm_max_workers: int = Field(
-        default=4, ge=1, le=8,
+        default=6, ge=1, le=8,
         validation_alias=AliasChoices("INGEST_PRE_LLM_MAX_WORKERS"),
     )
 
     faiss_embed_max_workers: int = Field(
-        default=3, ge=1, le=6,
+        default=4, ge=1, le=6,
         validation_alias=AliasChoices("FAISS_EMBED_MAX_WORKERS"),
     )
 
     llm_global_max_concurrent: int = Field(
-        default=16, ge=1, le=32,
+        default=32, ge=1, le=256,
         validation_alias=AliasChoices("LLM_GLOBAL_MAX_CONCURRENT"),
+    )
+
+    crossref_mailto: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CROSSREF_MAILTO"),
+    )
+
+    crossref_user_agent: str = Field(
+        default="LogicKG/1.0",
+        validation_alias=AliasChoices("CROSSREF_USER_AGENT"),
+    )
+
+    crossref_max_concurrent: int = Field(
+        default=2, ge=1, le=3,
+        validation_alias=AliasChoices("CROSSREF_MAX_CONCURRENT"),
+    )
+
+    crossref_min_interval_seconds: float = Field(
+        default=0.12, ge=0.0, le=5.0,
+        validation_alias=AliasChoices("CROSSREF_MIN_INTERVAL_SECONDS"),
     )
 
     data_root: str = ".."
@@ -168,10 +188,6 @@ class Settings(BaseSettings):
     textbook_chapter_max_tokens: int = Field(
         default=8000, ge=1000, le=64000,
         validation_alias=AliasChoices("TEXTBOOK_CHAPTER_MAX_TOKENS"),
-    )
-    discovery_prompt_policy_path: str = Field(
-        default="storage/discovery/prompt_policy_bandit.json",
-        validation_alias=AliasChoices("DISCOVERY_PROMPT_POLICY_PATH"),
     )
     global_community_version: str = Field(
         default="v1",

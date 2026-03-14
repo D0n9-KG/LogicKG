@@ -19,8 +19,10 @@ from app.ingest.figures import extract_figures_from_markdown
 from app.ingest.models import DocumentIR
 from app.ingest.paper_meta import load_canonical_meta
 from app.ingest.parse_md import find_mineru_markdowns, parse_mineru_markdown
+from app.llm.client import bind_active_llm_paper_count, submit_with_current_llm_context
 from app.llm.citation_purpose import classify_citation_purposes_batch
 from app.llm.reference_recovery import recover_references_with_agent
+from app.ops_config_store import merge_runtime_config
 from app.rag.structured_retrieval import build_community_corpus_rows
 from app.schema_store import load_active, normalize_paper_type
 from app.settings import settings
@@ -96,6 +98,26 @@ def _bounded_int(value: Any, *, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, n))
 
 
+def _llm_progress_message(
+    *,
+    completed: int,
+    total_jobs: int,
+    active: int,
+    queued: int,
+    failed: int,
+    oldest_active: tuple[str, int] | None = None,
+) -> str:
+    parts = [
+        f"completed={completed}/{total_jobs}",
+        f"active={active}",
+        f"queued={queued}",
+        f"failed={failed}",
+    ]
+    if oldest_active and oldest_active[0]:
+        parts.append(f"oldest_active={oldest_active[0]}:{oldest_active[1]}s")
+    return "Running LLM extraction (Logic/Claims/Citation Purposes) (" + ", ".join(parts) + ")"
+
+
 def _write_document_ir(path: Path, doc: DocumentIR) -> None:
     path.write_text(
         json.dumps(
@@ -164,7 +186,8 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
         rr["schema_paper_type"] = str(schema_for_recovery.get("paper_type") or "research")
         return idx, recovered_doc, rr
 
-    pre_llm_workers = min(settings.ingest_pre_llm_max_workers, len(parsed))
+    runtime = merge_runtime_config({})
+    pre_llm_workers = min(int(runtime.get("ingest_pre_llm_max_workers") or settings.ingest_pre_llm_max_workers), len(parsed))
     pre_llm_workers = max(1, pre_llm_workers)
 
     if pre_llm_workers == 1 or len(parsed) <= 1:
@@ -176,7 +199,10 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
         from concurrent.futures import ThreadPoolExecutor as _PreLLMPool
 
         with _PreLLMPool(max_workers=pre_llm_workers) as executor:
-            futures = [executor.submit(_recover_refs, idx, doc) for idx, doc in enumerate(parsed)]
+            futures = [
+                submit_with_current_llm_context(executor, _recover_refs, idx, doc)
+                for idx, doc in enumerate(parsed)
+            ]
             for future in futures:
                 idx, recovered_doc, rr = future.result()
                 parsed[idx] = recovered_doc
@@ -216,7 +242,10 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
             citation_event_recovery[idx] = cer
     else:
         with _PreLLMPool(max_workers=pre_llm_workers) as executor:
-            futures = [executor.submit(_recover_events, idx, doc) for idx, doc in enumerate(parsed)]
+            futures = [
+                submit_with_current_llm_context(executor, _recover_events, idx, doc)
+                for idx, doc in enumerate(parsed)
+            ]
             for future in futures:
                 idx, recovered_doc, cer = future.result()
                 parsed[idx] = recovered_doc
@@ -507,19 +536,14 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
             llm_built = True
         else:
             configured_workers = _bounded_int(
-                getattr(settings, "ingest_llm_max_workers", 4),
-                default=4,
+                runtime.get("ingest_llm_max_workers"),
+                default=int(getattr(settings, "ingest_llm_max_workers", 3) or 3),
                 lo=1,
                 hi=16,
             )
             max_workers = min(total_jobs, configured_workers)
             completed = 0
             outputs_by_idx: dict[int, dict[str, Any]] = {}
-            notify(
-                "ingest:llm",
-                0.70,
-                f"Running LLM extraction (Logic/Claims/Citation Purposes) (0/{total_jobs}, workers={max_workers})",
-            )
             heartbeat_seconds = _bounded_int(
                 getattr(settings, "ingest_llm_heartbeat_seconds", 20),
                 default=20,
@@ -527,41 +551,70 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                 hi=120,
             )
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ingest-llm") as executor:
-                future_map = {
-                    executor.submit(_llm_extract_one, idx, doc, rec): (idx, rec)
-                    for idx, doc, rec in jobs
-                }
-                pending = set(future_map.keys())
-                started_at = {future: time.monotonic() for future in pending}
+                future_map: dict[Any, tuple[int, dict[str, Any]]] = {}
+                started_at: dict[Any, float] = {}
+                next_job_cursor = 0
 
-                while pending:
-                    done, pending = wait(
-                        pending,
+                def _submit_pending_jobs() -> None:
+                    nonlocal next_job_cursor
+                    while next_job_cursor < total_jobs and len(future_map) < max_workers:
+                        idx, doc, rec = jobs[next_job_cursor]
+                        with bind_active_llm_paper_count(max_workers):
+                            future = submit_with_current_llm_context(
+                                executor,
+                                _llm_extract_one,
+                                idx,
+                                doc,
+                                rec,
+                            )
+                        future_map[future] = (idx, rec)
+                        started_at[future] = time.monotonic()
+                        next_job_cursor += 1
+
+                _submit_pending_jobs()
+                notify(
+                    "ingest:llm",
+                    0.70,
+                    _llm_progress_message(
+                        completed=completed,
+                        total_jobs=total_jobs,
+                        active=len(future_map),
+                        queued=max(0, total_jobs - next_job_cursor),
+                        failed=len(llm_failures),
+                    ),
+                )
+
+                while future_map:
+                    done, _ = wait(
+                        set(future_map.keys()),
                         timeout=float(heartbeat_seconds),
                         return_when=FIRST_COMPLETED,
                     )
 
                     if not done:
-                        # Heartbeat: no futures completed in this interval
                         ratio = completed / total_jobs
                         now = time.monotonic()
-                        slowest_future = max(pending, key=lambda f: now - started_at.get(f, now))
-                        _, slowest_rec = future_map[slowest_future]
-                        slowest_paper_id = str(slowest_rec.get("paper_id") or "")
-                        slowest_secs = int(max(0.0, now - started_at.get(slowest_future, now)))
+                        oldest_future = max(future_map, key=lambda f: now - started_at.get(f, now))
+                        _, oldest_rec = future_map[oldest_future]
+                        oldest_paper_id = str(oldest_rec.get("paper_id") or "")
+                        oldest_secs = int(max(0.0, now - started_at.get(oldest_future, now)))
                         notify(
                             "ingest:llm",
                             0.70 + (0.20 * ratio),
-                            (
-                                "Running LLM extraction (Logic/Claims/Citation Purposes) "
-                                f"({completed}/{total_jobs}, running={len(pending)}, "
-                                f"slowest={slowest_paper_id}:{slowest_secs}s, failed={len(llm_failures)})"
+                            _llm_progress_message(
+                                completed=completed,
+                                total_jobs=total_jobs,
+                                active=len(future_map),
+                                queued=max(0, total_jobs - next_job_cursor),
+                                failed=len(llm_failures),
+                                oldest_active=(oldest_paper_id, oldest_secs),
                             ),
                         )
                         continue
 
                     for future in done:
-                        idx, rec = future_map[future]
+                        idx, rec = future_map.pop(future)
+                        started_at.pop(future, None)
                         paper_id = str(rec.get("paper_id") or "")
                         completed += 1
 
@@ -584,24 +637,32 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                                 pass  # Don't fail if error logging fails
 
                             ratio = completed / total_jobs
+                            _submit_pending_jobs()
                             notify(
                                 "ingest:llm",
                                 0.70 + (0.20 * ratio),
-                                (
-                                    "Running LLM extraction (Logic/Claims/Citation Purposes) "
-                                    f"({completed}/{total_jobs}, running={len(pending)}, failed={len(llm_failures)})"
+                                _llm_progress_message(
+                                    completed=completed,
+                                    total_jobs=total_jobs,
+                                    active=len(future_map),
+                                    queued=max(0, total_jobs - next_job_cursor),
+                                    failed=len(llm_failures),
                                 ),
                             )
                             continue
 
                         outputs_by_idx[idx] = dict(item["llm_out"])
                         ratio = completed / total_jobs
+                        _submit_pending_jobs()
                         notify(
                             "ingest:llm",
                             0.70 + (0.20 * ratio),
-                            (
-                                "Running LLM extraction (Logic/Claims/Citation Purposes) "
-                                f"({completed}/{total_jobs}, running={len(pending)}, failed={len(llm_failures)})"
+                            _llm_progress_message(
+                                completed=completed,
+                                total_jobs=total_jobs,
+                                active=len(future_map),
+                                queued=max(0, total_jobs - next_job_cursor),
+                                failed=len(llm_failures),
                             ),
                         )
 
@@ -614,9 +675,12 @@ def ingest_markdowns(md_files: list[str], progress: ProgressFn | None = None) ->
                                 notify(
                                     "ingest:llm",
                                     0.70 + (0.20 * ratio),
-                                    (
-                                        "Running LLM extraction (Logic/Claims/Citation Purposes) "
-                                        f"({completed}/{total_jobs}, running={len(pending)}, failed={len(llm_failures)})"
+                                    _llm_progress_message(
+                                        completed=completed,
+                                        total_jobs=total_jobs,
+                                        active=len(future_map),
+                                        queued=max(0, total_jobs - next_job_cursor),
+                                        failed=len(llm_failures),
                                     ),
                                 )
             llm_outputs = [outputs_by_idx[i] for i in sorted(outputs_by_idx)]

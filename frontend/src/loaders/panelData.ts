@@ -1,14 +1,7 @@
 import { apiGet } from '../api'
 
-export type DiscoveryCandidate = {
-  candidate_id?: string
-  status?: string
-  quality_score?: number
-}
-
 export type OverviewStatsSnapshot = {
   paperCount: number
-  discoveryItems: DiscoveryCandidate[]
 }
 
 export type CollectionRow = {
@@ -52,6 +45,7 @@ async function loadCached<T>(key: string, loader: () => Promise<T>, options: Loa
     responseCache.delete(key)
     pendingCache.delete(key)
   }
+
   const cached = responseCache.get(key)
   if (cached !== undefined) return cached as T
 
@@ -98,19 +92,16 @@ export function invalidateTextbookCatalogCache() {
 }
 
 export async function loadOverviewStatsSnapshot(options: LoadOptions = {}): Promise<OverviewStatsSnapshot> {
-  return loadCached('overview:stats', async () => {
-    const [paperRes, discoveryRes] = await Promise.all([
-      apiGet<{ papers: unknown[] }>('/graph/papers?limit=1000'),
-      apiGet<{ candidates: DiscoveryCandidate[] }>('/discovery/candidates').catch(
-        () => ({ candidates: [] as DiscoveryCandidate[] }),
-      ),
-    ])
-
-    return {
-      paperCount: Array.isArray(paperRes.papers) ? paperRes.papers.length : 0,
-      discoveryItems: Array.isArray(discoveryRes.candidates) ? discoveryRes.candidates : [],
-    }
-  }, options)
+  return loadCached(
+    'overview:stats',
+    async () => {
+      const paperRes = await apiGet<{ papers: unknown[] }>('/graph/papers?limit=1000')
+      return {
+        paperCount: Array.isArray(paperRes.papers) ? paperRes.papers.length : 0,
+      }
+    },
+    options,
+  )
 }
 
 export async function loadPaperCollections(limit = 200, options: LoadOptions = {}): Promise<CollectionRow[]> {

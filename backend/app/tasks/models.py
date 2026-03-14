@@ -17,6 +17,7 @@ class TaskStatus(str, Enum):
 class TaskType(str, Enum):
     ingest_path = "ingest_path"
     ingest_upload_ready = "ingest_upload_ready"
+    ingest_textbook_upload_ready = "ingest_textbook_upload_ready"
     upload_replace = "upload_replace"
     delete_papers_batch = "delete_papers_batch"
     delete_textbooks_batch = "delete_textbooks_batch"
@@ -29,7 +30,6 @@ class TaskType(str, Enum):
     cleanup_legacy_propositions = "cleanup_legacy_propositions"
     update_similarity_paper = "update_similarity_paper"
     ingest_textbook = "ingest_textbook"
-    discovery_batch = "discovery_batch"
 
 
 def utc_now_iso() -> str:
