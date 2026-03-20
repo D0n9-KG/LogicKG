@@ -1,15 +1,17 @@
 import cytoscape from 'cytoscape'
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n, type UILocale } from '../i18n'
-import { loadOverviewCommunity3DGraph } from '../loaders/overview'
+import { loadOverviewCommunity3DGraph, resolveOverviewExpandedCommunityId } from '../loaders/overview'
 import { paperRefForAskScope } from '../paperRefs'
 import type { GraphEdgeData, GraphElement, GraphNodeData, LayoutName, SelectedNode } from '../state/types'
 import { loadScope, saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
+import { getModuleDisplayBudget } from './graphDisplayBudgets'
 import { limitGraphElementsForDisplay } from './graphDisplaySafety'
 import { syncGraphElements } from './graphCanvasSync'
 import { resolveGraphCanvasViewState } from './graphCanvasViewState'
 import { resolveGraphRenderPlan } from './graphRenderPlan'
+import { orientComponentPositions, placeOverviewComponents } from './paperOverviewLayout'
 
 const Graph3D = lazy(() => import('./Graph3D'))
 
@@ -806,6 +808,7 @@ function buildRawMeshLayout(
   nodes: GraphNodeData[],
   edges: InternalEdge[],
   meshLaneLabel: string,
+  selectedNodeId?: string | null,
 ): {
   positions: Map<string, { x: number; y: number }>
   meta: LayoutMeta
@@ -821,6 +824,129 @@ function buildRawMeshLayout(
       },
     }
   }
+
+  const components = splitRawMeshComponents(nodes, edges)
+  const focusComponentId =
+    selectedNodeId
+      ? components.findIndex((component) => component.nodes.some((node) => node.id === selectedNodeId))
+      : -1
+  const componentLayouts = components.map((component, index) => {
+    const containsSelected = Boolean(selectedNodeId && component.nodes.some((node) => node.id === selectedNodeId))
+    const localPositions = orientComponentPositions(
+      buildRawMeshComponentLayout(component.nodes, component.edges, containsSelected ? selectedNodeId : null),
+    )
+    const bounds = measurePositionBounds(localPositions)
+    return {
+      id: `component:${index + 1}`,
+      positions: localPositions,
+      width: bounds.width + 180,
+      height: bounds.height + 180,
+      weight: component.nodes.length * 4 + component.edges.length * 1.6,
+      focus: containsSelected,
+    }
+  })
+
+  const componentPlacements = placeOverviewComponents(
+    componentLayouts.map((layout) => ({
+      id: layout.id,
+      width: layout.width,
+      height: layout.height,
+      weight: layout.weight,
+    })),
+    focusComponentId >= 0 ? `component:${focusComponentId + 1}` : null,
+  )
+
+  for (const layout of componentLayouts) {
+    const placement = componentPlacements.get(layout.id) ?? { x: 0, y: 0, scale: 1 }
+    for (const [id, point] of layout.positions.entries()) {
+      positions.set(id, {
+        x: point.x * placement.scale + placement.x,
+        y: point.y * placement.scale + placement.y,
+      })
+    }
+  }
+
+  return {
+    positions,
+    meta: {
+      yearAnchors: [],
+      yearAxis: [],
+      laneSummary: [meshLaneLabel],
+    },
+  }
+}
+
+function splitRawMeshComponents(
+  nodes: GraphNodeData[],
+  edges: InternalEdge[],
+): Array<{ nodes: GraphNodeData[]; edges: InternalEdge[] }> {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]))
+  const adjacency = new Map<string, Set<string>>()
+  for (const node of nodes) adjacency.set(node.id, new Set<string>())
+
+  const validEdges = edges.filter((edge) => {
+    const source = String(edge.source ?? '')
+    const target = String(edge.target ?? '')
+    if (!source || !target || source === target) return false
+    if (!nodeMap.has(source) || !nodeMap.has(target)) return false
+    adjacency.get(source)?.add(target)
+    adjacency.get(target)?.add(source)
+    return true
+  })
+
+  const visited = new Set<string>()
+  const components: Array<{ nodes: GraphNodeData[]; edges: InternalEdge[] }> = []
+
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue
+    const queue = [node.id]
+    const componentNodeIds = new Set<string>()
+    visited.add(node.id)
+
+    while (queue.length) {
+      const current = queue.shift()
+      if (!current) continue
+      componentNodeIds.add(current)
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (visited.has(neighbor)) continue
+        visited.add(neighbor)
+        queue.push(neighbor)
+      }
+    }
+
+    components.push({
+      nodes: nodes.filter((candidate) => componentNodeIds.has(candidate.id)),
+      edges: validEdges.filter((edge) => componentNodeIds.has(String(edge.source ?? '')) && componentNodeIds.has(String(edge.target ?? ''))),
+    })
+  }
+
+  return components.sort((left, right) => {
+    const diff = right.nodes.length - left.nodes.length
+    if (diff !== 0) return diff
+    return right.edges.length - left.edges.length
+  })
+}
+
+function measurePositionBounds(positions: Map<string, { x: number; y: number }>) {
+  const values = [...positions.values()]
+  if (!values.length) return { width: 0, height: 0 }
+  const minX = Math.min(...values.map((point) => point.x))
+  const maxX = Math.max(...values.map((point) => point.x))
+  const minY = Math.min(...values.map((point) => point.y))
+  const maxY = Math.max(...values.map((point) => point.y))
+  return {
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  }
+}
+
+function buildRawMeshComponentLayout(
+  nodes: GraphNodeData[],
+  edges: InternalEdge[],
+  selectedNodeId?: string | null,
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>()
+  if (!nodes.length) return positions
 
   const nodeSet = new Set(nodes.map((node) => node.id))
   const cy = cytoscape({
@@ -918,6 +1044,15 @@ function buildRawMeshLayout(
     })
     .filter((item): item is { source: string; target: string } => item !== null)
 
+  const clusterByNode = inferMeshClusters(nodes, edges)
+  const selectedNeighborIds = new Set<string>()
+  if (selectedNodeId) {
+    for (const pair of edgePairs) {
+      if (pair.source === selectedNodeId) selectedNeighborIds.add(pair.target)
+      else if (pair.target === selectedNodeId) selectedNeighborIds.add(pair.source)
+    }
+  }
+  const selectedClusterId = selectedNodeId ? clusterByNode.get(selectedNodeId) ?? null : null
   const ids = Array.from(positions.keys())
   const forceMap = new Map<string, { x: number; y: number }>()
   const rounds = clamp(Math.round(28 + Math.sqrt(ids.length) * 1.05), 30, 44)
@@ -954,6 +1089,27 @@ function buildRawMeshLayout(
       }
     }
 
+    const clusterCenters = new Map<string, { x: number; y: number; count: number }>()
+    for (const id of ids) {
+      const pos = positions.get(id)
+      if (!pos) continue
+      const clusterId = clusterByNode.get(id) ?? `solo:${id}`
+      const current = clusterCenters.get(clusterId)
+      if (current) {
+        current.x += pos.x
+        current.y += pos.y
+        current.count += 1
+      } else {
+        clusterCenters.set(clusterId, { x: pos.x, y: pos.y, count: 1 })
+      }
+    }
+    for (const cluster of clusterCenters.values()) {
+      cluster.x /= Math.max(cluster.count, 1)
+      cluster.y /= Math.max(cluster.count, 1)
+    }
+
+    const selectedPos = selectedNodeId ? positions.get(selectedNodeId) : undefined
+
     for (const pair of edgePairs) {
       const source = positions.get(pair.source)
       const target = positions.get(pair.target)
@@ -966,8 +1122,19 @@ function buildRawMeshLayout(
       const dist = Math.hypot(dx, dy) || 0.001
       const sourceSize = sizeByNode.get(pair.source) ?? 12
       const targetSize = sizeByNode.get(pair.target) ?? 12
-      const desired = (sourceSize + targetSize) * 1.2 + 92
-      const spring = (dist - desired) * 0.0018
+      const sourceCluster = clusterByNode.get(pair.source) ?? ''
+      const targetCluster = clusterByNode.get(pair.target) ?? ''
+      const sameCluster = sourceCluster !== '' && sourceCluster === targetCluster
+      const focusEdge = selectedNodeId && (pair.source === selectedNodeId || pair.target === selectedNodeId)
+      const focusNeighborhoodEdge =
+        selectedNeighborIds.has(pair.source) ||
+        selectedNeighborIds.has(pair.target)
+      const desired =
+        (sourceSize + targetSize) * 1.16 +
+        106 -
+        (sameCluster ? 24 : 0) -
+        (focusEdge ? 36 : focusNeighborhoodEdge ? 12 : 0)
+      const spring = (dist - desired) * (sameCluster ? 0.0022 : 0.0018)
       const ux = dx / dist
       const uy = dy / dist
 
@@ -977,13 +1144,36 @@ function buildRawMeshLayout(
       tf.y -= uy * spring
     }
 
+    for (const id of ids) {
+      const pos = positions.get(id)
+      const force = forceMap.get(id)
+      if (!pos || !force) continue
+
+      const clusterId = clusterByNode.get(id) ?? `solo:${id}`
+      const cluster = clusterCenters.get(clusterId)
+      if (cluster && cluster.count > 1) {
+        const clusterPull = clusterId === selectedClusterId ? 0.028 : 0.018
+        force.x += (cluster.x - pos.x) * clusterPull
+        force.y += (cluster.y - pos.y) * clusterPull
+      }
+
+      if (selectedNodeId === id) {
+        force.x += -pos.x * 0.028
+        force.y += -pos.y * 0.028
+      } else if (selectedPos && selectedNeighborIds.has(id)) {
+        force.x += (selectedPos.x - pos.x) * 0.006
+        force.y += (selectedPos.y - pos.y) * 0.006
+      }
+
+      force.x += -pos.x * 0.00072
+      force.y += -pos.y * 0.00068
+    }
+
     const cooling = clamp(1 - round / (rounds * 1.16), 0.35, 1)
     for (const id of ids) {
       const pos = positions.get(id)
       const force = forceMap.get(id)
       if (!pos || !force) continue
-      force.x += -pos.x * 0.00072
-      force.y += -pos.y * 0.00068
       pos.x += clamp(force.x * cooling, -14, 14)
       pos.y += clamp(force.y * cooling, -12, 12)
       pos.x = clamp(pos.x, -1720, 1720)
@@ -1018,14 +1208,76 @@ function buildRawMeshLayout(
     }
   }
 
-  return {
-    positions,
-    meta: {
-      yearAnchors: [],
-      yearAxis: [],
-      laneSummary: [meshLaneLabel],
-    },
+  return positions
+}
+
+function inferMeshClusters(nodes: GraphNodeData[], edges: InternalEdge[]): Map<string, string> {
+  const labels = new Map<string, string>()
+  const fixed = new Set<string>()
+  const degreeMap = new Map<string, number>()
+  const adjacency = new Map<string, Array<{ id: string; weight: number }>>()
+
+  for (const node of nodes) {
+    const explicit = String(node.clusterKey ?? node.communityId ?? '').trim()
+    labels.set(node.id, explicit || node.id)
+    if (explicit) fixed.add(node.id)
+    adjacency.set(node.id, [])
+    degreeMap.set(node.id, 0)
   }
+
+  for (const edge of edges) {
+    const source = String(edge.source ?? '')
+    const target = String(edge.target ?? '')
+    if (!source || !target || source === target) continue
+    if (!adjacency.has(source) || !adjacency.has(target)) continue
+    const weight = clamp(Number(edge.weight ?? 0.5) * 2 + Number(edge.totalMentions ?? 0) * 0.04, 0.35, 3.5)
+    adjacency.get(source)?.push({ id: target, weight })
+    adjacency.get(target)?.push({ id: source, weight })
+    degreeMap.set(source, (degreeMap.get(source) ?? 0) + 1)
+    degreeMap.set(target, (degreeMap.get(target) ?? 0) + 1)
+  }
+
+  const rankedNodes = [...nodes].sort((left, right) => {
+    const diff = (degreeMap.get(right.id) ?? 0) - (degreeMap.get(left.id) ?? 0)
+    if (diff !== 0) return diff
+    return left.id.localeCompare(right.id)
+  })
+
+  for (let round = 0; round < 10; round += 1) {
+    let changed = false
+
+    for (const node of rankedNodes) {
+      if (fixed.has(node.id)) continue
+      const currentLabel = labels.get(node.id) ?? node.id
+      const neighbors = adjacency.get(node.id) ?? []
+      if (!neighbors.length) continue
+
+      const scores = new Map<string, number>()
+      scores.set(currentLabel, 0.45)
+      for (const neighbor of neighbors) {
+        const neighborLabel = labels.get(neighbor.id) ?? neighbor.id
+        scores.set(neighborLabel, (scores.get(neighborLabel) ?? 0) + neighbor.weight)
+      }
+
+      let bestLabel = currentLabel
+      let bestScore = scores.get(currentLabel) ?? 0
+      for (const [label, score] of scores.entries()) {
+        if (score > bestScore || (score === bestScore && label.localeCompare(bestLabel) < 0)) {
+          bestLabel = label
+          bestScore = score
+        }
+      }
+
+      if (bestLabel !== currentLabel) {
+        labels.set(node.id, bestLabel)
+        changed = true
+      }
+    }
+
+    if (!changed) break
+  }
+
+  return labels
 }
 
 function buildCockpitDecorations(
@@ -1466,6 +1718,10 @@ export default function GraphCanvas({
   })
   const effectivePlacementMode = graphCanvasViewState.placementMode
   const { show3D, show2D } = graphCanvasViewState
+  const expandedOverviewCommunityId = useMemo(
+    () => (activeModule === 'overview' ? resolveOverviewExpandedCommunityId(elements) : null),
+    [activeModule, elements],
+  )
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1482,18 +1738,13 @@ export default function GraphCanvas({
   }, [effectivePlacementMode])
 
   useEffect(() => {
-    if (activeModule !== 'overview' || !show3D) {
+    if (activeModule !== 'overview' || !show3D || expandedOverviewCommunityId) {
       const timer = window.setTimeout(() => setOverview3dElements([]), 0)
       return () => window.clearTimeout(timer)
     }
 
     let cancelled = false
-    void loadOverviewCommunity3DGraph({
-      communityLimit: 18,
-      memberLimitPerCommunity: 6,
-      maxNodes: 160,
-      maxEdges: 240,
-    })
+    void loadOverviewCommunity3DGraph()
       .then((graph) => {
         if (!cancelled) setOverview3dElements(graph)
       })
@@ -1504,7 +1755,7 @@ export default function GraphCanvas({
     return () => {
       cancelled = true
     }
-  }, [activeModule, show3D, community3DRefreshKey])
+  }, [activeModule, expandedOverviewCommunityId, show3D, community3DRefreshKey])
 
   const availableKinds = useMemo(() => {
     const set = new Set<string>()
@@ -1551,29 +1802,16 @@ export default function GraphCanvas({
   }, [elements, hiddenKinds])
 
   const safeDisplayElements = useMemo(() => {
-    const maxNodes =
-      activeModule === 'overview'
-        ? 260
-        : activeModule === 'papers'
-          ? 220
-          : activeModule === 'textbooks'
-            ? 220
-            : 240
-    const maxEdges =
-      activeModule === 'overview'
-        ? 190
-        : activeModule === 'papers'
-          ? 180
-          : activeModule === 'textbooks'
-            ? 180
-            : 220
+    const { maxNodes, maxEdges } = getModuleDisplayBudget(activeModule, {
+      expandedCommunitySubgraph: Boolean(expandedOverviewCommunityId),
+    })
     return limitGraphElementsForDisplay(filteredElements, {
       activeModule,
       selectedNodeId: selectedNode?.id ?? null,
       maxNodes,
       maxEdges,
     })
-  }, [activeModule, filteredElements, selectedNode?.id])
+  }, [activeModule, expandedOverviewCommunityId, filteredElements, selectedNode?.id])
 
   useEffect(() => {
     if (!hiddenKinds.length) return
@@ -1646,7 +1884,7 @@ export default function GraphCanvas({
     const layoutPack =
       effectivePlacementMode === 'timeline'
         ? buildCockpitLayout(nodeElements, edgesForRender, degreeMap, unknownLabel, getKindLabel)
-        : buildRawMeshLayout(nodeElements, edgesForRender, meshLaneLabel)
+        : buildRawMeshLayout(nodeElements, edgesForRender, meshLaneLabel, selectedNode?.id ?? null)
     const decorations =
       effectivePlacementMode === 'timeline' ? buildCockpitDecorations(nodeElements, layoutPack.positions, unknownLabel) : []
 
@@ -1698,7 +1936,7 @@ export default function GraphCanvas({
       renderedEdgeCount: transformedEdges.length,
       layoutMeta: layoutPack.meta,
     }
-  }, [effectivePlacementMode, locale, safeDisplayElements, selectedBackboneId, t])
+  }, [effectivePlacementMode, locale, safeDisplayElements, selectedBackboneId, selectedNode?.id, t])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -1740,6 +1978,8 @@ export default function GraphCanvas({
         kind: data.kind,
         label: data.label,
         description: data.description,
+        communityId: data.communityId,
+        clusterKey: data.clusterKey,
         paperId: data.paperId,
         paperSource: data.paperSource,
         paperTitle: data.paperTitle,
@@ -2101,7 +2341,12 @@ export default function GraphCanvas({
               </div>
             )}
           >
-            <Graph3D elements={overview3dElements.length ? overview3dElements : safeDisplayElements} onSelectNode={onSelectNode} transitioning={transitioning} />
+            <Graph3D
+              elements={expandedOverviewCommunityId ? safeDisplayElements : overview3dElements.length ? overview3dElements : safeDisplayElements}
+              selectedNodeId={selectedNode?.id ?? null}
+              onSelectNode={onSelectNode}
+              transitioning={transitioning}
+            />
           </Suspense>
         </div>
       )}

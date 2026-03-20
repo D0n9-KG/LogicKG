@@ -23,6 +23,7 @@ vi.mock('../src/api', () => ({
     if (path === '/graph/papers?limit=1000') {
       return {
         papers: [{ paper_id: 'p1' }, { paper_id: 'p2' }],
+        total_count: 2345,
       }
     }
 
@@ -57,9 +58,24 @@ describe('panelData loader cache', () => {
     const first = await loadOverviewStatsSnapshot()
     const second = await loadOverviewStatsSnapshot()
 
-    expect(first.paperCount).toBe(2)
+    expect(first.paperCount).toBe(2345)
     expect(second).not.toHaveProperty('discoveryItems')
     expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1)
+  })
+
+  test('falls back to paper list length when total_count is missing', async () => {
+    vi.mocked(apiGet).mockImplementationOnce(async (path: string) => {
+      if (path === '/graph/papers?limit=1000') {
+        return {
+          papers: [{ paper_id: 'p3' }, { paper_id: 'p4' }, { paper_id: 'p5' }],
+        }
+      }
+      throw new Error(`Unexpected path: ${path}`)
+    })
+
+    const snapshot = await loadOverviewStatsSnapshot({ force: true })
+
+    expect(snapshot.paperCount).toBe(3)
   })
 
   test('caches paper collections and catalog by filter key', async () => {

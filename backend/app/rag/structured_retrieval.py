@@ -320,7 +320,7 @@ def _search_corpus(corpus: str, query: str, k: int, allowed_sources=None) -> lis
             continue
         ranked.append(dict(row))
 
-    return _sort_rows(ranked)[: max(1, int(k))]
+    return _dedupe_hits(_sort_rows(ranked))[: max(1, int(k))]
 
 
 def retrieve_logic_steps(query: str, k: int, allowed_sources: set[str] | None = None) -> list[dict[str, Any]]:
@@ -345,8 +345,20 @@ def _hit_key(row: dict[str, Any]) -> tuple[str, str]:
     return kind, ident
 
 
+def _dedupe_hits(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows or []:
+        key = _hit_key(row)
+        if not key[1] or key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
 def _sorted_hits(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    return _sort_rows(normalize_structured_rows(rows))
+    return _dedupe_hits(_sort_rows(normalize_structured_rows(rows)))
 
 
 def fuse_retrieval_channels(

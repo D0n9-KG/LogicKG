@@ -2,45 +2,21 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import ForceGraph3D from '3d-force-graph'
 import * as THREE from 'three'
 import { useI18n } from '../i18n'
+import { buildGraph3DBaseData, buildGraph3DVisibleData, type Graph3DLink as FGLink, type Graph3DNode as FGNode } from './graph3dData'
 import { buildFitAllCameraTarget, buildGraph3DSceneConfig, buildGraph3DViewConfig } from './graph3dModel'
 import type { GraphElement, SelectedNode } from '../state/types'
 
 type Props = {
   elements: GraphElement[]
+  selectedNodeId?: string | null
   onSelectNode: (node: SelectedNode | null) => void
   transitioning: boolean
 }
 
-type FGNode = {
-  id: string
-  label: string
-  kind: string
-  description?: string
-  clusterKey?: string
-  qualityTier?: string
-  ingested?: boolean
-  paperId?: string
-  paperSource?: string
-  paperTitle?: string
-  stepType?: string
-  textbookId?: string
-  chapterId?: string
-  val: number
-  color: string
-  x?: number
-  y?: number
-  z?: number
-}
-
-type FGLink = {
-  source: string
-  target: string
-  kind: string
-  weight: number
-}
-
 type Graph3DHandle = {
   graphData: (data?: { nodes: FGNode[]; links: FGLink[] }) => { nodes: FGNode[]; links: FGLink[] } | void
+  refresh: () => void
+  linkVisibility: (accessor?: boolean | string | ((link: FGLink) => boolean)) => Graph3DHandle
   zoomToFit: (ms?: number, paddingPx?: number, nodeFilterFn?: (node: FGNode) => boolean) => void
   cameraPosition: (position?: { x?: number; y?: number; z?: number }, lookAt?: { x: number; y: number; z: number }, ms?: number) => void
   getGraphBbox: (nodeFilterFn?: (node: FGNode) => boolean) => { x: [number, number]; y: [number, number]; z: [number, number] } | null
@@ -73,45 +49,15 @@ function clamp(value: number, min: number, max: number) {
   return value
 }
 
-function nodeColor(kind: string, tier?: string, ingested?: boolean): string {
-  if (kind === 'paper') {
-    if (ingested === false) return '#4f6d89'
-    if (tier === 'A1') return '#7dd3fc'
-    if (tier === 'A2') return '#38bdf8'
-    if (tier === 'B1') return '#0ea5e9'
-    if (tier === 'B2') return '#0284c7'
-    if (tier === 'C') return '#0369a1'
-    return '#0ea5e9'
-  }
-  if (kind === 'textbook') return '#f59e0b'
-  if (kind === 'chapter') return '#22c55e'
-  if (kind === 'community') return '#fb7185'
-  if (kind === 'logic') return '#34d399'
-  if (kind === 'claim') return '#fb923c'
-  if (kind === 'group') return '#2dd4bf'
-  if (kind === 'entity') return '#14b8a6'
-  return '#94a3b8'
-}
-
-function nodeSize(kind: string, degree?: number, ingested?: boolean): number {
-  const d = clamp(Number(degree ?? 0), 0, 20)
-  if (kind === 'textbook') return 10.5 + d * 0.32
-  if (kind === 'chapter') return 7.2 + d * 0.24
-  if (kind === 'community') return 6.4 + d * 0.24
-  if (kind === 'paper') return ingested === false ? 3.8 + d * 0.2 : 5.8 + d * 0.34
-  if (kind === 'group') return 6.2 + d * 0.28
-  if (kind === 'logic' || kind === 'claim') return 4.8 + d * 0.24
-  if (kind === 'citation') return 3.2 + d * 0.14
-  return 4 + d * 0.2
-}
-
-function linkColor(kind: string): string {
+function linkColor(kind: string, emphasis: FGLink['emphasis'] = 'default'): string {
   if (kind === 'contains') return 'rgba(251, 191, 36, 0.42)'
   if (kind === 'cites') return 'rgba(125, 211, 252, 0.5)'
   if (kind === 'supports') return 'rgba(74, 222, 128, 0.55)'
   if (kind === 'challenges') return 'rgba(248, 113, 113, 0.6)'
   if (kind === 'supersedes') return 'rgba(250, 204, 21, 0.56)'
-  if (kind === 'similar') return 'rgba(148, 163, 184, 0.45)'
+  if (kind === 'similar' && emphasis === 'focus') return 'rgba(226, 232, 240, 0.82)'
+  if (kind === 'similar' && emphasis === 'primary') return 'rgba(196, 211, 255, 0.58)'
+  if (kind === 'similar') return 'rgba(148, 163, 184, 0.22)'
   if (kind === 'maps_to') return 'rgba(20, 184, 166, 0.56)'
   return 'rgba(148, 163, 184, 0.42)'
 }
@@ -204,80 +150,7 @@ function applyNavHint(container: HTMLDivElement | null, hint: string) {
   navInfo.textContent = hint
 }
 
-function hashString(value: string): number {
-  let hash = 0
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) | 0
-  }
-  return Math.abs(hash)
-}
-
-function seededLocalOffset(kind: string, index: number, total: number, seed: number) {
-  const angle = ((index + (seed % 17) / 17) / Math.max(total, 1)) * Math.PI * 2
-  const wobble = ((seed % 29) / 29 - 0.5) * 18
-  if (kind === 'textbook') return { x: 0, y: 0, z: wobble * 0.5 }
-  if (kind === 'chapter') return { x: Math.cos(angle) * 82, y: Math.sin(angle) * 64, z: wobble }
-  if (kind === 'community') return { x: Math.cos(angle) * 142, y: Math.sin(angle) * 112, z: wobble * 1.5 }
-  if (kind === 'entity') return { x: Math.cos(angle) * 220, y: Math.sin(angle) * 172, z: wobble * 2.1 }
-  return { x: Math.cos(angle) * 268, y: Math.sin(angle) * 196, z: wobble * 2.4 }
-}
-
-function seedClusteredPositions(nodes: FGNode[]) {
-  const hasTextbookStructures = nodes.some((node) => node.kind === 'textbook' || node.kind === 'chapter' || node.kind === 'community')
-  if (!hasTextbookStructures) return
-
-  const groups = new Map<string, FGNode[]>()
-  const freeNodes: FGNode[] = []
-  for (const node of nodes) {
-    if (!node.clusterKey) {
-      freeNodes.push(node)
-      continue
-    }
-    const bucket = groups.get(node.clusterKey) ?? []
-    bucket.push(node)
-    groups.set(node.clusterKey, bucket)
-  }
-
-  const clusterKeys = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b))
-  const clusterOrbit = clusterKeys.length <= 1 ? 0 : Math.max(420, clusterKeys.length * 140)
-
-  clusterKeys.forEach((key, clusterIndex) => {
-    const members = groups.get(key) ?? []
-    const angle = clusterKeys.length <= 1 ? 0 : (clusterIndex / clusterKeys.length) * Math.PI * 2
-    const centerX = clusterKeys.length <= 1 ? -180 : Math.cos(angle) * clusterOrbit
-    const centerY = clusterKeys.length <= 1 ? 40 : Math.sin(angle) * clusterOrbit * 0.62
-    const centerZ = clusterKeys.length <= 1 ? 0 : Math.sin(angle * 1.7) * 180
-    const ordered = [...members].sort((a, b) => {
-      const kindRank = (kind: string) => {
-        if (kind === 'textbook') return 0
-        if (kind === 'chapter') return 1
-        if (kind === 'community') return 2
-        if (kind === 'entity') return 3
-        return 4
-      }
-      return kindRank(a.kind) - kindRank(b.kind) || a.id.localeCompare(b.id)
-    })
-
-    ordered.forEach((node, index) => {
-      const local = seededLocalOffset(node.kind, index, ordered.length, hashString(node.id))
-      node.x = centerX + local.x
-      node.y = centerY + local.y
-      node.z = centerZ + local.z
-    })
-  })
-
-  const paperNodes = freeNodes.filter((node) => node.kind === 'paper' || node.kind === 'citation')
-  const outerRadius = Math.max(clusterOrbit + 520, 860)
-  paperNodes.forEach((node, index) => {
-    const angle = (index / Math.max(1, paperNodes.length)) * Math.PI * 2
-    const seed = hashString(node.id)
-    node.x = Math.cos(angle) * outerRadius
-    node.y = Math.sin(angle) * outerRadius * 0.58
-    node.z = ((seed % 41) - 20) * 14
-  })
-}
-
-export default function Graph3D({ elements, onSelectNode, transitioning }: Props) {
+export default function Graph3D({ elements, selectedNodeId, onSelectNode, transitioning }: Props) {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph3DHandle | null>(null)
@@ -288,54 +161,20 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
   const labelSpritesRef = useRef<Map<string, THREE.Sprite>>(new Map())
   const hoveredNodeIdRef = useRef<string | null>(null)
   const onSelectNodeRef = useRef(onSelectNode)
+  const selectedNodeIdRef = useRef<string | null>(selectedNodeId ?? null)
+  const lastNodeSignatureRef = useRef('')
 
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode
   }, [onSelectNode])
 
-  const { nodes, links } = useMemo(() => {
-    const degreeMap = new Map<string, number>()
-    for (const el of elements) {
-      if (el.group !== 'edges') continue
-      const source = String((el.data as { source: string }).source ?? '')
-      const target = String((el.data as { target: string }).target ?? '')
-      degreeMap.set(source, (degreeMap.get(source) ?? 0) + 1)
-      degreeMap.set(target, (degreeMap.get(target) ?? 0) + 1)
-    }
+  useEffect(() => {
+    selectedNodeIdRef.current = selectedNodeId ?? null
+  }, [selectedNodeId])
 
-    const nextNodes: FGNode[] = elements
-      .filter((e) => e.group === 'nodes')
-      .map((e) => ({
-        id: e.data.id,
-        label: e.data.label,
-        kind: e.data.kind,
-        description: e.data.description,
-        clusterKey: e.data.clusterKey,
-        qualityTier: e.data.qualityTier,
-        ingested: e.data.ingested,
-        paperId: e.data.paperId,
-        paperSource: e.data.paperSource,
-        paperTitle: e.data.paperTitle,
-        stepType: e.data.stepType,
-        textbookId: e.data.textbookId,
-        chapterId: e.data.chapterId,
-        val: nodeSize(e.data.kind, degreeMap.get(e.data.id), e.data.ingested),
-        color: nodeColor(e.data.kind, e.data.qualityTier, e.data.ingested),
-      }))
-
-    const nextLinks: FGLink[] = elements
-      .filter((e) => e.group === 'edges')
-      .map((e) => ({
-        source: (e.data as { source: string }).source,
-        target: (e.data as { target: string }).target,
-        kind: e.data.kind,
-        weight: clamp(Number((e.data as { weight?: number }).weight ?? 0.5), 0.1, 1),
-      }))
-
-    seedClusteredPositions(nextNodes)
-    return { nodes: nextNodes, links: nextLinks }
-  }, [elements])
-  const initialNodeCountRef = useRef(nodes.length)
+  const baseData = useMemo(() => buildGraph3DBaseData(elements), [elements])
+  const { nodes, links, nodeSignature } = useMemo(() => buildGraph3DVisibleData(baseData, null), [baseData])
+  const initialNodeCountRef = useRef(baseData.nodes.length)
 
   const applyGraphFit = useCallback((fg: Graph3DHandle, animateMs: number) => {
     const container = containerRef.current
@@ -439,9 +278,9 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         const aura = new THREE.Mesh(
           new THREE.SphereGeometry(radius * 1.8, 16, 16),
           new THREE.MeshBasicMaterial({
-            color,
+            color: new THREE.Color(node.auraColor ?? node.color),
             transparent: true,
-            opacity: imported ? 0.08 : 0.03,
+            opacity: node.kind === 'community' ? (imported ? 0.12 : 0.05) : imported ? 0.08 : 0.03,
             side: THREE.BackSide,
           }),
         )
@@ -450,9 +289,9 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(radius * 1.24, Math.max(0.24, radius * 0.08), 10, 40),
           new THREE.MeshBasicMaterial({
-            color: color.clone().lerp(new THREE.Color('#f8fafc'), 0.4),
+            color: new THREE.Color(node.ringColor ?? node.color).lerp(new THREE.Color('#f8fafc'), node.kind === 'community' ? 0.16 : 0.4),
             transparent: true,
-            opacity: imported ? 0.42 : 0.22,
+            opacity: node.kind === 'community' ? (imported ? 0.58 : 0.28) : imported ? 0.42 : 0.22,
           }),
         )
         ring.rotation.x = Math.PI / 2.3
@@ -465,19 +304,51 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         return group
       })
       .nodeThreeObjectExtend(false)
-      .linkWidth((link) => 0.8 + (link as FGLink).weight * 1.5)
-      .linkColor((link) => linkColor((link as FGLink).kind))
-      .linkOpacity(0.82)
-      .linkDirectionalParticles((link) => ((link as FGLink).kind === 'supports' || (link as FGLink).kind === 'challenges' ? 2 : 1))
-      .linkDirectionalParticleWidth((link) => ((link as FGLink).kind === 'supports' ? 2.6 : 2))
+      .linkVisibility((link) => (link as FGLink).visible !== false)
+      .linkWidth((link) => {
+        const edge = link as FGLink
+        if (edge.visible === false) return 0
+        if (edge.kind === 'similar') {
+          if (edge.emphasis === 'focus') return 1.2 + edge.weight * 1.4
+          if (edge.emphasis === 'primary') return 0.72 + edge.weight * 1.05
+          return 0.24 + edge.weight * 0.55
+        }
+        return 0.8 + edge.weight * 1.5
+      })
+      .linkColor((link) => (link as FGLink).displayColor ?? linkColor((link as FGLink).kind, (link as FGLink).emphasis))
+      .linkOpacity(0.78)
+      .linkDirectionalParticles((link) => {
+        const edge = link as FGLink
+        if (edge.visible === false) return 0
+        if (edge.kind === 'similar') {
+          if (edge.emphasis === 'focus') return 2
+          if (edge.emphasis === 'primary') return 1
+          return 0
+        }
+        return edge.kind === 'supports' || edge.kind === 'challenges' ? 2 : 1
+      })
+      .linkDirectionalParticleWidth((link) => {
+        const edge = link as FGLink
+        if (edge.visible === false) return 0
+        if (edge.kind === 'similar') {
+          if (edge.emphasis === 'focus') return 1.9
+          if (edge.emphasis === 'primary') return 1.45
+          return 0
+        }
+        return edge.kind === 'supports' ? 2.6 : 2
+      })
       .linkDirectionalParticleColor((link) => particleColor((link as FGLink).kind))
       .onNodeClick((n) => {
         const node = n as FGNode
+        if (selectedNodeIdRef.current === node.id) return
+        selectedNodeIdRef.current = node.id
         onSelectNodeRef.current({
           id: node.id,
           kind: node.kind,
           label: node.label,
           description: node.description,
+          communityId: node.communityId,
+          clusterKey: node.clusterKey,
           paperId: node.paperId,
           paperSource: node.paperSource,
           paperTitle: node.paperTitle,
@@ -490,7 +361,11 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         hoveredNodeIdRef.current = n ? (n as FGNode).id : null
         container.style.cursor = n ? 'pointer' : 'default'
       })
-      .onBackgroundClick(() => onSelectNodeRef.current(null))
+      .onBackgroundClick(() => {
+        if (!selectedNodeIdRef.current) return
+        selectedNodeIdRef.current = null
+        onSelectNodeRef.current(null)
+      })
 
     const controls = fg.controls() as
       | {
@@ -629,7 +504,9 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
       controls.minDistance = viewConfigRef.current.minDistance
       controls.maxDistance = viewConfigRef.current.maxDistance
     }
-    pendingAutoFitRef.current = nodes.length > 0
+    const shouldAutoFit = nodes.length > 0 && lastNodeSignatureRef.current !== nodeSignature
+    pendingAutoFitRef.current = shouldAutoFit
+    lastNodeSignatureRef.current = nodeSignature
     fg.graphData({ nodes, links })
     if (autoFitTimerRef.current) window.clearTimeout(autoFitTimerRef.current)
     if (pendingAutoFitRef.current) {
@@ -639,7 +516,39 @@ export default function Graph3D({ elements, onSelectNode, transitioning }: Props
         applyGraphFit(graphRef.current, viewConfigRef.current.autoFitMs)
       }, 720)
     }
-  }, [applyGraphFit, links, nodes])
+  }, [applyGraphFit, links, nodeSignature, nodes])
+
+  useEffect(() => {
+    const fg = graphRef.current
+    if (!fg) return
+
+    const nextVisible = buildGraph3DVisibleData(baseData, selectedNodeId ?? null)
+    const current = fg.graphData() as { nodes: FGNode[]; links: FGLink[] } | void
+    const currentLinks = current?.links ?? []
+    if (!currentLinks.length) return
+
+    const nextLinksById = new Map(nextVisible.links.map((link) => [link.id, link]))
+    let changed = false
+    for (const link of currentLinks) {
+      const next = nextLinksById.get(link.id)
+      if (!next) continue
+      if (link.visible !== next.visible) {
+        link.visible = next.visible
+        changed = true
+      }
+      if (link.emphasis !== next.emphasis) {
+        link.emphasis = next.emphasis
+        changed = true
+      }
+      if (link.displayColor !== next.displayColor) {
+        link.displayColor = next.displayColor
+        changed = true
+      }
+    }
+
+    selectedNodeIdRef.current = selectedNodeId ?? null
+    if (changed) fg.refresh()
+  }, [baseData, selectedNodeId])
 
   return (
     <div

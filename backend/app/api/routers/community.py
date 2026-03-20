@@ -25,15 +25,21 @@ def get_overview_graph(
     member_limit_per_community: int = 6,
     max_nodes: int = 160,
     max_edges: int = 240,
+    include_members: bool = True,
 ):
     try:
-        safe_community_limit = max(1, min(80, int(community_limit)))
-        safe_member_limit = max(1, min(24, int(member_limit_per_community)))
+        safe_community_limit = max(1, min(800 if not include_members else 80, int(community_limit)))
+        safe_member_limit = max(0, min(24, int(member_limit_per_community)))
         safe_max_nodes = max(8, min(800, int(max_nodes)))
         safe_max_edges = max(8, min(1600, int(max_edges)))
 
-        fetch_community_limit = min(5000, max(safe_community_limit * 6, safe_community_limit))
-        fetch_member_limit = min(120, max(safe_member_limit * 4, safe_member_limit + 4))
+        fetch_community_limit = min(5000, max(safe_community_limit * (2 if not include_members else 6), safe_community_limit))
+        fetch_member_limit = min(120, max(18 if not include_members else safe_member_limit * 4, safe_member_limit + 4))
+        max_community_links = (
+            min(safe_max_edges, max(120, safe_community_limit * 3))
+            if not include_members
+            else min(safe_max_edges, 36)
+        )
 
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
             community_rows = client.list_global_community_rows(limit=fetch_community_limit)
@@ -52,6 +58,8 @@ def get_overview_graph(
             member_limit_per_community=safe_member_limit,
             max_nodes=safe_max_nodes,
             max_edges=safe_max_edges,
+            max_community_links=max_community_links,
+            include_members=include_members,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

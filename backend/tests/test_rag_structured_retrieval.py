@@ -116,6 +116,8 @@ def test_normalize_structured_rows_preserves_community_membership_metadata() -> 
 def test_paper_scoped_community_retrieval_excludes_blank_and_non_matching_sources(monkeypatch) -> None:
     structured = _structured_module()
 
+    monkeypatch.setattr(structured, "load_faiss", lambda path: (_ for _ in ()).throw(FileNotFoundError(path)), raising=False)
+
     monkeypatch.setattr(
         structured,
         "_load_corpus_rows",
@@ -309,6 +311,35 @@ def test_retrieve_communities_prefers_faiss_hits_and_preserves_membership_fields
             "keyword_texts": ["finite element", "stability"],
         }
     ]
+
+
+def test_retrieve_communities_deduplicates_split_faiss_hits(monkeypatch) -> None:
+    structured = _structured_module()
+
+    class _Doc:
+        def __init__(self, text: str, source_id: str) -> None:
+            self.page_content = text
+            self.metadata = {
+                "kind": "community",
+                "source_id": source_id,
+                "community_id": source_id,
+            }
+
+    class _FakeStore:
+        def similarity_search_with_score(self, query, k=0):
+            del query, k
+            return [
+                (_Doc("segment one", "gc:demo"), 0.11),
+                (_Doc("segment two", "gc:demo"), 0.12),
+                (_Doc("other community", "gc:other"), 0.30),
+            ]
+
+    monkeypatch.setattr(structured, "_corpus_faiss_dir", lambda corpus: f"fake/{corpus}", raising=False)
+    monkeypatch.setattr(structured, "load_faiss", lambda path: _FakeStore(), raising=False)
+
+    hits = structured.retrieve_communities("finite element method", k=4)
+
+    assert [row["id"] for row in hits] == ["gc:other", "gc:demo"]
 
 
 def test_retrieve_claims_calls_faiss_then_falls_back_to_lexical_rows(monkeypatch) -> None:

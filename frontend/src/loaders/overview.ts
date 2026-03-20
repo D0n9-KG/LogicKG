@@ -27,6 +27,7 @@ type OverviewCommunityNode = {
   label?: string
   kind?: string
   description?: string
+  keywords?: string[]
   cluster_key?: string
   community_id?: string
   paper_id?: string
@@ -48,6 +49,27 @@ type OverviewCommunityResponse = {
   nodes?: OverviewCommunityNode[]
   edges?: OverviewCommunityEdge[]
 }
+
+type OverviewCommunityDetailMember = {
+  member_id?: string
+  member_kind?: string
+  text?: string
+  paper_id?: string
+  paper_source?: string
+  paper_title?: string
+  step_type?: string
+  source_chapter_id?: string
+}
+
+type OverviewCommunityDetailResponse = {
+  community_id?: string
+  title?: string
+  summary?: string
+  keywords?: string[]
+  member_count?: number
+  members?: OverviewCommunityDetailMember[]
+}
+
 type TextbookListResponse = {
   textbooks?: Array<{
     textbook_id?: string
@@ -59,25 +81,91 @@ const overviewGraphCache = new Map<string, GraphElement[]>()
 const overviewGraphPending = new Map<string, Promise<GraphElement[]>>()
 const overviewCommunity3DGraphCache = new Map<string, GraphElement[]>()
 const overviewCommunity3DGraphPending = new Map<string, Promise<GraphElement[]>>()
+const overviewCommunitySubgraphCache = new Map<string, GraphElement[]>()
+const overviewCommunitySubgraphPending = new Map<string, Promise<GraphElement[]>>()
 const OVERVIEW_TEXTBOOK_LIMIT = 4
+export const OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS = 340
+export const OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES = 980
+export const OVERVIEW_3D_DEFAULT_COMMUNITY_LIMIT = 400
+export const OVERVIEW_3D_DEFAULT_MEMBER_LIMIT = 0
+export const OVERVIEW_3D_DEFAULT_MAX_NODES = 400
+export const OVERVIEW_3D_DEFAULT_MAX_EDGES = 620
+export const OVERVIEW_3D_DEFAULT_INCLUDE_MEMBERS = false
+export const OVERVIEW_COMMUNITY_SUBGRAPH_DEFAULT_MEMBER_LIMIT = 1200
+
+function normalizeText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function communityNodeId(communityId: string) {
+  const normalized = normalizeText(communityId)
+  return normalized.startsWith('community:') ? normalized : `community:${normalized}`
+}
+
+function communityClusterKey(communityId: string) {
+  return communityNodeId(communityId)
+}
+
+function communityMemberKind(memberKind: unknown): GraphNodeData['kind'] {
+  const normalized = normalizeText(memberKind).toLowerCase()
+  if (normalized === 'logicstep' || normalized === 'logic_step' || normalized === 'logic') return 'logic'
+  if (normalized === 'claim') return 'claim'
+  if (normalized === 'knowledgeentity' || normalized === 'knowledge_entity' || normalized === 'entity') return 'entity'
+  if (normalized === 'paper') return 'paper'
+  return 'group'
+}
+
+function communityMemberNodeId(memberId: string, memberKind: unknown) {
+  const normalizedId = normalizeText(memberId)
+  const kind = communityMemberKind(memberKind)
+  return normalizedId ? `${kind}:${normalizedId}` : ''
+}
+
+function communityMemberLabel(member: OverviewCommunityDetailMember) {
+  const text = normalizeText(member.text)
+  if (text) return text
+  return normalizeText(member.paper_source) || normalizeText(member.paper_title) || normalizeText(member.member_id) || 'member'
+}
+
+function communityMemberDescription(member: OverviewCommunityDetailMember) {
+  const text = normalizeText(member.text)
+  const paperSource = normalizeText(member.paper_source)
+  const paperTitle = normalizeText(member.paper_title)
+  const stepType = normalizeText(member.step_type)
+  const sourceChapterId = normalizeText(member.source_chapter_id)
+  const parts = [paperSource, paperTitle, stepType, text || sourceChapterId].filter(Boolean)
+  return parts.join(' | ')
+}
+
+function communitySummary(detail: OverviewCommunityDetailResponse) {
+  const summary = normalizeText(detail.summary)
+  if (summary) return summary
+  const keywords = Array.isArray(detail.keywords) ? detail.keywords.map(normalizeText).filter(Boolean).slice(0, 8) : []
+  if (keywords.length) return `Keywords: ${keywords.join(', ')}`
+  return normalizeText(detail.title) || normalizeText(detail.community_id)
+}
 
 export function invalidateOverviewGraphCache() {
   overviewGraphCache.clear()
   overviewGraphPending.clear()
   overviewCommunity3DGraphCache.clear()
   overviewCommunity3DGraphPending.clear()
+  overviewCommunitySubgraphCache.clear()
+  overviewCommunitySubgraphPending.clear()
   window.dispatchEvent(new CustomEvent('overview-community-3d-invalidate'))
 }
 
 export function invalidateOverviewCommunity3DGraphCache() {
   overviewCommunity3DGraphCache.clear()
   overviewCommunity3DGraphPending.clear()
+  overviewCommunitySubgraphCache.clear()
+  overviewCommunitySubgraphPending.clear()
   window.dispatchEvent(new CustomEvent('overview-community-3d-invalidate'))
 }
 
 export async function loadOverviewGraph(
-  limitPapers = 200,
-  limitEdges = 600,
+  limitPapers = OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS,
+  limitEdges = OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES,
   options: { force?: boolean; includeTextbooks?: boolean } = {},
 ): Promise<GraphElement[]> {
   const includeTextbooks = options.includeTextbooks !== false
@@ -177,13 +265,15 @@ export async function loadOverviewCommunity3DGraph(options: {
   memberLimitPerCommunity?: number
   maxNodes?: number
   maxEdges?: number
+  includeMembers?: boolean
   force?: boolean
 } = {}): Promise<GraphElement[]> {
-  const communityLimit = Math.max(1, Math.min(80, Math.round(options.communityLimit ?? 18)))
-  const memberLimitPerCommunity = Math.max(1, Math.min(24, Math.round(options.memberLimitPerCommunity ?? 6)))
-  const maxNodes = Math.max(8, Math.min(800, Math.round(options.maxNodes ?? 160)))
-  const maxEdges = Math.max(8, Math.min(1600, Math.round(options.maxEdges ?? 240)))
-  const cacheKey = `${communityLimit}:${memberLimitPerCommunity}:${maxNodes}:${maxEdges}`
+  const includeMembers = options.includeMembers ?? OVERVIEW_3D_DEFAULT_INCLUDE_MEMBERS
+  const communityLimit = Math.max(1, Math.min(800, Math.round(options.communityLimit ?? OVERVIEW_3D_DEFAULT_COMMUNITY_LIMIT)))
+  const memberLimitPerCommunity = Math.max(0, Math.min(24, Math.round(options.memberLimitPerCommunity ?? OVERVIEW_3D_DEFAULT_MEMBER_LIMIT)))
+  const maxNodes = Math.max(8, Math.min(800, Math.round(options.maxNodes ?? OVERVIEW_3D_DEFAULT_MAX_NODES)))
+  const maxEdges = Math.max(8, Math.min(1600, Math.round(options.maxEdges ?? OVERVIEW_3D_DEFAULT_MAX_EDGES)))
+  const cacheKey = `${communityLimit}:${memberLimitPerCommunity}:${maxNodes}:${maxEdges}:${includeMembers ? 'members' : 'communities'}`
 
   if (options.force) {
     overviewCommunity3DGraphCache.delete(cacheKey)
@@ -198,9 +288,10 @@ export async function loadOverviewCommunity3DGraph(options: {
 
   const qs = new URLSearchParams({
     community_limit: String(communityLimit),
-    member_limit_per_community: String(memberLimitPerCommunity),
+    ...(includeMembers ? { member_limit_per_community: String(memberLimitPerCommunity) } : {}),
     max_nodes: String(maxNodes),
     max_edges: String(maxEdges),
+    include_members: includeMembers ? 'true' : 'false',
   })
 
   const request = apiGet<OverviewCommunityResponse>(`/community/overview-graph?${qs}`)
@@ -218,6 +309,9 @@ export async function loadOverviewCommunity3DGraph(options: {
             label: String(node.label ?? id).trim() || id,
             description: String(node.description ?? '').trim() || undefined,
             kind: String(node.kind ?? 'community').trim() || 'community',
+            keywords: Array.isArray(node.keywords)
+              ? node.keywords.map((value) => String(value ?? '').trim()).filter(Boolean)
+              : undefined,
             clusterKey: String(node.cluster_key ?? '').trim() || undefined,
             communityId: String(node.community_id ?? '').trim() || undefined,
             paperId: String(node.paper_id ?? '').trim() || undefined,
@@ -256,5 +350,142 @@ export async function loadOverviewCommunity3DGraph(options: {
     })
 
   overviewCommunity3DGraphPending.set(cacheKey, request)
+  return request
+}
+
+export function resolveOverviewExpandedCommunityId(elements: GraphElement[]): string | null {
+  const nodes = elements.filter((element) => element.group === 'nodes').map((element) => element.data)
+  const edges = elements.filter((element) => element.group === 'edges').map((element) => element.data)
+  const communityNodes = nodes.filter((node) => node.kind === 'community')
+  if (communityNodes.length !== 1) return null
+
+  const communityNode = communityNodes[0]
+  const communityId =
+    normalizeText(communityNode.communityId) ||
+    (communityNode.id.startsWith('community:') ? communityNode.id.slice('community:'.length) : '')
+  if (!communityId) return null
+
+  const expectedCommunityNodeId = communityNodeId(communityId)
+  if (communityNode.id !== expectedCommunityNodeId) return null
+
+  const memberNodes = nodes.filter((node) => node.id !== communityNode.id)
+  if (!memberNodes.length) return communityId
+
+  const validMembers = memberNodes.every((node) => {
+    const nodeCommunityId = normalizeText(node.communityId)
+    const clusterKey = normalizeText(node.clusterKey)
+    return nodeCommunityId === communityId && (!clusterKey || clusterKey === expectedCommunityNodeId)
+  })
+  if (!validMembers) return null
+
+  const validEdges = edges.every((edge) => {
+    if (edge.kind !== 'contains') return false
+    return edge.source === expectedCommunityNodeId || edge.target === expectedCommunityNodeId
+  })
+  if (!validEdges) return null
+
+  return communityId
+}
+
+export async function loadOverviewCommunitySubgraph(
+  communityId: string,
+  options: { force?: boolean; memberLimit?: number } = {},
+): Promise<GraphElement[]> {
+  const communityKey = normalizeText(communityId)
+  if (!communityKey) return []
+
+  const memberLimit = Math.max(
+    1,
+    Math.min(2000, Math.round(options.memberLimit ?? OVERVIEW_COMMUNITY_SUBGRAPH_DEFAULT_MEMBER_LIMIT)),
+  )
+  const cacheKey = `${communityKey}:${memberLimit}`
+
+  if (options.force) {
+    overviewCommunitySubgraphCache.delete(cacheKey)
+    overviewCommunitySubgraphPending.delete(cacheKey)
+  }
+
+  const cached = overviewCommunitySubgraphCache.get(cacheKey)
+  if (cached) return cached
+
+  const pending = overviewCommunitySubgraphPending.get(cacheKey)
+  if (pending) return pending
+
+  const request = apiGet<OverviewCommunityDetailResponse>(
+    `/community/${encodeURIComponent(communityKey)}?member_limit=${memberLimit}`,
+  )
+    .then((detail) => {
+      const normalizedCommunityId = normalizeText(detail.community_id) || communityKey
+      const clusterKey = communityClusterKey(normalizedCommunityId)
+      const communityLabel = normalizeText(detail.title) || normalizedCommunityId
+      const communityDescription = communitySummary(detail)
+      const memberCount = Number(detail.member_count)
+
+      const nodeMap = new Map<string, GraphElement>()
+      const edgeMap = new Map<string, GraphElement>()
+
+      nodeMap.set(clusterKey, {
+        group: 'nodes',
+        data: {
+          id: clusterKey,
+          label: communityLabel,
+          description: communityDescription || undefined,
+          kind: 'community',
+          communityId: normalizedCommunityId,
+          clusterKey,
+          keywords: Array.isArray(detail.keywords)
+            ? detail.keywords.map((value) => String(value ?? '').trim()).filter(Boolean)
+            : undefined,
+          mentions: Number.isFinite(memberCount) ? memberCount : undefined,
+        } satisfies GraphNodeData,
+      })
+
+      for (const member of detail.members ?? []) {
+        const memberId = normalizeText(member.member_id)
+        if (!memberId) continue
+        const id = communityMemberNodeId(memberId, member.member_kind)
+        if (!id) continue
+        const kind = communityMemberKind(member.member_kind)
+        const label = communityMemberLabel(member)
+        const description = communityMemberDescription(member)
+
+        nodeMap.set(id, {
+          group: 'nodes',
+          data: {
+            id,
+            label: label || memberId,
+            description: description || undefined,
+            kind,
+            communityId: normalizedCommunityId,
+            clusterKey,
+            paperId: normalizeText(member.paper_id) || undefined,
+            paperSource: normalizeText(member.paper_source) || undefined,
+            paperTitle: normalizeText(member.paper_title) || undefined,
+            stepType: normalizeText(member.step_type) || undefined,
+            chapterId: normalizeText(member.source_chapter_id) || undefined,
+          } satisfies GraphNodeData,
+        })
+
+        edgeMap.set(`contains:${clusterKey}->${id}`, {
+          group: 'edges',
+          data: {
+            id: `contains:${clusterKey}->${id}`,
+            source: clusterKey,
+            target: id,
+            kind: 'contains',
+            weight: 1,
+          } satisfies GraphEdgeData,
+        })
+      }
+
+      const elements = [...nodeMap.values(), ...edgeMap.values()]
+      overviewCommunitySubgraphCache.set(cacheKey, elements)
+      return elements
+    })
+    .finally(() => {
+      overviewCommunitySubgraphPending.delete(cacheKey)
+    })
+
+  overviewCommunitySubgraphPending.set(cacheKey, request)
   return request
 }

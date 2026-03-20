@@ -114,6 +114,69 @@ def test_build_overview_community_graph_caps_nodes_and_balances_member_kinds() -
     assert graph["stats"]["hidden_members"] == 2
 
 
+def test_build_overview_community_graph_can_return_community_only_mode() -> None:
+    communities = [
+        {
+            "community_id": "gc:alpha",
+            "title": "Alpha stability",
+            "summary": "Claims about alpha stability and stress transfer.",
+            "member_count": 5,
+            "keywords": ["alpha", "stability", "transfer"],
+        },
+        {
+            "community_id": "gc:beta",
+            "title": "Beta transfer",
+            "summary": "Beta transfer keeps the overview connected.",
+            "member_count": 4,
+            "keywords": ["beta", "stability", "transfer"],
+        },
+        {
+            "community_id": "gc:gamma",
+            "title": "Gamma lattice",
+            "summary": "Gamma lattice shares transfer behavior.",
+            "member_count": 3,
+            "keywords": ["gamma", "transfer"],
+        },
+    ]
+    members_by_community = {
+        "gc:alpha": [
+            {"member_id": "claim-1", "member_kind": "Claim", "paper_id": "paper-1", "paper_source": "P-001"},
+            {"member_id": "claim-2", "member_kind": "Claim", "paper_id": "paper-2", "paper_source": "P-002"},
+        ],
+        "gc:beta": [
+            {"member_id": "claim-3", "member_kind": "Claim", "paper_id": "paper-2", "paper_source": "P-002"},
+            {"member_id": "claim-4", "member_kind": "Claim", "paper_id": "paper-3", "paper_source": "P-003"},
+        ],
+        "gc:gamma": [
+            {"member_id": "claim-5", "member_kind": "Claim", "paper_id": "paper-3", "paper_source": "P-003"},
+        ],
+    }
+
+    graph = build_overview_community_graph(
+        communities,
+        members_by_community,
+        community_limit=3,
+        member_limit_per_community=0,
+        max_nodes=12,
+        max_edges=6,
+        max_community_links=6,
+        include_members=False,
+    )
+
+    assert {row["id"] for row in graph["nodes"]} == {
+        "community:gc:alpha",
+        "community:gc:beta",
+        "community:gc:gamma",
+    }
+    assert all(row["kind"] == "community" for row in graph["nodes"])
+    assert all(row["kind"] == "similar" for row in graph["edges"])
+    assert not any(edge["kind"] == "contains" for edge in graph["edges"])
+    assert graph["stats"]["visible_communities"] == 3
+    assert graph["stats"]["visible_members"] == 0
+    assert graph["stats"]["hidden_communities"] == 0
+    assert len(graph["edges"]) >= 2
+
+
 class _FakeNeo4jClient:
     def __init__(self, uri: str, user: str, password: str) -> None:  # noqa: ARG002
         pass
@@ -224,3 +287,66 @@ def test_community_overview_graph_endpoint_returns_capped_graph(monkeypatch) -> 
         and edge["kind"] == "similar"
         for edge in payload["edges"]
     )
+
+
+class _ManyCommunityFakeNeo4jClient(_FakeNeo4jClient):
+    def list_global_community_rows(self, limit: int = 50000) -> list[dict]:
+        rows = []
+        for index in range(120):
+            bucket = index % 10
+            rows.append(
+                {
+                    "community_id": f"gc:{index + 1}",
+                    "title": f"Community {index + 1}",
+                    "summary": f"Transfer family {bucket} materials cluster",
+                    "member_count": 5,
+                    "keywords": [f"family-{bucket}", "materials", "transfer"],
+                }
+            )
+        return rows[:limit]
+
+    def list_global_community_members(self, community_id: str, limit: int = 200) -> list[dict]:
+        bucket = int(community_id.split(":")[-1]) % 10
+        rows = [
+            {
+                "member_id": f"{community_id}-claim-1",
+                "member_kind": "Claim",
+                "paper_id": f"paper-shared-{bucket}",
+                "paper_source": f"P-{bucket:03d}",
+            },
+            {
+                "member_id": f"{community_id}-claim-2",
+                "member_kind": "Claim",
+                "paper_id": f"paper-secondary-{bucket}",
+                "paper_source": f"S-{bucket:03d}",
+            },
+        ]
+        return rows[:limit]
+
+
+def test_community_overview_graph_endpoint_can_return_all_communities_without_members(monkeypatch) -> None:
+    monkeypatch.setattr(community_router, "Neo4jClient", _ManyCommunityFakeNeo4jClient)
+
+    app = FastAPI()
+    app.include_router(community_router.router)
+    client = TestClient(app)
+
+    res = client.get(
+        "/community/overview-graph",
+        params={
+            "community_limit": 120,
+            "member_limit_per_community": 0,
+            "max_nodes": 160,
+            "max_edges": 240,
+            "include_members": "false",
+        },
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+
+    assert payload["stats"]["community_total"] == 120
+    assert payload["stats"]["visible_communities"] == 120
+    assert len(payload["nodes"]) == 120
+    assert all(node["kind"] == "community" for node in payload["nodes"])
+    assert not any(edge["kind"] == "contains" for edge in payload["edges"])
+    assert any(edge["kind"] == "similar" for edge in payload["edges"])

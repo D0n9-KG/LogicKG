@@ -2,6 +2,7 @@
 
 import json
 import hashlib
+import math
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -223,6 +224,64 @@ def _split_prefixed_evidence_ids(ids: list[str]) -> dict[str, list[str]]:
             seen[bucket].add(payload)
             out[bucket].append(payload)
     return out
+
+
+def _year_sort_value(node: dict) -> int:
+    try:
+        return int(node.get("year") or 0)
+    except Exception:
+        return 0
+
+
+def _select_network_base_nodes(base_nodes: list[dict], candidate_edges: list[dict], limit_papers: int) -> list[dict]:
+    if len(base_nodes) <= limit_papers:
+        return list(base_nodes)
+    if not candidate_edges:
+        return sorted(base_nodes, key=lambda node: (_year_sort_value(node), str(node.get("id") or "")), reverse=True)[:limit_papers]
+
+    degree_map: dict[str, int] = defaultdict(int)
+    mention_map: dict[str, float] = defaultdict(float)
+    node_by_id = {str(node.get("id") or ""): node for node in base_nodes}
+
+    for edge in candidate_edges:
+        source = str(edge.get("source") or "").strip()
+        target = str(edge.get("target") or "").strip()
+        if not source or not target:
+            continue
+        mentions = float(edge.get("total_mentions") or 0.0)
+        degree_map[source] += 1
+        degree_map[target] += 1
+        mention_map[source] += mentions
+        mention_map[target] += mentions
+
+    years = [_year_sort_value(node) for node in base_nodes]
+    min_year = min(years) if years else 0
+    max_year = max(years) if years else 0
+    year_span = max(max_year - min_year, 1)
+
+    def _score(node: dict) -> tuple[float, int, float, str]:
+        node_id = str(node.get("id") or "")
+        degree = degree_map.get(node_id, 0)
+        mentions = mention_map.get(node_id, 0.0)
+        year = _year_sort_value(node)
+        recency = (year - min_year) / year_span if year_span > 0 else 0.0
+        score = degree * 20.0 + math.log1p(max(mentions, 0.0)) * 6.0 + recency * 2.0
+        return (score, degree, mentions, node_id)
+
+    connected = [node for node in base_nodes if degree_map.get(str(node.get("id") or ""), 0) > 0]
+    disconnected = [node for node in base_nodes if degree_map.get(str(node.get("id") or ""), 0) == 0]
+    ranked_connected = sorted(connected, key=_score, reverse=True)
+    ranked_disconnected = sorted(
+        disconnected,
+        key=lambda node: (_year_sort_value(node), str(node.get("id") or "")),
+        reverse=True,
+    )
+    selected = ranked_connected[:limit_papers]
+    if len(selected) < limit_papers:
+        selected.extend(ranked_disconnected[: limit_papers - len(selected)])
+
+    ordered_ids = [str(node.get("id") or "") for node in selected]
+    return [node_by_id[node_id] for node_id in ordered_ids if node_id in node_by_id]
 
 
 def _local_louvain_partition(nodes: list[str], edges: list[tuple[str, str, float]], max_iter: int = 24) -> dict[str, int]:
@@ -852,6 +911,36 @@ LIMIT $limit
 
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, **params)]
+
+    def count_papers(self, collection_id: str | None = None) -> int:
+        cid = (collection_id or "").strip()
+        if cid:
+            if cid == "__uncategorized__":
+                cypher = """
+MATCH (p:Paper)
+WHERE coalesce(p.ingested, false) = true
+  AND NOT ( (:Collection)-[:HAS_PAPER]->(p) )
+RETURN count(DISTINCT p) AS total_count
+"""
+                params: dict[str, object] = {}
+            else:
+                cypher = """
+MATCH (:Collection {collection_id:$collection_id})-[:HAS_PAPER]->(p:Paper)
+WHERE coalesce(p.ingested, false) = true
+RETURN count(DISTINCT p) AS total_count
+"""
+                params = {"collection_id": cid}
+        else:
+            cypher = """
+MATCH (p:Paper)
+WHERE coalesce(p.ingested, false) = true
+RETURN count(DISTINCT p) AS total_count
+"""
+            params = {}
+
+        with self._driver.session() as session:
+            row = session.run(cypher, **params).single()
+        return int((row or {}).get("total_count") or 0)
 
     def list_papers_for_management(self, limit: int = 200, query: str | None = None) -> list[dict]:
         cypher = """
@@ -2026,12 +2115,16 @@ LIMIT $limit
                         limit=limit_papers,
                     )
                 ]
-            elif cid:
-                base_nodes = [
-                    dict(r)
-                    for r in session.run(
-                        """
+            else:
+                candidate_limit = max(limit_papers, min(limit_papers * 4, 1200))
+                candidate_edge_limit = max(limit_edges * 4, limit_papers * 12)
+                if cid:
+                    candidate_nodes = [
+                        dict(r)
+                        for r in session.run(
+                            """
 MATCH (co:Collection {collection_id:$collection_id})-[:HAS_PAPER]->(p:Paper)
+WHERE coalesce(p.ingested, false) = true
 RETURN p.paper_id AS id,
        p.paper_source AS paper_source,
        p.title AS title,
@@ -2041,15 +2134,15 @@ RETURN p.paper_id AS id,
 ORDER BY p.year DESC
 LIMIT $limit
 """,
-                        collection_id=cid,
-                        limit=limit_papers,
-                    )
-                ]
-            else:
-                base_nodes = [
-                    dict(r)
-                    for r in session.run(
-                        """
+                            collection_id=cid,
+                            limit=candidate_limit,
+                        )
+                    ]
+                else:
+                    candidate_nodes = [
+                        dict(r)
+                        for r in session.run(
+                            """
 MATCH (p:Paper)
 WHERE coalesce(p.ingested, false) = true
 RETURN p.paper_id AS id,
@@ -2061,9 +2154,31 @@ RETURN p.paper_id AS id,
 ORDER BY p.year DESC
 LIMIT $limit
 """,
-                        limit=limit_papers,
-                    )
-                ]
+                            limit=candidate_limit,
+                        )
+                    ]
+
+                candidate_ids = [row["id"] for row in candidate_nodes]
+                candidate_edges: list[dict] = []
+                if candidate_ids:
+                    candidate_edges = [
+                        dict(r)
+                        for r in session.run(
+                            """
+MATCH (p:Paper)-[c:CITES]->(q:Paper)
+WHERE p.paper_id IN $paper_ids AND q.paper_id IN $paper_ids
+RETURN p.paper_id AS source,
+       q.paper_id AS target,
+       c.total_mentions AS total_mentions
+ORDER BY c.total_mentions DESC
+LIMIT $limit
+""",
+                            paper_ids=candidate_ids,
+                            limit=candidate_edge_limit,
+                        )
+                    ]
+
+                base_nodes = _select_network_base_nodes(candidate_nodes, candidate_edges, limit_papers)
             paper_ids = [p["id"] for p in base_nodes]
             edges = [
                 dict(r)

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any, Callable
 
-from app.community.service import rebuild_global_communities
+from app.community.subprocess_runner import EVENT_PREFIX
 from app.delete_assets import delete_paper_asset, delete_textbook_asset
 from app.ingest.pipeline import ingest_path
 from app.ingest.rebuild import cleanup_legacy_proposition_artifacts, rebuild_global_faiss, rebuild_paper
@@ -15,6 +20,103 @@ from app.ops_config_store import merge_runtime_config
 from app.settings import settings
 from app.similarity.service import rebuild_similarity_global, update_similarity_for_paper
 from app.tasks.manager import PartialTaskFailure
+
+
+def _parse_global_community_event(raw_line: str) -> dict[str, Any] | None:
+    line = str(raw_line or "").strip()
+    if not line:
+        return None
+    if line.startswith(EVENT_PREFIX):
+        line = line[len(EVENT_PREFIX) :]
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _run_global_communities_in_subprocess(
+    update: Callable[[str, float, str | None], None],
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    backend_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[name] = "64"
+    process = subprocess.Popen(
+        [sys.executable, "-u", "-m", "app.community.subprocess_runner"],
+        cwd=str(backend_root),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    result_payload: dict[str, Any] | None = None
+    stdout_handle = process.stdout
+    stderr_handle = process.stderr
+
+    if stdout_handle is not None:
+        for raw_line in stdout_handle:
+            event = _parse_global_community_event(raw_line)
+            if event is None:
+                line = str(raw_line or "").strip()
+                if line:
+                    log(f"[community-subprocess stdout] {line}")
+                continue
+            event_type = str(event.get("event") or "").strip()
+            if event_type == "progress":
+                update(
+                    str(event.get("stage") or ""),
+                    float(event.get("progress") or 0.0),
+                    event.get("message") if isinstance(event.get("message"), str) or event.get("message") is None else str(event.get("message")),
+                )
+                continue
+            if event_type == "log":
+                line = str(event.get("line") or "").strip()
+                if line:
+                    log(line)
+                continue
+            if event_type == "result":
+                result_payload = event
+                continue
+            log(f"[community-subprocess event] {json.dumps(event, ensure_ascii=False)}")
+
+    stderr_output = ""
+    if stderr_handle is not None:
+        stderr_output = str(stderr_handle.read() or "")
+    return_code = process.wait()
+
+    if stderr_output.strip():
+        for line in stderr_output.splitlines():
+            trimmed = line.strip()
+            if trimmed:
+                log(f"[community-subprocess stderr] {trimmed}")
+
+    if result_payload is not None:
+        if bool(result_payload.get("ok")):
+            result = result_payload.get("result")
+            if isinstance(result, dict):
+                return result
+            return {"ok": True, "result": result}
+        error = str(result_payload.get("error") or "Global community subprocess failed")
+        traceback_text = str(result_payload.get("traceback") or "").strip()
+        if traceback_text:
+            for line in traceback_text.splitlines():
+                trimmed = line.strip()
+                if trimmed:
+                    log(f"[community-subprocess traceback] {trimmed}")
+        raise RuntimeError(error)
+
+    raise RuntimeError(
+        f"Global community subprocess exited with code {return_code} before returning a result."
+    )
 
 
 def handle_ingest_path(
@@ -385,11 +487,7 @@ def handle_rebuild_global_communities(
 ) -> dict[str, Any]:
     _load_payload(task_id)
     update("community:init", 0.02, "Rebuilding global communities")
-
-    def progress(stage: str, p: float, msg: str | None = None) -> None:
-        update(stage, p, msg)
-
-    return rebuild_global_communities(progress=progress, log=log)
+    return _run_global_communities_in_subprocess(update, log)
 
 
 def handle_cleanup_legacy_propositions(

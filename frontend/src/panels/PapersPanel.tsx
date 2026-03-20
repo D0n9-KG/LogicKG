@@ -14,7 +14,12 @@ import {
 import { saveScope } from '../scope'
 import { useGlobalState } from '../state/store'
 import { loadPaperNeighborhood } from '../loaders/papers'
-import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
+import {
+  OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES,
+  OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS,
+  invalidateOverviewGraphCache,
+  loadOverviewGraph,
+} from '../loaders/overview'
 import { loadDeleteTask, submitPaperDeleteTask, type DeleteTaskRecord } from '../loaders/sourceManagement'
 import { derivePapersEntryGraph, shouldHydratePapersOverviewGraph } from './papersPanelModel'
 
@@ -97,7 +102,7 @@ export default function PapersPanel() {
     }
 
     hydrateTimer = window.setTimeout(() => {
-      void loadOverviewGraph(200, 600, { includeTextbooks: false })
+      void loadOverviewGraph(OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS, OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES, { includeTextbooks: false })
         .then((els) => {
           if (cancelled || selectReqRef.current) return
           dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
@@ -189,7 +194,9 @@ export default function PapersPanel() {
         selectReqRef.current = null
         dispatch({ type: 'PAPERS_SELECT', paperId: null })
         dispatch({ type: 'SET_TRANSITIONING', value: false })
-        const els = await loadOverviewGraph(200, 600, { includeTextbooks: false })
+        const els = await loadOverviewGraph(OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS, OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES, {
+          includeTextbooks: false,
+        })
         dispatch({ type: 'SET_GRAPH', elements: els, layout: 'cose' })
       }
 

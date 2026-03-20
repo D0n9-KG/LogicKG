@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useI18n, type UILocale } from '../i18n'
-import type { AskItem, GraphEdgeData, GraphElement, GraphNodeData } from '../state/types'
+import type { AskItem, GraphEdgeData, GraphElement, GraphNodeData, SelectedNode } from '../state/types'
 import { apiGet } from '../api'
 import { buildEvidenceNodeId } from '../loaders/ask'
-import { loadOverviewCommunity3DGraph } from '../loaders/overview'
+import { loadOverviewCommunity3DGraph, loadOverviewCommunitySubgraph, loadOverviewGraph, resolveOverviewExpandedCommunityId } from '../loaders/overview'
 import { buildNodeAskQuestion } from '../nodeAskPrompt'
 import {
   buildFusionEvidenceStats,
@@ -180,11 +180,18 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
   const [paperPreview, setPaperPreview] = useState<{ title: string; paperSource: string; logic: string[]; claims: string[] } | null>(null)
   const [paperPreviewLoading, setPaperPreviewLoading] = useState(false)
   const [paperPreviewError, setPaperPreviewError] = useState('')
+  const [communityActionLoading, setCommunityActionLoading] = useState(false)
+  const [communityActionError, setCommunityActionError] = useState('')
   const [overview3dDetailElements, setOverview3dDetailElements] = useState<GraphElement[]>([])
   const [, setScopeVersion] = useState(0)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setShowRaw(false), 0)
+    return () => window.clearTimeout(timer)
+  }, [activeModule, selectedNode?.id])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCommunityActionError(''), 0)
     return () => window.clearTimeout(timer)
   }, [activeModule, selectedNode?.id])
 
@@ -330,12 +337,7 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
     }
 
     let cancelled = false
-    void loadOverviewCommunity3DGraph({
-      communityLimit: 18,
-      memberLimitPerCommunity: 6,
-      maxNodes: 160,
-      maxEdges: 240,
-    })
+    void loadOverviewCommunity3DGraph()
       .then((elements) => {
         if (!cancelled) setOverview3dDetailElements(elements)
       })
@@ -374,6 +376,27 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
       paperId: rawPaperId,
     })
   }, [activeModule, genericContext, selectedNode, selectedNodeInBaseGraph])
+
+  const selectedCommunityId = useMemo(() => {
+    if (!genericContext) return ''
+    const raw = genericContext.raw.selectedNode
+    const center = genericContext.center
+    const fromCenter = normalizeText(center?.communityId)
+    if (fromCenter) return fromCenter
+    const fromRaw = normalizeText(raw.communityId)
+    if (fromRaw) return fromRaw
+    const candidateId = normalizeText(center?.id ?? raw.id)
+    const candidateKind = normalizeText(center?.kind ?? raw.kind)
+    if (candidateKind === 'community' && candidateId.startsWith('community:')) {
+      return candidateId.slice('community:'.length)
+    }
+    return ''
+  }, [genericContext])
+
+  const expandedOverviewCommunityId = useMemo(
+    () => (activeModule === 'overview' ? resolveOverviewExpandedCommunityId(graphElements) ?? '' : ''),
+    [activeModule, graphElements],
+  )
 
   const askScopePaperIds = (() => {
     const scope = loadScope()
@@ -473,19 +496,67 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
     if (!node) return
     dispatch({
       type: 'SET_SELECTED',
-      node: {
-        id: node.id,
-        kind: node.kind,
-        label: node.label,
-        description: node.description,
-        paperId: node.paperId,
-        paperSource: node.paperSource,
-        paperTitle: node.paperTitle,
-        stepType: node.stepType,
-        textbookId: node.textbookId,
-        chapterId: node.chapterId,
-      },
+      node: toSelectedNode(node),
     })
+  }
+
+  function toSelectedNode(node: GraphNodeData): SelectedNode {
+    return {
+      id: node.id,
+      kind: node.kind,
+      label: node.label,
+      description: node.description,
+      paperId: node.paperId,
+      paperSource: node.paperSource,
+      paperTitle: node.paperTitle,
+      stepType: node.stepType,
+      textbookId: node.textbookId,
+      chapterId: node.chapterId,
+      communityId: node.communityId,
+      clusterKey: node.clusterKey,
+    }
+  }
+
+  async function expandSelectedCommunity() {
+    const communityId = selectedCommunityId
+    if (!communityId || communityActionLoading) return
+
+    setCommunityActionLoading(true)
+    setCommunityActionError('')
+    dispatch({ type: 'SET_TRANSITIONING', value: true })
+    try {
+      const elements = await loadOverviewCommunitySubgraph(communityId)
+      const communityNode = elements.find(
+        (element): element is { group: 'nodes'; data: GraphNodeData } =>
+          element.group === 'nodes' && element.data.kind === 'community' && normalizeText(element.data.communityId) === communityId,
+      )
+      dispatch({ type: 'SET_GRAPH', elements, layout: 'cose' })
+      if (communityNode) {
+        dispatch({ type: 'SET_SELECTED', node: toSelectedNode(communityNode.data) })
+      }
+    } catch (cause: unknown) {
+      setCommunityActionError(String((cause as { message?: unknown } | null)?.message ?? cause))
+    } finally {
+      dispatch({ type: 'SET_TRANSITIONING', value: false })
+      setCommunityActionLoading(false)
+    }
+  }
+
+  async function restoreOverviewGraph() {
+    if (communityActionLoading) return
+
+    setCommunityActionLoading(true)
+    setCommunityActionError('')
+    dispatch({ type: 'SET_TRANSITIONING', value: true })
+    try {
+      const elements = await loadOverviewGraph()
+      dispatch({ type: 'SET_GRAPH', elements, layout: 'cose' })
+    } catch (cause: unknown) {
+      setCommunityActionError(String((cause as { message?: unknown } | null)?.message ?? cause))
+    } finally {
+      dispatch({ type: 'SET_TRANSITIONING', value: false })
+      setCommunityActionLoading(false)
+    }
   }
 
   function askFromCurrentNode() {
@@ -1234,6 +1305,26 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
               })()}
 
               <div className="kgRow" style={{ flexWrap: 'wrap', gap: 6 }}>
+                {activeModule === 'overview' && selectedCommunityId && expandedOverviewCommunityId !== selectedCommunityId && (
+                  <button
+                    className="kgBtn kgBtn--sm"
+                    type="button"
+                    disabled={communityActionLoading}
+                    onClick={() => void expandSelectedCommunity()}
+                  >
+                    {communityActionLoading ? t('展开中...', 'Expanding...') : t('展开社区', 'Expand Community')}
+                  </button>
+                )}
+                {activeModule === 'overview' && expandedOverviewCommunityId && (
+                  <button
+                    className="kgBtn kgBtn--sm"
+                    type="button"
+                    disabled={communityActionLoading}
+                    onClick={() => void restoreOverviewGraph()}
+                  >
+                    {communityActionLoading ? t('返回中...', 'Returning...') : t('返回总览', 'Return to Overview')}
+                  </button>
+                )}
                 {genericPaperId && (
                   <button
                     className="kgBtn kgBtn--primary kgBtn--sm"
@@ -1283,6 +1374,12 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                   </button>
                 )}
               </div>
+
+              {communityActionError && (
+                <div className="kgInfoNeighborMeta" style={{ color: 'var(--danger)' }}>
+                  {communityActionError}
+                </div>
+              )}
 
               {askScopePaperIds.length > 0 && (
                 <>
@@ -1484,6 +1581,16 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
               )}
 
               <div className="kgRow" style={{ flexWrap: 'wrap' }}>
+                {activeModule === 'overview' && expandedOverviewCommunityId && (
+                  <button
+                    className="kgBtn kgBtn--sm"
+                    type="button"
+                    disabled={communityActionLoading}
+                    onClick={() => void restoreOverviewGraph()}
+                  >
+                    {communityActionLoading ? t('返回中...', 'Returning...') : t('返回总览', 'Return to Overview')}
+                  </button>
+                )}
                 {(genericContext.center?.textbookId || genericContext.raw.selectedNode.textbookId) && (
                   <button
                     className="kgBtn kgBtn--sm"
@@ -1507,10 +1614,39 @@ export default function RightPanel({ collapsed, floating = false, onToggle }: Pr
                 </button>
               </div>
 
+              {communityActionError && (
+                <div className="kgInfoNeighborMeta" style={{ color: 'var(--danger)' }}>
+                  {communityActionError}
+                </div>
+              )}
+
               {showRaw && <pre className="kgInfoRaw">{JSON.stringify(genericContext.raw, null, 2)}</pre>}
             </div>
           ) : (
             <div className="kgStack">
+              {activeModule === 'overview' && expandedOverviewCommunityId && (
+                <div className="kgCard">
+                  <div className="kgCardTitle">{t('社区子图', 'Community Subgraph')}</div>
+                  <div className="kgCardBody">
+                    <div style={{ marginBottom: 8 }}>
+                      {t('当前正在查看单个社区的子图。', 'You are currently viewing a single community subgraph.')}
+                    </div>
+                    <button
+                      className="kgBtn kgBtn--sm"
+                      type="button"
+                      disabled={communityActionLoading}
+                      onClick={() => void restoreOverviewGraph()}
+                    >
+                      {communityActionLoading ? t('返回中...', 'Returning...') : t('返回总览', 'Return to Overview')}
+                    </button>
+                    {communityActionError && (
+                      <div className="kgInfoNeighborMeta" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                        {communityActionError}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="kgCard">
                 <div className="kgCardTitle">{t('节点分析面板', 'Node Analysis Panel')}</div>
                 <div className="kgCardBody">

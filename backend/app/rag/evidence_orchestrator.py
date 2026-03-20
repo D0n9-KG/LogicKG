@@ -45,7 +45,7 @@ def merge_evidence(
     want = max(1, int(k))
     if lexical:
         return _rrf_fuse([faiss, lexical])[:want]
-    return list(faiss[:want])
+    return _rrf_fuse([faiss])[:want]
 
 
 def merge_structured_channels(

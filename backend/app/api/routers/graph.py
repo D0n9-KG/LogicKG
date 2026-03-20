@@ -15,7 +15,10 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 def list_papers(limit: int = 50, collection_id: str | None = None):
     try:
         with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
-            return {"papers": client.list_papers(limit=limit, collection_id=collection_id)}
+            return {
+                "papers": client.list_papers(limit=limit, collection_id=collection_id),
+                "total_count": client.count_papers(collection_id=collection_id),
+            }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

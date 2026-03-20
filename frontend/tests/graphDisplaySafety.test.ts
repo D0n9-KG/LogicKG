@@ -59,4 +59,105 @@ describe('graphDisplaySafety', () => {
     expect(edges).toHaveLength(5)
     expect(edges.every((item) => nodeIds.includes(item.source) && nodeIds.includes(item.target))).toBe(true)
   })
+
+  test('prefers the largest citation component over a smaller disconnected island', () => {
+    const elements: GraphElement[] = [
+      node('path:1'),
+      node('path:2'),
+      node('path:3'),
+      node('path:4'),
+      node('path:5'),
+      node('path:6'),
+      node('tri:a'),
+      node('tri:b'),
+      node('tri:c'),
+      edge('path:e1', 'path:1', 'path:2', 1),
+      edge('path:e2', 'path:2', 'path:3', 1),
+      edge('path:e3', 'path:3', 'path:4', 1),
+      edge('path:e4', 'path:4', 'path:5', 1),
+      edge('path:e5', 'path:5', 'path:6', 1),
+      edge('tri:e1', 'tri:a', 'tri:b', 1),
+      edge('tri:e2', 'tri:b', 'tri:c', 1),
+      edge('tri:e3', 'tri:c', 'tri:a', 1),
+    ]
+
+    const limited = limitGraphElementsForDisplay(elements, {
+      activeModule: 'papers',
+      maxNodes: 4,
+      maxEdges: 4,
+    })
+
+    const nodeIds = limited.filter((item) => item.group === 'nodes').map((item) => item.data.id)
+
+    expect(nodeIds).toHaveLength(4)
+    expect(nodeIds.every((id) => id.startsWith('path:'))).toBe(true)
+  })
+
+  test('keeps a single largest connected component instead of mixing disconnected groups', () => {
+    const elements: GraphElement[] = [
+      node('alpha:a'),
+      node('alpha:b'),
+      node('alpha:c'),
+      node('alpha:d'),
+      node('alpha:e'),
+      node('beta:a'),
+      node('beta:b'),
+      node('beta:c'),
+      edge('alpha:e1', 'alpha:a', 'alpha:b', 1),
+      edge('alpha:e2', 'alpha:b', 'alpha:c', 1),
+      edge('alpha:e3', 'alpha:c', 'alpha:d', 1),
+      edge('alpha:e4', 'alpha:d', 'alpha:e', 1),
+      edge('beta:e1', 'beta:a', 'beta:b', 1),
+      edge('beta:e2', 'beta:b', 'beta:c', 1),
+      edge('beta:e3', 'beta:c', 'beta:a', 1),
+    ]
+
+    const limited = limitGraphElementsForDisplay(elements, {
+      activeModule: 'papers',
+      maxNodes: 4,
+      maxEdges: 4,
+    })
+
+    const nodeIds = limited.filter((item) => item.group === 'nodes').map((item) => item.data.id)
+    const edgePairs = limited
+      .filter((item) => item.group === 'edges')
+      .map((item) => [item.data.source, item.data.target] as const)
+
+    expect(nodeIds).toHaveLength(4)
+    expect(nodeIds.every((id) => id.startsWith('alpha:'))).toBe(true)
+    expect(edgePairs.every(([source, target]) => nodeIds.includes(source) && nodeIds.includes(target))).toBe(true)
+  })
+
+  test('prefers the selected paper component even when another disconnected component is larger', () => {
+    const elements: GraphElement[] = [
+      node('alpha:a'),
+      node('alpha:b'),
+      node('alpha:c'),
+      node('alpha:d'),
+      node('alpha:e'),
+      node('beta:a'),
+      node('beta:b'),
+      node('beta:c'),
+      edge('alpha:e1', 'alpha:a', 'alpha:b', 1),
+      edge('alpha:e2', 'alpha:b', 'alpha:c', 1),
+      edge('alpha:e3', 'alpha:c', 'alpha:d', 1),
+      edge('alpha:e4', 'alpha:d', 'alpha:e', 1),
+      edge('beta:e1', 'beta:a', 'beta:b', 1),
+      edge('beta:e2', 'beta:b', 'beta:c', 1),
+      edge('beta:e3', 'beta:c', 'beta:a', 1),
+    ]
+
+    const limited = limitGraphElementsForDisplay(elements, {
+      activeModule: 'papers',
+      selectedNodeId: 'beta:b',
+      maxNodes: 4,
+      maxEdges: 4,
+    })
+
+    const nodeIds = limited.filter((item) => item.group === 'nodes').map((item) => item.data.id)
+
+    expect(nodeIds).toContain('beta:b')
+    expect(nodeIds.every((id) => id.startsWith('beta:'))).toBe(true)
+    expect(nodeIds).toHaveLength(3)
+  })
 })

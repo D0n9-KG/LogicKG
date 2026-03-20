@@ -62,6 +62,12 @@ describe('overviewLoader', () => {
     )
   })
 
+  test('uses the expanded default overview graph budget', async () => {
+    await loadOverviewGraph()
+
+    expect(apiGetMock).toHaveBeenCalledWith('/graph/network?limit_papers=340&limit_edges=980')
+  })
+
   test('supports forcing a refresh after the cache has been primed', async () => {
     const first = await loadOverviewGraph(20, 0)
 

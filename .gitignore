@@ -78,3 +78,12 @@ AGENTS.md
 *.log
 *.err
 *.err.log
+
+# Local assistant/tool state
+.claude/
+backend/.codex_tmp/
+backend/.pytest_tmp/
+skills-lock.json
+
+# Local sample output
+paper1.json

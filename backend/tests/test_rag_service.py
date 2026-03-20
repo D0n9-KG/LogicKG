@@ -15,6 +15,7 @@ from app.rag.service import (
     ask_v2,
     ask_v2_stream,
     ground_structured_evidence,
+    merge_evidence,
     retrieve_structured_evidence,
 )
 from app.rag.models import EvidenceBundle
@@ -95,6 +96,20 @@ def test_rrf_fuse_dedup_within_same_list():
 
 
 # ── System prompt ──
+
+
+def test_merge_evidence_deduplicates_faiss_only_hits() -> None:
+    fused = merge_evidence(
+        faiss=[
+            {"chunk_id": "c1", "score": 0.1},
+            {"chunk_id": "c1", "score": 0.2},
+            {"chunk_id": "c2", "score": 0.3},
+        ],
+        lexical=[],
+        k=4,
+    )
+
+    assert [item["chunk_id"] for item in fused] == ["c1", "c2"]
 
 
 def test_build_system_prompt_default():

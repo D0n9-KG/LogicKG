@@ -5,6 +5,30 @@ import requests
 
 from app.settings import settings
 
+_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+_TRANSIENT_ERROR_SIGNALS = (
+    "502",
+    "503",
+    "504",
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connection aborted",
+    "temporarily unavailable",
+    "rate limit",
+)
+_TRANSIENT_403_SIGNALS = (
+    "upstream connect error",
+    "disconnect/reset before headers",
+    "connection termination",
+)
+
+
+def _embedding_error_text(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    response_text = getattr(response, "text", "")
+    return f"{exc} {response_text}".lower().strip()
+
 
 def get_embeddings_batch(texts: list[str], model: str | None = None) -> list[list[float]]:
     """
@@ -53,22 +77,16 @@ def get_embeddings_batch(texts: list[str], model: str | None = None) -> list[lis
     def _is_retryable_error(exc: Exception) -> bool:
         """Check if error is retryable (transient)."""
         if isinstance(exc, requests.exceptions.HTTPError):
-            status_code = exc.response.status_code if exc.response else None
+            response = exc.response
+            status_code = response.status_code if response is not None else None
             if isinstance(status_code, int):
-                return status_code in {408, 429, 500, 502, 503, 504}
-        error_text = str(exc).lower()
-        transient_signals = (
-            "502",
-            "503",
-            "504",
-            "timeout",
-            "timed out",
-            "connection reset",
-            "connection aborted",
-            "temporarily unavailable",
-            "rate limit",
-        )
-        return any(signal in error_text for signal in transient_signals)
+                if status_code in _RETRYABLE_STATUS_CODES:
+                    return True
+                if status_code == 403:
+                    error_text = _embedding_error_text(exc)
+                    return any(signal in error_text for signal in _TRANSIENT_403_SIGNALS)
+        error_text = _embedding_error_text(exc)
+        return any(signal in error_text for signal in _TRANSIENT_ERROR_SIGNALS)
 
     # Make API call with retry
     for attempt in range(max_retries):

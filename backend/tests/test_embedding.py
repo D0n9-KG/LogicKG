@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from app.similarity.embedding import cosine_similarity, get_embeddings_batch
 
@@ -93,6 +94,68 @@ def test_embedding_generation_handles_http_error(monkeypatch: pytest.MonkeyPatch
     with patch("app.similarity.embedding.requests.post", return_value=mock_response):
         with pytest.raises(RuntimeError, match="Embedding API error 502"):
             _ = get_embeddings_batch(["text"])
+
+
+def test_embedding_generation_retries_transient_403_gateway_reset(monkeypatch: pytest.MonkeyPatch):
+    """Treat transient gateway-reset 403 responses as retryable."""
+    mock_settings = Mock()
+    mock_settings.effective_embedding_api_key.return_value = "embed-key"
+    mock_settings.effective_embedding_base_url.return_value = "http://192.168.199.73/v1"
+    mock_settings.effective_embedding_model.return_value = "qwen3-embedding-8b-local"
+    monkeypatch.setattr("app.similarity.embedding.settings", mock_settings)
+
+    transient_response = Mock()
+    transient_response.status_code = 403
+    transient_response.text = (
+        "upstream connect error or disconnect/reset before headers. "
+        "reset reason: connection termination"
+    )
+    transient_response.raise_for_status.side_effect = __import__("requests").exceptions.HTTPError(
+        response=transient_response
+    )
+
+    success_response = Mock()
+    success_response.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+
+    mock_post = Mock(side_effect=[transient_response, success_response])
+
+    with patch("app.similarity.embedding.requests.post", mock_post):
+        with patch("time.sleep"):
+            embeddings = get_embeddings_batch(["text"])
+
+    assert embeddings == [[0.1, 0.2, 0.3]]
+    assert mock_post.call_count == 2
+
+
+def test_embedding_generation_retries_transient_403_with_real_requests_response(monkeypatch: pytest.MonkeyPatch):
+    """Use a real requests.Response so falsy 4xx responses still retry."""
+    mock_settings = Mock()
+    mock_settings.effective_embedding_api_key.return_value = "embed-key"
+    mock_settings.effective_embedding_base_url.return_value = "http://192.168.199.73/v1"
+    mock_settings.effective_embedding_model.return_value = "qwen3-embedding-8b-local"
+    monkeypatch.setattr("app.similarity.embedding.settings", mock_settings)
+
+    transient_response = requests.Response()
+    transient_response.status_code = 403
+    transient_response._content = (
+        b"upstream connect error or disconnect/reset before headers. "
+        b"reset reason: connection termination"
+    )
+    transient_response.url = "http://192.168.199.73/v1/embeddings"
+    transient_response.request = requests.Request("POST", transient_response.url).prepare()
+
+    success_response = Mock()
+    success_response.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+    success_response.raise_for_status.return_value = None
+
+    mock_post = Mock(side_effect=[transient_response, success_response])
+
+    with patch("app.similarity.embedding.requests.post", mock_post):
+        with patch("time.sleep"):
+            embeddings = get_embeddings_batch(["text"])
+
+    assert embeddings == [[0.1, 0.2, 0.3]]
+    assert mock_post.call_count == 2
 
 
 def test_cosine_similarity():

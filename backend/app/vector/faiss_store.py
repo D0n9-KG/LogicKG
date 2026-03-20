@@ -24,6 +24,9 @@ _TRANSIENT_ERROR_SIGNALS = (
     "temporarily unavailable",
     "rate limit",
 )
+_FAISS_MAX_TEXT_CHARS = 6000
+_FAISS_OVERLAP_CHARS = 300
+_FAISS_BREAK_MARKERS = ("\n\n", "\n", "</tr>", "</p>", ". ", "; ", " ", "><")
 
 
 def _is_retryable_embedding_error(exc: Exception) -> bool:
@@ -116,6 +119,99 @@ class _RequestsEmbeddings(Embeddings):
 
     def embed_query(self, text: str) -> list[float]:
         return self._embed_batch([text])[0]
+
+
+def _find_faiss_breakpoint(text: str, start: int, hard_end: int, *, min_end: int) -> int:
+    window = text[start:hard_end]
+    search_from = max(0, min_end - start)
+    for marker in _FAISS_BREAK_MARKERS:
+        idx = window.rfind(marker, search_from)
+        if idx >= 0:
+            return start + idx + len(marker)
+    return hard_end
+
+
+def _split_text_for_faiss(
+    text: str,
+    *,
+    max_chars: int = _FAISS_MAX_TEXT_CHARS,
+    overlap_chars: int = _FAISS_OVERLAP_CHARS,
+) -> list[str]:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return []
+
+    limit = max(1, int(max_chars))
+    overlap = max(0, min(int(overlap_chars), max(0, limit // 2)))
+    if len(normalized) <= limit:
+        return [normalized]
+
+    segments: list[str] = []
+    start = 0
+    while start < len(normalized):
+        remaining = len(normalized) - start
+        if remaining <= limit:
+            tail = normalized[start:].strip()
+            if tail:
+                segments.append(tail)
+            break
+
+        hard_end = min(start + limit, len(normalized))
+        soft_end = _find_faiss_breakpoint(
+            normalized,
+            start,
+            hard_end,
+            min_end=start + max(1, limit // 2),
+        )
+        if soft_end <= start:
+            soft_end = hard_end
+
+        segment = normalized[start:soft_end].strip()
+        if not segment:
+            soft_end = hard_end
+            segment = normalized[start:soft_end].strip()
+        if not segment:
+            break
+
+        segments.append(segment)
+        if soft_end >= len(normalized):
+            break
+
+        start = max(soft_end - overlap, start + 1)
+
+    return segments or [normalized]
+
+
+def _prepare_rows_for_faiss(
+    rows: list[dict[str, Any]],
+    *,
+    text_key: str,
+    metadata_keys: list[str],
+    max_chars: int = _FAISS_MAX_TEXT_CHARS,
+    overlap_chars: int = _FAISS_OVERLAP_CHARS,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    texts: list[str] = []
+    metadatas: list[dict[str, Any]] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get(text_key) or "").strip()
+        if not text:
+            continue
+
+        base_metadata = {key: row.get(key) for key in metadata_keys if key in row}
+        segments = _split_text_for_faiss(text, max_chars=max_chars, overlap_chars=overlap_chars)
+        segment_count = len(segments)
+        for index, segment in enumerate(segments):
+            metadata = dict(base_metadata)
+            if segment_count > 1:
+                metadata["faiss_segment_index"] = index
+                metadata["faiss_segment_count"] = segment_count
+            texts.append(segment)
+            metadatas.append(metadata)
+
+    return texts, metadatas
 
 
 def _create_provider_compatible_embeddings(*, max_retries: int | None = None) -> Embeddings:
@@ -242,8 +338,6 @@ def build_faiss_for_rows(
     text_key: str,
     metadata_keys: list[str],
 ) -> dict[str, Any]:
-    texts: list[str] = []
-    metadatas: list[dict[str, Any]] = []
     count = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -251,12 +345,20 @@ def build_faiss_for_rows(
         text = str(row.get(text_key) or "").strip()
         if not text:
             continue
-        texts.append(text)
-        metadatas.append({key: row.get(key) for key in metadata_keys if key in row})
         count += 1
 
+    texts, metadatas = _prepare_rows_for_faiss(
+        rows,
+        text_key=text_key,
+        metadata_keys=metadata_keys,
+    )
+
     _build_faiss_from_texts(texts=texts, metadatas=metadatas, out_dir=out_dir)
-    return {"rows_indexed": count, "dir": str(Path(out_dir))}
+    return {
+        "rows_indexed": count,
+        "segments_indexed": len(texts),
+        "dir": str(Path(out_dir)),
+    }
 
 
 def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
@@ -287,7 +389,11 @@ def build_faiss_for_chunks(chunks: list[Chunk], out_dir: str) -> dict:
             "kind",
         ],
     )
-    return {"chunks_indexed": res["rows_indexed"], "dir": res["dir"]}
+    return {
+        "chunks_indexed": res["rows_indexed"],
+        "segments_indexed": res["segments_indexed"],
+        "dir": res["dir"],
+    }
 
 
 def load_faiss(out_dir: str) -> FAISS:

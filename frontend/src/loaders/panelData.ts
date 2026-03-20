@@ -4,6 +4,11 @@ export type OverviewStatsSnapshot = {
   paperCount: number
 }
 
+type PaperListResponse = {
+  papers?: unknown[]
+  total_count?: number
+}
+
 export type CollectionRow = {
   collection_id: string
   name: string
@@ -95,9 +100,10 @@ export async function loadOverviewStatsSnapshot(options: LoadOptions = {}): Prom
   return loadCached(
     'overview:stats',
     async () => {
-      const paperRes = await apiGet<{ papers: unknown[] }>('/graph/papers?limit=1000')
+      const paperRes = await apiGet<PaperListResponse>('/graph/papers?limit=1000')
+      const fallbackCount = Array.isArray(paperRes.papers) ? paperRes.papers.length : 0
       return {
-        paperCount: Array.isArray(paperRes.papers) ? paperRes.papers.length : 0,
+        paperCount: typeof paperRes.total_count === 'number' ? paperRes.total_count : fallbackCount,
       }
     },
     options,

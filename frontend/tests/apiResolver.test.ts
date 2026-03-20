@@ -80,17 +80,18 @@ describe('api resolver', () => {
 
     const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
 
-    expect(calls.filter((url) => url.endsWith('/health'))).toHaveLength(1)
-    expect(calls.filter((url) => url.endsWith('/openapi.json'))).toHaveLength(1)
+    expect(calls.filter((url) => url.endsWith('/health'))).toHaveLength(0)
+    expect(calls.filter((url) => url.endsWith('/openapi.json'))).toHaveLength(0)
     expect(calls.filter((url) => url.includes('/graph/papers?limit=1'))).toHaveLength(2)
+    expect(calls).toEqual(['http://127.0.0.1:8000/graph/papers?limit=1', 'http://127.0.0.1:8000/graph/papers?limit=1'])
   })
 
-  test('prefers a previously successful api base from session storage before probing defaults', async () => {
-    globalThis.sessionStorage.setItem('logickg.api.base', 'http://127.0.0.1:8001')
+  test('uses the configured api url exactly when VITE_API_URL is set', async () => {
+    vi.stubEnv('VITE_API_URL', 'http://192.168.199.215:18000')
 
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === 'http://127.0.0.1:8001/graph/papers?limit=1') {
+      if (url === 'http://192.168.199.215:18000/graph/papers?limit=1') {
         return new Response(JSON.stringify({ papers: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -105,34 +106,20 @@ describe('api resolver', () => {
 
     const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
 
-    expect(calls).toEqual(['http://127.0.0.1:8001/graph/papers?limit=1'])
+    expect(calls).toEqual(['http://192.168.199.215:18000/graph/papers?limit=1'])
   })
 
-  test('skips a base whose openapi surface does not support textbook graph routes', async () => {
+  test('ignores a stale stored api base and uses the current remote host backend', async () => {
+    vi.stubGlobal('window', {
+      location: { hostname: '192.168.199.215' },
+      sessionStorage: globalThis.sessionStorage,
+    })
+    globalThis.sessionStorage.setItem('logickg.api.base', 'http://192.168.199.215:8000')
+
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === 'http://127.0.0.1:8000/health') return new Response('', { status: 200 })
-      if (url === 'http://127.0.0.1:8000/openapi.json') {
-        return new Response(
-          JSON.stringify({
-            paths: {
-              '/graph/network': {},
-              '/graph/papers': {},
-              '/rag/ask_v2': {},
-              '/textbooks': {},
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-      if (url === 'http://127.0.0.1:8000/graph/papers?limit=1') {
+      if (url === 'http://192.168.199.215:18000/graph/papers?limit=1') {
         return new Response(JSON.stringify({ papers: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url === 'http://127.0.0.1:8080/textbooks/tb-1/graph?entity_limit=260&edge_limit=520') {
-        return new Response(JSON.stringify({ scope: 'textbook', textbook: { textbook_id: 'tb-1', title: 'TB' } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         })
@@ -140,41 +127,37 @@ describe('api resolver', () => {
       throw new Error(`Unexpected fetch: ${url}`)
     }) as typeof fetch
 
-    const { apiGet } = await import('../src/api')
+    const { apiBaseUrl, apiGet } = await import('../src/api')
 
     await apiGet('/graph/papers?limit=1')
-    await apiGet('/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
-
     const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
 
-    expect(calls).not.toContain('http://127.0.0.1:8000/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
-    expect(calls).toContain('http://127.0.0.1:8080/textbooks/tb-1/graph?entity_limit=260&edge_limit=520')
+    expect(apiBaseUrl()).toBe('http://192.168.199.215:18000')
+    expect(globalThis.sessionStorage.getItem('logickg.api.base')).toBe('http://192.168.199.215:18000')
+    expect(calls).toEqual(['http://192.168.199.215:18000/graph/papers?limit=1'])
   })
 
-  test('fails over to the next preferred backend for community overview graph when the stored base returns 404', async () => {
-    globalThis.sessionStorage.setItem('logickg.api.base', 'http://127.0.0.1:8000')
+  test('does not fail over to another backend when the designated backend returns 404', async () => {
+    vi.stubGlobal('window', {
+      location: { hostname: '192.168.199.215' },
+      sessionStorage: globalThis.sessionStorage,
+    })
 
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === 'http://127.0.0.1:8000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240') {
+      if (url === 'http://192.168.199.215:18000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240') {
         return new Response('missing', { status: 404 })
       }
-      if (url === 'http://127.0.0.1:8080/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240') {
-        return new Response(JSON.stringify({ nodes: [], edges: [], stats: { truncated: false } }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
       throw new Error(`Unexpected fetch: ${url}`)
     }) as typeof fetch
 
     const { apiGet } = await import('../src/api')
 
-    const payload = await apiGet('/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
+    await expect(
+      apiGet('/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240'),
+    ).rejects.toThrow('missing')
     const calls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input))
 
-    expect(payload).toEqual({ nodes: [], edges: [], stats: { truncated: false } })
-    expect(calls).toContain('http://127.0.0.1:8000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
-    expect(calls).toContain('http://127.0.0.1:8080/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240')
+    expect(calls).toEqual(['http://192.168.199.215:18000/community/overview-graph?community_limit=18&member_limit_per_community=6&max_nodes=160&max_edges=240'])
   })
 })

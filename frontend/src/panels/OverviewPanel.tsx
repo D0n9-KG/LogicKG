@@ -4,7 +4,12 @@ import { apiPost } from '../api'
 import { useI18n } from '../i18n'
 import { invalidateOverviewStatsCache, invalidatePaperDataCache, loadOverviewStatsSnapshot } from '../loaders/panelData'
 import { useGlobalState } from '../state/store'
-import { invalidateOverviewGraphCache, loadOverviewGraph } from '../loaders/overview'
+import {
+  OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES,
+  OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS,
+  invalidateOverviewGraphCache,
+  loadOverviewGraph,
+} from '../loaders/overview'
 
 type Stats = {
   paperCount: number
@@ -123,7 +128,7 @@ export default function OverviewPanel() {
             if (refreshingGraphRef.current) return
             refreshingGraphRef.current = true
             invalidateOverviewGraphCache()
-            void loadOverviewGraph(200, 600, { force: true })
+            void loadOverviewGraph(OVERVIEW_GRAPH_DEFAULT_LIMIT_PAPERS, OVERVIEW_GRAPH_DEFAULT_LIMIT_EDGES, { force: true })
               .then((elements) => dispatch({ type: 'SET_GRAPH', elements, layout: 'cose' }))
               .catch(() => {})
               .finally(() => {

@@ -2,6 +2,9 @@
 import { apiGet } from '../api'
 import type { GraphElement, GraphNodeData, GraphEdgeData } from '../state/types'
 
+export const PAPER_NEIGHBORHOOD_LIMIT_NODES = 170
+export const PAPER_NEIGHBORHOOD_LIMIT_EDGES = 380
+
 type NeighborhoodNode = {
   id: string
   paper_source?: string
@@ -27,7 +30,12 @@ type NeighborhoodResponse = {
 }
 
 export async function loadPaperNeighborhood(paperId: string): Promise<GraphElement[]> {
-  const qs = new URLSearchParams({ paper_id: paperId, depth: '1', limit_nodes: '80', limit_edges: '200' })
+  const qs = new URLSearchParams({
+    paper_id: paperId,
+    depth: '1',
+    limit_nodes: String(PAPER_NEIGHBORHOOD_LIMIT_NODES),
+    limit_edges: String(PAPER_NEIGHBORHOOD_LIMIT_EDGES),
+  })
   const res = await apiGet<NeighborhoodResponse>(`/graph/neighborhood?${qs}`)
 
   const nodes: GraphElement[] = (res.nodes ?? []).map((n) => ({

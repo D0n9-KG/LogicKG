@@ -17,20 +17,9 @@ describe('api resolution cache', () => {
     vi.unstubAllGlobals()
   })
 
-  test('reuses a validated API base without probing health and openapi again', async () => {
+  test('reuses the designated API base without probing health and openapi', async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input)
-      if (url.endsWith('/health')) return jsonResponse({ ok: true })
-      if (url.endsWith('/openapi.json')) {
-        return jsonResponse({
-          paths: {
-            '/graph/network': {},
-            '/graph/papers': {},
-            '/rag/ask_v2': {},
-            '/textbooks': {},
-          },
-        })
-      }
       if (url.endsWith('/graph/papers?limit=1')) return jsonResponse({ papers: [] })
       throw new Error(`Unexpected fetch URL: ${url}`)
     })
@@ -43,8 +32,8 @@ describe('api resolution cache', () => {
     await apiGet('/graph/papers?limit=1')
 
     const urls = fetchMock.mock.calls.map(([input]) => String(input))
-    expect(urls.filter((url) => url.endsWith('/health'))).toHaveLength(1)
-    expect(urls.filter((url) => url.endsWith('/openapi.json'))).toHaveLength(1)
+    expect(urls.filter((url) => url.endsWith('/health'))).toHaveLength(0)
+    expect(urls.filter((url) => url.endsWith('/openapi.json'))).toHaveLength(0)
     expect(urls.filter((url) => url.endsWith('/graph/papers?limit=1'))).toHaveLength(2)
   })
 })

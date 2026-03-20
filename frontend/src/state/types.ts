@@ -28,6 +28,7 @@ export type GraphNodeData = {
   chapterId?: string
   communityId?: string
   clusterKey?: string
+  keywords?: string[]
   // Display
   degree?: number
   mentions?: number
@@ -68,6 +69,8 @@ export type SelectedNode = {
   stepType?: string
   textbookId?: string
   chapterId?: string
+  communityId?: string
+  clusterKey?: string
   route?: string
 }
 

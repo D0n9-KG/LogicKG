@@ -171,12 +171,13 @@ def build_overview_community_graph(
     max_nodes: int = 160,
     max_edges: int = 240,
     max_community_links: int = 36,
+    include_members: bool = True,
 ) -> dict[str, Any]:
-    safe_community_limit = max(1, min(80, int(community_limit or 1)))
-    safe_member_limit = max(1, min(24, int(member_limit_per_community or 1)))
+    safe_community_limit = max(1, min(800 if not include_members else 80, int(community_limit or 1)))
+    safe_member_limit = max(0, min(24, int(member_limit_per_community or 0)))
     safe_max_nodes = max(8, min(800, int(max_nodes or 8)))
     safe_max_edges = max(8, min(1600, int(max_edges or 8)))
-    safe_max_community_links = max(0, min(200, int(max_community_links or 0)))
+    safe_max_community_links = max(0, min(1600, int(max_community_links or 0)))
 
     ordered_communities = [
         dict(row)
@@ -189,28 +190,29 @@ def build_overview_community_graph(
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
-    selected_members_by_community: dict[str, list[dict[str, Any]]] = {}
+    member_rows_for_links: dict[str, list[dict[str, Any]]] = {}
 
-    total_member_count = 0
     visible_member_count = 0
-    remaining_member_slots = max(0, safe_max_nodes - len(selected_communities))
+    remaining_member_slots = max(0, safe_max_nodes - len(selected_communities)) if include_members else 0
 
     for index, community in enumerate(selected_communities):
         community_id = _clean_text(community.get("community_id"))
         community_node_id = f"community:{community_id}"
         keywords = _normalize_keywords(community.get("keywords"))
         total_members = members_by_community.get(community_id, [])
-        total_member_count += len(total_members)
+        known_member_count = max(len(total_members), int(community.get("member_count") or 0))
 
-        communities_left = len(selected_communities) - index
-        fair_share = math.ceil(remaining_member_slots / max(communities_left, 1)) if remaining_member_slots > 0 else 0
-        member_budget = min(safe_member_limit, fair_share)
-        visible_members = _pick_members(total_members, member_budget)
-        selected_members_by_community[community_id] = visible_members
-        visible_member_count += len(visible_members)
-        remaining_member_slots = max(0, remaining_member_slots - len(visible_members))
+        visible_members: list[dict[str, Any]] = []
+        if include_members and remaining_member_slots > 0 and safe_member_limit > 0:
+            communities_left = len(selected_communities) - index
+            fair_share = math.ceil(remaining_member_slots / max(communities_left, 1)) if remaining_member_slots > 0 else 0
+            member_budget = min(safe_member_limit, fair_share)
+            visible_members = _pick_members(total_members, member_budget)
+            visible_member_count += len(visible_members)
+            remaining_member_slots = max(0, remaining_member_slots - len(visible_members))
+        member_rows_for_links[community_id] = total_members
 
-        hidden_member_count = max(0, len(total_members) - len(visible_members))
+        hidden_member_count = max(0, known_member_count - len(visible_members))
         summary = _clean_text(community.get("summary"))
         keyword_label = ", ".join(keywords[:4])
         description_parts = []
@@ -218,8 +220,11 @@ def build_overview_community_graph(
             description_parts.append(summary)
         if keyword_label:
             description_parts.append(f"Keywords: {keyword_label}")
-        description_parts.append(f"Visible members: {len(visible_members)}/{max(len(total_members), int(community.get('member_count') or 0))}")
-        if hidden_member_count > 0:
+        if include_members:
+            description_parts.append(f"Visible members: {len(visible_members)}/{known_member_count}")
+        else:
+            description_parts.append(f"Members: {known_member_count}")
+        if include_members and hidden_member_count > 0:
             description_parts.append(f"Hidden members: {hidden_member_count}")
 
         nodes.append(
@@ -234,34 +239,35 @@ def build_overview_community_graph(
             }
         )
 
-        for member in visible_members:
-            normalized_kind = _normalize_kind(member.get("member_kind"))
-            node_kind = _MEMBER_NODE_KIND.get(normalized_kind, "entity")
-            member_node_id = _member_node_id(member)
-            nodes.append(
-                {
-                    "id": member_node_id,
-                    "label": _member_label(member),
-                    "kind": node_kind,
-                "description": _member_description(member),
-                "cluster_key": community_node_id,
-                "community_id": community_id,
-                "paper_id": _clean_text(member.get("paper_id")) or None,
-                "paper_source": _clean_text(member.get("paper_source")) or None,
-                "paper_title": _clean_text(member.get("paper_title")) or None,
-                "step_type": _clean_text(member.get("step_type")) or None,
-                "chapter_id": _clean_text(member.get("source_chapter_id")) or None,
-            }
-        )
-            edges.append(
-                {
-                    "id": f"contains:{community_node_id}->{member_node_id}",
-                    "source": community_node_id,
-                    "target": member_node_id,
-                    "kind": "contains",
-                    "weight": 0.92,
-                }
-            )
+        if include_members:
+            for member in visible_members:
+                normalized_kind = _normalize_kind(member.get("member_kind"))
+                node_kind = _MEMBER_NODE_KIND.get(normalized_kind, "entity")
+                member_node_id = _member_node_id(member)
+                nodes.append(
+                    {
+                        "id": member_node_id,
+                        "label": _member_label(member),
+                        "kind": node_kind,
+                        "description": _member_description(member),
+                        "cluster_key": community_node_id,
+                        "community_id": community_id,
+                        "paper_id": _clean_text(member.get("paper_id")) or None,
+                        "paper_source": _clean_text(member.get("paper_source")) or None,
+                        "paper_title": _clean_text(member.get("paper_title")) or None,
+                        "step_type": _clean_text(member.get("step_type")) or None,
+                        "chapter_id": _clean_text(member.get("source_chapter_id")) or None,
+                    }
+                )
+                edges.append(
+                    {
+                        "id": f"contains:{community_node_id}->{member_node_id}",
+                        "source": community_node_id,
+                        "target": member_node_id,
+                        "kind": "contains",
+                        "weight": 0.92,
+                    }
+                )
 
     community_link_candidates: list[tuple[float, str, str, list[str]]] = []
     for index, left in enumerate(selected_communities):
@@ -270,7 +276,7 @@ def build_overview_community_graph(
         left_tokens = _tokenize_text(left.get("title")) | _tokenize_text(left.get("summary"))
         left_papers = {
             _clean_text(row.get("paper_id")) or _clean_text(row.get("paper_source"))
-            for row in selected_members_by_community.get(left_id, [])
+            for row in member_rows_for_links.get(left_id, [])
             if _clean_text(row.get("paper_id")) or _clean_text(row.get("paper_source"))
         }
         for right in selected_communities[index + 1 :]:
@@ -279,7 +285,7 @@ def build_overview_community_graph(
             right_tokens = _tokenize_text(right.get("title")) | _tokenize_text(right.get("summary"))
             right_papers = {
                 _clean_text(row.get("paper_id")) or _clean_text(row.get("paper_source"))
-                for row in selected_members_by_community.get(right_id, [])
+                for row in member_rows_for_links.get(right_id, [])
                 if _clean_text(row.get("paper_id")) or _clean_text(row.get("paper_source"))
             }
 
@@ -311,10 +317,15 @@ def build_overview_community_graph(
     edges = edges[:safe_max_edges]
 
     hidden_communities = max(0, len(ordered_communities) - len(selected_communities))
-    hidden_members = max(
-        0,
-        sum(len(members_by_community.get(_clean_text(row.get("community_id")), [])) for row in ordered_communities) - visible_member_count,
+    total_known_members = sum(
+        (
+            max(len(members_by_community.get(_clean_text(row.get("community_id")), [])), int(row.get("member_count") or 0))
+            if not include_members
+            else len(members_by_community.get(_clean_text(row.get("community_id")), []))
+        )
+        for row in ordered_communities
     )
+    hidden_members = max(0, total_known_members - visible_member_count)
 
     return {
         "nodes": nodes[:safe_max_nodes],
