@@ -307,6 +307,7 @@ def test_rebuild_global_communities_passes_projection_limits_from_settings(monke
     monkeypatch.setattr(service, "Neo4jClient", _FakeNeo4jClient)
     monkeypatch.setattr(service, "build_global_projection", _fake_projection)
     monkeypatch.setattr(service, "run_tree_comm", _fake_run_tree_comm)
+    monkeypatch.setattr(service.settings, "global_community_use_v2", False)
     monkeypatch.setattr(service.settings, "global_community_max_nodes", 12)
     monkeypatch.setattr(service.settings, "global_community_max_edges", 34)
     monkeypatch.setattr(service.settings, "global_community_top_keywords", 3)
