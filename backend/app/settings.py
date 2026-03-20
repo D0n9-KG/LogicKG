@@ -190,8 +190,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TEXTBOOK_CHAPTER_MAX_TOKENS"),
     )
     global_community_version: str = Field(
-        default="v1",
+        default="v2",
         validation_alias=AliasChoices("GLOBAL_COMMUNITY_VERSION"),
+    )
+    global_community_use_v2: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_USE_V2"),
     )
     global_community_max_nodes: int = Field(
         default=50000,
@@ -220,6 +224,36 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         validation_alias=AliasChoices("GLOBAL_COMMUNITY_TREE_COMM_STRUCT_WEIGHT"),
+    )
+    global_community_v2_neighbor_cap: int = Field(
+        default=32,
+        ge=1,
+        le=256,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_V2_NEIGHBOR_CAP"),
+    )
+    global_community_v2_min_size: int = Field(
+        default=2,
+        ge=2,
+        le=64,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_V2_MIN_SIZE"),
+    )
+    global_community_v2_max_memberships_per_node: int = Field(
+        default=2,
+        ge=1,
+        le=8,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_V2_MAX_MEMBERSHIPS_PER_NODE"),
+    )
+    global_community_v2_similarity_min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_V2_SIMILARITY_MIN_SCORE"),
+    )
+    global_community_v2_citation_boost: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("GLOBAL_COMMUNITY_V2_CITATION_BOOST"),
     )
 
     def effective_llm_api_key(self) -> str | None:

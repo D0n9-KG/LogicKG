@@ -2851,9 +2851,47 @@ WITH a, collect({target: b.logic_step_id, score: s.score})[0..$limit_per_source]
 UNWIND tgts AS t
 RETURN a.logic_step_id AS source, t.target AS target, t.score AS score
 LIMIT $limit_total
-"""
+        """
         with self._driver.session() as session:
             return [dict(r) for r in session.run(cypher, paper_ids=ids, min_score=float(min_score), limit_per_source=limit_per_source, limit_total=limit_total)]
+
+    def list_shared_entity_logicstep_edges(self, paper_ids: list[str], limit: int = 50000) -> list[dict]:
+        ids = [str(x).strip() for x in (paper_ids or []) if str(x).strip()]
+        if not ids:
+            return []
+        safe_limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (p1:Paper)-[:HAS_LOGIC_STEP]->(a:LogicStep)-[ra:EXPLAINS]->(ke:KnowledgeEntity)<-[rb:EXPLAINS]-(b:LogicStep)<-[:HAS_LOGIC_STEP]-(p2:Paper)
+WHERE p1.paper_id IN $paper_ids
+  AND p2.paper_id IN $paper_ids
+  AND p1.paper_id <> p2.paper_id
+  AND a.logic_step_id < b.logic_step_id
+WITH a, b, count(DISTINCT ke) AS shared_entities, avg(coalesce(ra.score, 0.0) + coalesce(rb.score, 0.0)) / 2.0 AS raw_score
+RETURN a.logic_step_id AS source,
+       b.logic_step_id AS target,
+       raw_score + shared_entities * 0.05 AS score,
+       shared_entities AS shared_entities
+ORDER BY score DESC, source ASC, target ASC
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_ids=ids, limit=safe_limit)]
+
+    def list_paper_citation_pairs(self, paper_ids: list[str], limit: int = 50000) -> list[dict]:
+        ids = [str(x).strip() for x in (paper_ids or []) if str(x).strip()]
+        if not ids:
+            return []
+        safe_limit = max(1, min(200000, int(limit)))
+        cypher = """
+MATCH (p1:Paper)-[:CITES]->(p2:Paper)
+WHERE p1.paper_id IN $paper_ids
+  AND p2.paper_id IN $paper_ids
+RETURN DISTINCT p1.paper_id AS source_paper_id,
+       p2.paper_id AS target_paper_id
+LIMIT $limit
+"""
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, paper_ids=ids, limit=safe_limit)]
 
     def resolve_reference(self, ref_id: str, cited_paper: dict) -> None:
         cypher = """
@@ -3438,6 +3476,8 @@ SET gc.title = r.title,
     gc.summary = r.summary,
     gc.confidence = r.confidence,
     gc.member_count = r.member_count,
+    gc.paper_count = r.paper_count,
+    gc.core_member_count = r.core_member_count,
     gc.version = r.version,
     gc.built_at = r.built_at,
     gc.updated_at = datetime()
@@ -3451,14 +3491,16 @@ RETURN count(DISTINCT gc) AS cnt
             rows.append(
                 {
                     "community_id": community_id,
-                    "title": str(item.get("title") or community_id).strip() or community_id,
-                    "summary": str(item.get("summary") or "").strip(),
-                    "confidence": float(item.get("confidence") or 0.0),
-                    "member_count": int(item.get("member_count") or 0),
-                    "version": str(item.get("version") or settings.global_community_version).strip() or settings.global_community_version,
-                    "built_at": str(item.get("built_at") or "").strip() or None,
-                }
-            )
+                      "title": str(item.get("title") or community_id).strip() or community_id,
+                      "summary": str(item.get("summary") or "").strip(),
+                      "confidence": float(item.get("confidence") or 0.0),
+                      "member_count": int(item.get("member_count") or 0),
+                      "paper_count": int(item.get("paper_count") or 0),
+                      "core_member_count": int(item.get("core_member_count") or 0),
+                      "version": str(item.get("version") or settings.global_community_version).strip() or settings.global_community_version,
+                      "built_at": str(item.get("built_at") or "").strip() or None,
+                  }
+              )
         if not rows:
             return 0
         with self._driver.session() as session:
@@ -3575,12 +3617,14 @@ MATCH (gc:GlobalCommunity)
 OPTIONAL MATCH (gc)-[hk:HAS_GLOBAL_KEYWORD]->(gk:GlobalKeyword)
 RETURN gc.community_id AS community_id,
        gc.title AS title,
-       gc.summary AS summary,
-       gc.confidence AS confidence,
-       gc.member_count AS member_count,
-       gc.version AS version,
-       gc.built_at AS built_at,
-       collect(DISTINCT gk.keyword) AS keywords
+     gc.summary AS summary,
+     gc.confidence AS confidence,
+     gc.member_count AS member_count,
+     gc.paper_count AS paper_count,
+     gc.core_member_count AS core_member_count,
+     gc.version AS version,
+     gc.built_at AS built_at,
+     collect(DISTINCT gk.keyword) AS keywords
 ORDER BY coalesce(gc.member_count, 0) DESC, gc.community_id ASC
 LIMIT $limit
 """

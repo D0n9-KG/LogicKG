@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.community.projection import build_global_projection
+from app.community.service_v2 import rebuild_global_communities_v2
 from app.community.tree_comm_adapter import run_tree_comm
 from app.graph.neo4j_client import Neo4jClient
 from app.settings import settings
@@ -27,6 +28,9 @@ def rebuild_global_communities(
 ) -> dict[str, Any]:
     progress = progress or _noop_progress
     log = log or _noop_log
+
+    if settings.global_community_use_v2:
+        return rebuild_global_communities_v2(progress=progress, log=log)
 
     progress("community:init", 0.05, "Preparing global community rebuild")
     with Neo4jClient(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) as client:
