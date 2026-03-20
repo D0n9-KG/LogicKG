@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "logickg/route_state_inputs.schema.json",
+  "title": "RouteStateInputs",
+  "type": "object",
+  "required": [
+    "topic_scope",
+    "community_id",
+    "paper_count"
+  ],
+  "properties": {
+    "topic_scope": {
+      "type": "string"
+    },
+    "community_id": {
+      "type": "string"
+    },
+    "paper_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
