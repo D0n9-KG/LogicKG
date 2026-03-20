@@ -105,3 +105,22 @@ def test_list_papers_for_management_query_includes_collections_and_display_title
     assert "WHEN trim(coalesce(p.paper_source, '')) <> '' THEN p.paper_source" in fake_session.last_query
     assert "WHEN trim(coalesce(p.doi, '')) <> '' THEN p.doi" not in fake_session.last_query
     assert fake_session.last_params == {"limit": 50, "search": "attention"}
+
+
+def test_paper_logic_trace_endpoint_returns_canonical_export(monkeypatch) -> None:
+    monkeypatch.setattr(
+        papers_router,
+        'export_paper_logic_trace',
+        lambda *_args, **_kwargs: {'schema_version': 'v1', 'paper_metadata': {'paper_id': 'paper-1'}},
+    )
+
+    app = FastAPI()
+    app.include_router(papers_router.router)
+    client = TestClient(app)
+
+    response = client.get('/papers/paper-1/logic-trace')
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload['schema_version'] == 'v1'
+    assert payload['paper_metadata']['paper_id'] == 'paper-1'

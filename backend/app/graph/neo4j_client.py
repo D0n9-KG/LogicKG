@@ -1907,6 +1907,77 @@ RETURN p
                 raise KeyError(f"Paper not found: {paper_id}")
             return dict(row["p"])
 
+    def get_paper_logic_trace_inputs(self, paper_id: str) -> dict:
+        detail = self.get_paper_detail(paper_id)
+        paper = dict(detail.get("paper") or {})
+        canonical_paper_id = str(paper.get("paper_id") or paper_id).strip() or str(paper_id)
+
+        logic_steps: list[dict] = []
+        for row in detail.get("logic_steps") or []:
+            step_type = str(row.get("step_type") or "").strip()
+            evidence = list(row.get("evidence") or [])
+            logic_steps.append(
+                {
+                    "logic_step_id": str(row.get("logic_step_id") or f"{canonical_paper_id}:{step_type}").strip(),
+                    "step_type": step_type,
+                    "summary": str(row.get("summary") or "").strip(),
+                    "confidence": row.get("confidence"),
+                    "evidence": evidence,
+                    "evidence_chunk_ids": [
+                        str(item.get("chunk_id") or "").strip()
+                        for item in evidence
+                        if str(item.get("chunk_id") or "").strip()
+                    ],
+                }
+            )
+
+        claims: list[dict] = []
+        claim_evidence_links: list[dict] = []
+        for row in detail.get("claims") or []:
+            evidence = list(row.get("evidence") or [])
+            claim_key = str(row.get("claim_key") or row.get("claim_id") or "").strip()
+            claim = {
+                "claim_id": row.get("claim_id"),
+                "claim_key": claim_key,
+                "text": str(row.get("text") or "").strip(),
+                "step_type": row.get("step_type"),
+                "confidence": row.get("confidence"),
+                "kinds": list(row.get("kinds") or []),
+                "targets": list(row.get("targets") or []),
+                "evidence": evidence,
+            }
+            claims.append(claim)
+            for item in evidence:
+                chunk_id = str(item.get("chunk_id") or "").strip()
+                if not chunk_id:
+                    continue
+                claim_evidence_links.append(
+                    {
+                        "claim_id": row.get("claim_id"),
+                        "claim_key": claim_key,
+                        "chunk_id": chunk_id,
+                        "section": item.get("section"),
+                        "start_line": item.get("start_line"),
+                        "end_line": item.get("end_line"),
+                        "kind": item.get("kind"),
+                        "source": item.get("source"),
+                        "weak": bool(item.get("weak") or False),
+                    }
+                )
+
+        return {
+            "schema_version": "v1",
+            "paper_metadata": paper,
+            "logic_steps": logic_steps,
+            "claims": claims,
+            "claim_evidence_links": claim_evidence_links,
+            "citation_acts": list(detail.get("outgoing_cites") or []),
+            "figures": list(detail.get("figures") or []),
+            "limitations": list(paper.get("limitations") or []),
+            "future_work_signals": list(paper.get("future_work_signals") or []),
+            "quality_tier": str(paper.get("phase1_quality_tier") or "").strip(),
+        }
+
     def delete_paper_subgraph(self, paper_id: str) -> None:
         """
         Delete all nodes/edges that belong to the given paper, but keep the Paper node itself

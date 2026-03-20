@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.graph.neo4j_client import Neo4jClient
+from app.paper_logic_trace import export_paper_logic_trace
 from app.settings import settings
 
 
@@ -213,3 +214,16 @@ def export_paper(
         media_type="application/json; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=paper.json"},
     )
+
+
+@router.get('/{paper_id:path}/logic-trace')
+def get_paper_logic_trace(paper_id: str):
+    try:
+        with Neo4jClient(
+            settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password,
+        ) as client:
+            return export_paper_logic_trace(client, paper_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

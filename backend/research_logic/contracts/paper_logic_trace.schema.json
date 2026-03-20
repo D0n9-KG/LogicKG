@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "logickg/paper_logic_trace.schema.json",
+  "title": "PaperLogicTrace",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "paper_metadata",
+    "logic_steps",
+    "claims",
+    "claim_evidence_links",
+    "figures",
+    "limitations",
+    "future_work_signals",
+    "citation_acts",
+    "quality_tier"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "paper_metadata": {
+      "type": "object"
+    },
+    "logic_steps": {
+      "type": "array"
+    },
+    "claims": {
+      "type": "array"
+    },
+    "claim_evidence_links": {
+      "type": "array"
+    },
+    "figures": {
+      "type": "array"
+    },
+    "limitations": {
+      "type": "array"
+    },
+    "future_work_signals": {
+      "type": "array"
+    },
+    "citation_acts": {
+      "type": "array"
+    },
+    "quality_tier": {
+      "type": "string"
+    }
+  }
