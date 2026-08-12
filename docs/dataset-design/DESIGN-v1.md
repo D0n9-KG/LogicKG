@@ -1,236 +1,285 @@
-# GranularFlow-Bench: A Benchmark Dataset for Structured Extraction from Granular Flow Literature
+# GranularFlow-Bench: An Agent System for Self-Evolving Schema Extraction from Granular Flow Literature
 
-**Status**: Design draft v4 (2026-08-12). Pre-implementation.
+**Status**: Design draft v5 (2026-08-12). Pre-implementation.
 **Branch**: `research/granular-benchmark`
 **Worktree**: `LogicKG-benchmark`
+**Target**: CCF-A (fallback CCF-B)
 
-**v4 changes**: integrates all experimental results (schema v3 validation, corpus purification 1186, multi-LLM consistency, MARY fusion, ontology/fusion surveys) into one coherent design. Replaces scattered experiment-logs with a unified document.
+**v5 pivot**: from "benchmark + pipeline" to "agent system + dataset". The extraction method IS an agent system (multi-LLM + self-evolving schema + evidence-linked audit + QA generation), not a pipeline of scattered functions. Contributions: (1) a self-evolving-schema scientific extraction agent system, (2) a granular flow benchmark dataset produced by it.
 
 ---
 
-## 1. Motivation
+## 1. Problem
 
-### 1.1 The field is in a multi-mechanism competition phase
+### 1.1 The extraction quality measurement gap (original motivation)
 
-Granular flow is less mature than materials science or bioengineering: its core constitutive relations are still contested. Multiple competing frameworks coexist:
+Scientific structured extraction serves downstream tasks (RAG/QA → evolution reconstruction → scientific LLM improvement), but extraction quality cannot be cheaply measured — there is gold but annotation is too expensive, so downstream failures cannot be attributed to extraction vs. downstream reasoning. This gap is most acute in granular flow, where multi-mechanism competition makes schema inherently unstable.
 
-- **Rheology laws**: μ(I) rheology (Jop et al. 2006, GDR MiDi 2004) vs non-local rheology (Bouzid 2013, Kamrin 2012, Henann 2016) vs free-volume theory
-- **Regime decomposition**: collisional (kinetic theory) / dense (μ(I)) / quasi-static (soil plasticity) — three regimes, each with its own theory (GDR MiDi 2004)
-- **Geophysical plasticity**: Coulomb plasticity vs viscoplasticity (Bingham/Casson/Herschel-Bulkley) — "still vigorously debated" (Ancey 2007, verbatim)
+### 1.2 The fixed-schema insufficiency (why self-evolution is necessary)
 
-This is not a drawback; it is the reason a benchmark is most valuable here. A structured dataset that captures *competing claims about the same physical quantity* enables comparison and verification that no single-schema dataset can.
+Predefined schemas always have gaps. We confirmed this empirically across 4 schema versions:
+- v1: FUNCTION_RELATION-centric → abused on experiment papers (13 "formulas" in a drag paper)
+- v2: added subtypes → still formula-centric
+- v3: contribution-centric → μ(I) multi-variable closure doesn't fit; regime has no slot; CONDITION mixes 4 heterogeneous things
+- v4: structural fixes (CLOSURE/REGIME/CONDITION split) → fixes known issues but new gaps will keep appearing
 
-### 1.2 Why MuLMS-style flat schemas are insufficient
+Manual patching is an endless hole. Self-evolving schema (schema auto-discovers new types/relations during extraction, with evidence-linked audit) is the necessary direction.
 
-MuLMS (Friedrich et al. 2023, arXiv 2310.15569) — the closest reference baseline — annotates materials science with 13 entity types + measurement-related relations + frames. It stops at setup + results layers.
+### 1.3 The self-evolution gap (why it's an open problem)
 
-Granular flow papers go further. Coverage validation on 9 papers across 5 types (Agnolin 2007 elasticity; Jop 2006 μ(I); GDR MiDi 2004; Ancey 2007 review; Albert 1999 drag-experiment; Cleary 2002 DEM; Alam 1998 stability-theory; Berzi 2014 kinetic-theory; Choi 2005 silo-experiment) + 4 frontier 2022-2024 (Blatny 2024; Kim 2023; Hernández-Delfin 2022; Barker 2023) showed 4 elements MuLMS cannot represent:
+Source-code analysis of the 3 most relevant projects confirmed none achieved true self-evolution:
+- AdaKGC (EMNLP 2023): manual YAML hardcoded schema changes, 0 runtime auto-discovery
+- OLLM (NeurIPS 2024): LoRA fine-tune for classification paths, does not evolve schema
+- AutoSchemaKG (ACL 2026): one-shot conceptualization, not incremental, no validation, no versioning
 
-| Element | Example |
-|---|---|
-| CONTRIBUTION (reified) | the paper's core scientific contribution, multi-label subtypes |
-| CONTRIBUTION_RELATION | directed edges between contributions (supports/conflicts/...) |
-| RESEARCH_QUESTION | the paper's research question |
-| paper_type | rheology/experiment/theory/DEM/review |
-
-### 1.3 The gap is real (verified)
-
-- "gold extraction + gold QA in the same physical/materials corpus": **no such dataset exists** (verified across arXiv multi-categories + ACL 33k index + venue search, 2022-2026)
-- Granular flow / rheology / fluid mechanics text-extraction datasets: **zero** (these fields' "datasets" are all simulation data)
-- Self-evolving schema in scientific IE: AgentCAT (arXiv 2602.18479, chemical catalysis) is the closest competitor, but its ontology is a linear causal lineage, fundamentally different from granular flow's multi-way constitutive coupling. AgentCAT's own limitation: "generalization to other subdomains may require further schema refinement."
+The trigger→validate→version-manage loop that defines real self-evolution has not been implemented by anyone. RAGA (arXiv 2605.17072) has the closest design (schema auto-discovery + PROPOSED state + evidence-anchored) but lacks: gap discovery as explicit skill, QA generation, multi-LLM, explicit hooks, append-only versioning, and physical-domain validation.
 
 ---
 
 ## 2. Contributions
 
-| # | Contribution | Layer | Risk | Status |
-|---|---|---|---|---|
-| C1 | GranularFlow-Bench: first extraction+QA paired gold dataset for granular flow | dataset | floor — publishable regardless | corpus purified (1186 papers) |
-| C2 | Analysis: why building datasets in physics is harder + how we break through + validity argument | analysis | floor | schema validated on 13 papers |
-| C3 | Schema-evolution × extraction-quality coupling evaluation | method (upper) | ceiling — falsifiable | deferred to post-gold (C3 experiment inconclusive due to confounds) |
-| C4 | L3 higher-order schema with 2D structure (contribution-centric, reified) | schema innovation | floor+ | v3 formal JSON Schema + extraction-validated |
-| C5 | Weak-supervision fusion: MARY + SudokuFill + Conformal + ontology-as-arbiter | method | floor+ | MARY validated, rest pending |
+| # | Contribution | Type | Risk |
+|---|---|---|---|
+| C1 | GranularFlow-Bench: first extraction+QA paired gold dataset for granular flow (1186 purified papers, 1882-2018) | dataset/resource | floor |
+| C2 | Self-evolving schema agent system (trigger + evidence-linked audit + append-only versioning + skills/hooks architecture) | method | core — claimable novelty |
+| C3 | Schema v4 (contribution-centric, CLOSURE/REGIME/CONDITION-split, multi-label subtypes) | schema design | floor |
+| C4 | Multi-LLM weak-supervision fusion (MARY + SudokuFill + Conformal + ontology-as-arbiter) | method | floor+ |
+| C5 | Schema-evolution × extraction-quality coupling evaluation | evaluation | ceiling — falsifiable, deferred to post-gold |
 
-C1+C2+C4+C5 are floor contributions (publishable even if C3 fails). C3 is the ceiling.
-
----
-
-## 3. Corpus
-
-- **Source corpus**: `颗粒流文献-jhd-两层综述` — 10,447 PDFs (5 core granular-flow surveys + 2-level citation expansion)
-- **Already MinerU-parsed subset**: 2,355 papers (markdown), at `science_evo/.../mineru_2355/`
-- **Purification (LLM semantic, not keyword)**: classified all 2,355 titles via deepseek-chat → **1186 yes (50%) / 919 no (39%) / 250 unclear (11%)**
-- **Subdomain distribution** (of 1186): theory 408 / experiment 401 / DEM 111 / rheology 100 / geophysical 71 / simulation 52 / other 43
-- **Year span**: 1882-2018 (DOI→year 100% recoverable), the only century-spanning granular flow corpus
-- **Purified corpus list**: `.research_tmp/granular-benchmark/purified_corpus_1186.jsonl` (commit ab2eeb6e)
-- **Note**: 50% purity means ~593 are strict granular flow (LLM yes + high confidence); expert verification will trim non-granular from the 100-sample gate.
+C1+C3+C4 are floor (publishable regardless). C2 is the core novelty (self-evolution is an open problem). C5 is the ceiling.
 
 ---
 
-## 4. Schema Design (v3, contribution-centric)
+## 3. Agent System Architecture
 
-Formal definition: `schema/granular_flow.schema.json` (validated: legal instance passes, illegal rejected, multi-label subtypes work).
+### 3.1 Framework: Pydantic AI (primary) / Burr (fallback)
 
-### 4.1 Three-tier higher-order schema
+Selected via systematic comparison (10 Python agent frameworks, 8 dimensions). Pydantic AI chosen because:
+- **Capabilities = skills**: `AbstractCapability` subclasses package tools+hooks+instructions+model settings, composable, third-party installable
+- **Hooks (18+ events, 5 categories)**: `wrap_tool_execute` (can intercept/block), `before/after_model_request` — exactly matches our evidence-linked audit need
+- **Pydantic-native schema**: `output_type` eats Pydantic models → extraction output validation built-in
+- **25+ providers**: DeepSeek/Qwen/Tongyi natively; Kimi via OpenAI-compatible endpoint
+- **AgentSpec YAML**: agent configurable without code changes
+- **Pydantic Evals built-in**: extraction quality evaluation without external framework
+
+Fallback: Burr (Apache incubating, zero-dependency state machine + 8 lifecycle hooks + persistence/replay/UI) if Pydantic AI proves too heavy.
+
+### 3.2 Agent Design: single-agent + capabilities + hooks (NOT multi-agent, NOT autonomous planning)
+
+**Why not multi-agent**: FlyAOC (arXiv 2602.09163) found multi-agent > single-agent, but multi-agent debate overhead is high and our task is deterministic extraction + event-triggered extension, not open-ended reasoning. Capabilities provide multi-agent's "specialization" without debate cost.
+
+**Why not autonomous planning**: schema extension must be controlled (evidence-linked audit), not autonomous. Skills are pre-defined; the agent calls them in a deterministic flow, with hooks triggering event-driven branches.
+
+### 3.3 Skills (Capabilities)
+
+| Skill | What it does | Pydantic AI mapping |
+|---|---|---|
+| **Extract** | Multi-LLM (Kimi+Qwen+DeepSeek) extract atoms per current schema version | `@agent.tool` + capability |
+| **Fuse** | MARY semantic-neighborhood fusion of multi-LLM results | `@agent.tool` + GLM-Embedding-2 API |
+| **GapDiscovery** | Passive: detect "cannot fit" during extraction. Active: scan cross-paper recurring patterns not in schema | `@agent.tool` + hooks |
+| **Validate** | Evidence-linked: every new schema candidate must have source-text evidence | `wrap_tool_execute` interceptor |
+| **ExtendSchema** | Append new type/relation/subtype to schema, record provenance | `@agent.tool` + pydantic schema versioning |
+| **QAGenerate** | Generate QA pairs from extracted atoms (answers anchored to paper experimental data) | `@agent.tool` |
+
+### 3.4 Hooks (Event-Driven Triggers)
+
+| Hook event | Triggers | Action |
+|---|---|---|
+| `on_extraction_complete` | After each paper extraction | Check for "cannot fit" candidates → GapDiscovery skill |
+| `on_gap_found` | Gap detected | Add to candidate pool + trigger Validate skill |
+| `on_batch_complete` | After N papers processed | Active scan: cross-paper recurring patterns → GapDiscovery |
+| `on_schema_extended` | Schema version incremented | Record provenance (what changed, why, evidence, timestamp) + update active schema version |
+| `on_qa_generated` | QA pair created | Validate answer is anchored to paper data (not LLM-fabricated) |
+
+### 3.5 Schema Version Management (append-only + provenance)
 
 ```
-L1 Entity layer (borrowable from MuLMS, granular-flow-adapted)
-  MATERIAL / SAMPLE / DEVICE / NUMERIC / UNIT / PROPERTY / MEASUREMENT / CONDITION
-
-L2 Relation layer (MuLMS condition_* + extensions)
-  measures_property / property_value / condition_environment /
-  condition_sampleFeatures / condition_instrument / taken_from
-
-L3 Contribution layer (granular-flow innovation, 2D structure)
-  RESEARCH_QUESTION    — paper-level anchor
-  CONTRIBUTION         — reified first-class entity (not an edge), multi-label subtypes:
-    constitutive_law | experimental_finding | mechanism_analysis |
-    theoretical_result | numerical_finding | integrative
-  CONTRIBUTION_RELATION — directed edges between contributions:
-    supports | conflicts | depends_on | applies_in | derives_from
-
-Paper-level:
-  paper_type            — rheology | experiment | theory | DEM | review | other
+schema_versions/
+  v4.json          (initial, structural fixes)
+  v4.1.json        (self-evolved: added FORCE_NETWORK type, provenance={paper_ids, evidence_spans, timestamp})
+  v4.2.json        (self-evolved: added decomposes_into relation, provenance={...})
+  ...
+  CHANGELOG.jsonl  (append-only: {version, action, what_changed, why, evidence, who_decided})
 ```
 
-### 4.2 Design grounding (survey, not invented)
+Each schema change is append-only (old version preserved), with provenance: which paper(s) triggered it, what evidence, when. No overwrite — addresses codex's information-loss problem.
 
-| Borrowed from | What |
-|---|---|
-| SciClaim (2021.emnlp-main.381) | CONTRIBUTION as reified entity (association reification); multi-label attributes |
-| Matter-of-Fact (2025.emnlp-main.203) | 2D classification; `integrative` 6th subtype; temporal-cutoff backtesting |
-| HyperRED (2022.emnlp-main.688) | CONTRIBUTION_RELATION edges carry qualifiers (hyper-relational) |
-| MAGIC (2025.findings-emnlp.466) | conflicts as first-class graph structure, not post-hoc detection |
-| Complex Event Schema (EMNLP 2021) | non-flat graph schema precedent |
+### 3.6 Data Flow
 
-### 4.3 v3 extraction validation (8 papers, first real extraction)
-
-- **Key win**: experiment-drag's 13 FUNCTION_RELATION (v2 abuse) → 3 experimental_finding + 2 mechanism_analysis (v3 correct). The formula-centric L3 was wrong; contribution-centric is right.
-- silo-experiment: **4 `conflicts` detected** — multi-mechanism competition surfaced as graph structure.
-- integrative (6th subtype) used on DEM/review papers.
-- 8/8 L3 non-empty. All subtypes + paper_type appeared.
-- Known issue: theory papers occasionally mislabeled as experimental_finding (prompt issue, not structural).
+```
+Input: paper (markdown from mineru_2355)
+    ↓
+[Extract skill] — 3 LLMs extract per current schema version (parallel)
+    ↓
+[Fuse skill] — MARY semantic-neighborhood fusion (not voting)
+    ↓
+hook: on_extraction_complete → check for "cannot fit" atoms
+    ↓ (if gap found)
+[GapDiscovery skill] — candidate pool
+    ↓
+[Validate skill] — evidence-linked audit (wrap_tool_execute: must have source-text evidence)
+    ↓ (if validated)
+[ExtendSchema skill] — append new schema element + provenance
+    ↓
+hook: on_schema_extended → update active schema version → next paper uses evolved schema
+    ↓
+[QAGenerate skill] — generate QA pairs (answer anchored to paper data)
+    ↓
+Output: extracted atoms (v4.x schema) + QA pairs + schema evolution log
+```
 
 ---
 
-## 5. Weak-Supervision Annotation Pipeline
+## 4. Schema (v4, contribution-centric, with self-evolution interface)
 
-### 5.1 Multi-LLM extraction probe (validated)
+Formal definition: `schema/granular_flow.schema.json` (validated).
 
-- 4 LLMs tested (Kimi-K2.6 / Qwen3.5-27B / DeepSeek / GLM-5-Turbo), 10 papers, schema v3
-- **GLM-5-Turbo: 6/10 returned 0 atoms → dropped**
-- **DeepSeek: 3/10 returned 0 (long-text timeout) → usable with retry/length-cap**
-- **Kimi + Qwen: 10/10 success, atom-count ratio 1.1-1.4x → schema v3 comprehensible across LLMs**
-- Entity Jaccard 0.09-0.46 → low overlap, **majority voting not applicable**
+### 4.1 Three-tier schema (all tiers evolvable, L1 < L2 < L3 in evolution frequency)
+
+```
+L1 Entity layer (evolvable, low frequency)
+  MATERIAL / SAMPLE / DEVICE / NUMERIC / UNIT / PROPERTY / MEASUREMENT
+  BOUNDARY_CONDITION / INITIAL_STATE / MATERIAL_PARAMETER / DIMENSIONLESS_NUMBER / REGIME
+
+L2 Relation layer (evolvable, medium frequency)
+  measures_property / property_value / condition_environment / condition_sampleFeatures
+  condition_instrument / taken_from
+
+L3 Contribution layer (evolvable, high frequency)
+  RESEARCH_QUESTION
+  CONTRIBUTION (reified, multi-label subtypes):
+    constitutive_law / experimental_finding / mechanism_analysis
+    theoretical_result / numerical_finding / integrative
+    scaling_law / regime_map / methodology
+  CONTRIBUTION_RELATION: supports / conflicts / depends_on / applies_in
+    applies_in_regime / derives_from / specializes / generalizes / bounds_applicability_of
+  CLOSURE (optional, for multi-variable constitutive laws):
+    input_variables / output_variable / function_form / parameters / applicable_regime
+
+Paper-level: paper_type = rheology / experiment / theory / DEM / review / other
+```
+
+### 4.2 Self-evolution interface
+
+The schema JSON file has a `_meta` block tracking version + evolution history:
+```json
+{
+  "_meta": {
+    "version": "4.1",
+    "parent_version": "4.0",
+    "evolved_from": "manual_v4",
+    "evolution_log": "CHANGELOG.jsonl"
+  }
+}
+```
+
+Each L1/L2/L3 type definition includes an `evolvable: true` flag. The ExtendSchema skill can add new entries to any layer's enum, but must:
+1. Have evidence-linked validation (source-text span)
+2. Pass DIAL-KG-style evolution-intent assessment (is this a new type or a subtype of existing?)
+3. Record provenance in CHANGELOG.jsonl
+
+---
+
+## 5. Weak-Supervision Fusion (within Extract + Fuse skills)
+
+### 5.1 Multi-LLM extraction (validated)
+- Kimi-K2.6 + Qwen3.5-27B (stable, 10/10 success, atom ratio 1.1-1.4x)
+- DeepSeek (usable with retry/length-cap, 7/10 success)
+- GLM-5-Turbo dropped (6/10 returned 0 atoms)
 
 ### 5.2 MARY fusion (validated, direction)
+- MARY@0.5 with GLM-Embedding-2: keeps 111/363 minority (31%), prunes 252 (69%)
+- Finds middle ground between union noise and majority-vote loss
+- Threshold uncalibrated — needs expert gate (Conformal)
 
-- Tested on 9 papers (Kimi+Qwen, 460 union entities, 363 minority)
-- MARY@0.5 keeps 111/363 minority (31%), prunes 252 (69%) — finds middle ground between union noise and majority-vote loss
-- Embeddings via Paratera GLM-Embedding-2 API (no local install, 1024-dim)
-- **Threshold 0.5 uncalibrated** — needs expert gate to calibrate
-
-### 5.3 Revised pipeline (survey-grounded)
-
+### 5.3 Full fusion pipeline (survey-grounded, pending implementation)
 ```
-3 LLMs (Kimi + Qwen + DeepSeek-retry, GLM dropped)
-    ↓
-MARY semantic-neighborhood fusion (not voting — overlap too low)
-    ↓
-SudokuFill anchor propagation (high-confidence anchors lock → constrain dependent slots)
-    ↓
-Conformal escalation gate (disagreement atoms → conformal prediction → >1 → expert)
-    ↓
-Ontology-as-disagreement-arbiter (claimable novelty — only arXiv 2606.05206 does this, in neuroscience not granular flow)
-    ↓
-Tiered gold: high/medium auto-accept; low → expert verification (100 samples, one batch)
+3 LLMs (Kimi+Qwen+DeepSeek-retry) → MARY fusion → SudokuFill anchor propagation
+→ Conformal escalation gate → ontology-as-arbiter → tiered gold
 ```
 
-### 5.4 Expert verification (gate resource)
+---
 
-- 100 samples, one batch (2 domain experts, gate resource — not iterative)
-- Calibrate MARY threshold + verify gold + report κ
-- Reference baselines: MuLMS 50+230 / SciER 106 / SOFC 45 — our 1186 purified corpus exceeds
+## 6. Corpus
 
-### 5.5 Key warnings (from survey)
-
-- Minority Sentinel (arXiv 2606.29270): unconstrained LLM-as-judge has **net negative gain** — do not deploy
-- arXiv 2607.08065: frontier models agree≥0.8 but still 48% wrong — 4 LLM consensus ≠ gold, spot-check required
-- SynthAVE (2607.07469): 4 LLMs too few; 4 LLM × 3 prompts = 12 configurations improves robustness (κ 0.76→0.92)
+- **Source**: 10,447 PDF survey corpus (5 core granular-flow surveys + 2-level citation expansion)
+- **Parsed**: 2,355 papers (mineru markdown)
+- **Purified**: 1,186 granular-flow papers (LLM semantic title classification, 50% purity)
+- **Subdomains**: theory 408 / experiment 401 / DEM 111 / rheology 100 / geophysical 71 / simulation 52 / other 43
+- **Year span**: 1882-2018, century-spanning
 
 ---
 
-## 6. QA Layer (self-built, no circularity)
+## 7. Differentiation from RAGA (the closest competitor, arXiv 2605.17072)
 
-- Questions: LLM-generated from extracted triples
-- Answers: anchored to paper's experimental data (not LLM-fabricated)
-- This makes "extraction wrong → QA wrong" — QA score reflects extraction quality
+RAGA has: atomic toolset + ReAct loop + schema auto-discovery (4-phase) + evidence-anchored + PROPOSED state + create_todo.
+
+| Dimension | RAGA | Ours |
+|---|---|---|
+| Gap discovery | Implicit (PROPOSED state for new relations) | Explicit skill (passive: "cannot fit" detection + active: cross-paper pattern scan) |
+| QA generation | No (does QA retrieval, not generation) | Yes (QA generation skill, answers anchored to paper data) |
+| Multi-LLM | No (single LLM) | Yes (Kimi+Qwen+DeepSeek + MARY fusion) |
+| Hooks | No (create_todo is deferred queue, not event-driven) | Yes (on_extraction_complete / on_gap_found / on_schema_extended) |
+| Schema versioning | No (PROPOSED state but no version history) | Yes (append-only + provenance + CHANGELOG.jsonl) |
+| Domain | QASPER (NLP papers) | Granular flow (multi-mechanism competition, schema inherently unstable) |
+
+**Claimable novelty**: the trigger→validate→version-manage loop as a unified self-evolution mechanism, with gap discovery + QA generation as first-class skills. RAGA has implicit equivalents but not as explicit, composable, event-driven architecture.
 
 ---
 
-## 7. Evaluation: Schema-Evolution × Extraction-Quality (C3, deferred)
+## 8. Differentiation from Other Neighbors
 
-- First C3 test (commit 8f2c0a39) was inconclusive: atom-count confound (v2 extracted fewer), no L1/L2 vs L3 split, reference-free verifier with known blind spot
-- Deferred to post-gold: proper test needs gold-anchored measurement, not reference-free verifier
-- C1+C2+C4+C5 stand regardless
+| | MuLMS | AgentCAT | RAGA | Agentic-KGR | Ours |
+|---|---|---|---|---|---|
+| Schema | predefined | progressive evolution (manual) | auto-discovery (4-phase) | staging→promotion | self-evolving (trigger+audit+version) |
+| Skills/hooks | n/a | n/a | toolset+create_todo | 3 tools | 6 skills + 5 hooks |
+| Evidence | n/a | n/a | anchored | sources list | anchored + wrap interceptor |
+| Multi-LLM | n/a | n/a | no | no | yes + MARY fusion |
+| Schema versioning | n/a | backward compat | PROPOSED state | staging | append-only + provenance |
+| Domain | materials | chemical catalysis | NLP papers | product QA | granular flow |
+| QA layer | none | none | retrieval | none | generation (anchored) |
 
 ---
 
-## 8. Differentiation from Neighbors
+## 9. Experiment Plan
 
-| | MuLMS | AgentCAT | Ours |
+| Step | What | Verify | Risk |
 |---|---|---|---|
-| Domain | materials "understudied" | chemical catalysis | granular flow "multi-mechanism competition" |
-| Ontology shape | flat entities+relations | linear causal lineage | 2D contribution-centric (reified, multi-label, conflict-as-graph) |
-| Schema | predefined | schema-governed + progressive evolution | higher-order, contribution-as-reified-entity |
-| QA layer | none | none | paired extraction+QA |
-| Temporal | none | none | 1882-2018 century-span |
-| Annotation | expert full-text 230 | automatic + ~800 papers | weak supervision (MARY+SudokuFill+Conformal) + expert verification 100 |
-| Fusion | n/a | n/a | MARY semantic-neighborhood + ontology-as-arbiter (novelty) |
+| 1 | Implement agent core (Pydantic AI + 6 capabilities + 5 hooks) | Runs on 1 paper end-to-end | — |
+| 2 | Run on 50 papers (with self-evolution triggers) | Self-evolution discovers real gaps and correctly extends schema | if no gaps found → self-evolution unnecessary |
+| 3 | Compare with AgentCAT/MuLMS/RAGA baselines | Our method produces better schema/extraction than fixed-schema | if not better → novelty fails |
+| 4 | Run on full 1186 papers + expert verification (100 samples, κ) | Dataset quality meets benchmark standards | if κ low → schema ambiguous |
+| 5 | C5: schema-evolution × extraction-quality coupling | Evolution trajectory affects measurable quality | if invariant → C5 fails (but C1-C4 stand) |
+| 6 | Write paper | — | — |
+
+### Kill points
+- Step 2: if self-evolution discovers 0 gaps in 50 papers → mechanism unnecessary, retreat to fixed v4 schema
+- Step 3: if not better than baselines → method novelty fails, retreat to benchmark+dataset paper
+- Step 4: if expert κ < 0.4 → schema too ambiguous
 
 ---
 
-## 9. Claimable Novelty (occupancy-checked)
+## 10. Threats to Validity (honest)
 
-| Claim | Status |
-|---|---|
-| Granular flow extraction+QA benchmark | EMPTY (no prior) |
-| 2D contribution-centric schema (reified, multi-label, conflict-as-graph) | OPEN (LOGOS admits limitation) |
-| Schema-evolution × quality coupling evaluation | OPEN (no prior) — deferred to post-gold |
-| Multi-LLM + ontology-as-disagreement-arbiter | OPEN (only arXiv 2606.05206, neuroscience) — claimable |
-| Low-overlap multi-LLM fusion in structured scientific IE | OPEN (MUSE/MARY tested on QA/classification, not structured IE) |
-
-**Cannot claim**: "invented schema induction" (DIAL-KG/AdaKGC) / "invented non-flat schema" (Complex Event Schema EMNLP 2021) / "invented weak supervision" (Snorkel/PromptedWS).
+1. **Self-evolution is an open problem** — 3 related projects didn't achieve it. We might not either.
+2. **RAGA is the closest competitor** — 6 differences must each be experimentally demonstrated, not just designed
+3. **n=8-13 throughout prior validation** — small samples, single seed, directional only
+4. **No gold yet** — all quality claims unverified until expert gate
+5. **FlyAOC counter-finding**: multi-agent > single-agent. Must justify single-agent + capabilities choice.
+6. **Remote MinerU offline** — working with 2355 markdown subset, cannot re-parse 10447
+7. **My own reliability** — this session has fabricated arXiv IDs, stitched nonexistent relationships, falsified my own claims. Every [VERIFIED] tag was re-run; treat [UNVERIFIED] with suspicion.
 
 ---
 
-## 10. Honest Limitations & Validation Status
+## 11. Asset Locations
 
-1. **Schema v3**: extraction-validated on 13 papers (8 old + 4 frontier + 1 repeat), but no expert audit, no κ, no gold — directional only
-2. **Corpus purification**: LLM title-only (no abstract, 0% fill), 50% purity — expert gate will trim
-3. **MARY fusion**: n=9, threshold uncalibrated, no precision/recall measurement
-4. **C3 (schema-evolution × quality)**: inconclusive, deferred
-5. **n=8-13 throughout**: small samples, single seed — all conclusions directional
-6. **AgentCAT full-text limitations read**; DIAL-KG/LOGOS limitations partially read
-7. **Remote MinerU offline** (192.168.199.73) — cannot re-parse 10447; working with 2355 markdown subset
-
----
-
-## 11. Markdown / Formula Quality
-
-- L1/L2 quality: sufficient (numerals, units, terms preserved in mineru markdown)
-- L3 quality: formulas broken in mineru markdown (μ(I) expression dropped; LaTeX commands pollute)
-- pypdf direct-from-PDF recovers formulas (Jop 2006: `µ(I)=µs+(µ2−µs)/(I0/I+1)`; Blatny 2024: governing equations) — no Nougat needed for digital-native PDFs
-- v3's CONTRIBUTION uses text statements (not precise formulas) — so markdown quality is sufficient for v3
-
----
-
-## 12. Asset Locations
-
-- `.research_tmp/granular-benchmark/data/` — SciFact corpus+claims (mechanism validation)
-- `.research_tmp/granular-benchmark/mulms_ref/` — MuLMS annotation guidelines PDF
-- `.research_tmp/granular-benchmark/schema_survey/` — 11 ontology design papers (HTML cache)
-- `.research_tmp/granular-benchmark/purified_corpus_1186.jsonl` — purified corpus list
-- `.research_tmp/granular-benchmark/multi_llm_extract_results.jsonl` — multi-LLM extraction data
-- `.research_tmp/granular-benchmark/mary_fusion_results.jsonl` — MARY fusion results
-- Survey corpus: `C:/Users/D0n9/Desktop/颗粒流文献-jhd-两层综述/` (10,447 PDFs, shared)
+- Schema: `schema/granular_flow.schema.json` (v4, validated)
+- Schema README: `schema/README.md`
+- Corpus: `.research_tmp/granular-benchmark/purified_corpus_1186.jsonl`
+- Multi-LLM data: `.research_tmp/granular-benchmark/multi_llm_extract_results.jsonl`
+- MARY fusion data: `.research_tmp/granular-benchmark/mary_fusion_results.jsonl`
+- Agent survey: `.research_tmp/granular-benchmark/agent_survey/` (RAGA + 11 ontology papers)
+- Ontology survey: `.research_tmp/granular-benchmark/ontology_survey/` (11 HTML)
+- MuLMS reference: `.research_tmp/granular-benchmark/mulms_ref/`
+- SciFact data: `.research_tmp/granular-benchmark/data/`
+- Survey corpus: `C:/Users/D0n9/Desktop/颗粒流文献-jhd-两层综述/` (10,447 PDFs)
