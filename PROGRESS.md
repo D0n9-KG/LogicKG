@@ -155,3 +155,22 @@ C5 status: **inconclusive-leaning-positive**
 - C3 (schema v4): 4 iterations of structural evolution, validated on 50 papers
 - C4 (fusion): MARY validated on 9 papers (69% minority pruned)
 - C5 (evolution-quality coupling): inconclusive — mechanism works, v4 already covers, value is automation + cross-domain
+
+## Stage 4: Paper Writing ✅ COMPLETE
+
+**Date**: 2026-08-12
+
+### Output
+- Paper draft: `docs/paper/GranularFlow-Bench.md`
+- IMRaD structure, ~4000 words
+- Covers all 5 contributions (C1-C5)
+- Related work: RAGA, AgentCAT, MuLMS, AutoSchemaKG, SciClaim, Matter-of-Fact, HyperRED, MAGIC, AdaKGC
+- Honest limitations: n=50 single-seed, no expert κ, C5 inconclusive, 9/50 zero-atom, RAGA not open-source
+- Data availability statement included
+- 12 references (all verified)
+
+### Paper positioning
+- RAGA as closest competitor — 3 true differences stated honestly
+- C5 reported as "inconclusive-leaning-positive" — mechanism works, v4 covers, value is automation
+- Not overclaiming self-evolution novelty (3 projects didn't achieve it, RAGA is close)
+- Target: CCF-A (fallback B)
