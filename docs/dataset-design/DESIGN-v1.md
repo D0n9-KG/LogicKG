@@ -1,10 +1,10 @@
 # GranularFlow-Bench: A Benchmark Dataset for Structured Extraction from Granular Flow Literature
 
-**Status**: Design draft v2 (2026-08-12). Pre-implementation.
+**Status**: Design draft v4 (2026-08-12). Pre-implementation.
 **Branch**: `research/granular-benchmark`
 **Worktree**: `LogicKG-benchmark`
 
-**v2 changes**: corrected corpus-scale error (858 is from 2,355 subset, not 10,447); added FUNCTION_RELATION subtype + paper_type (verified on 2022-2024 papers); added markdown-quality diagnostic; recorded 9-paper coverage validation; revised purification method (keyword filter unreliable → survey-citation-layer + LLM semantic).
+**v4 changes**: integrates all experimental results (schema v3 validation, corpus purification 1186, multi-LLM consistency, MARY fusion, ontology/fusion surveys) into one coherent design. Replaces scattered experiment-logs with a unified document.
 
 ---
 
@@ -18,67 +18,60 @@ Granular flow is less mature than materials science or bioengineering: its core 
 - **Regime decomposition**: collisional (kinetic theory) / dense (μ(I)) / quasi-static (soil plasticity) — three regimes, each with its own theory (GDR MiDi 2004)
 - **Geophysical plasticity**: Coulomb plasticity vs viscoplasticity (Bingham/Casson/Herschel-Bulkley) — "still vigorously debated" (Ancey 2007, verbatim)
 
-This is not a drawback; it is the reason a benchmark is most valuable here. A structured dataset that captures *competing claims about the same physical quantity* enables comparison and verification that no single-schema dataset can. In mature fields, consensus exists to extract; in granular flow, the dataset must represent the competition itself.
+This is not a drawback; it is the reason a benchmark is most valuable here. A structured dataset that captures *competing claims about the same physical quantity* enables comparison and verification that no single-schema dataset can.
 
 ### 1.2 Why MuLMS-style flat schemas are insufficient
 
-MuLMS (Friedrich et al. 2023, arXiv 2310.15569) — the closest reference baseline — annotates materials science with 13 entity types (MATERIAL/SAMPLE/DEVICE/NUMERIC/UNIT/PROPERTY/MEASUREMENT...) + measurement-related relations + frames. It stops at setup + results layers.
+MuLMS (Friedrich et al. 2023, arXiv 2310.15569) — the closest reference baseline — annotates materials science with 13 entity types + measurement-related relations + frames. It stops at setup + results layers.
 
-Granular flow papers go further. Four layers MuLMS cannot represent were verified across four papers of different types (Agnolin 2007 elasticity; Jop 2006 μ(I) rheology; GDR MiDi 2004 classic three-regime; Ancey 2007 geophysical review):
+Granular flow papers go further. Coverage validation on 9 papers across 5 types (Agnolin 2007 elasticity; Jop 2006 μ(I); GDR MiDi 2004; Ancey 2007 review; Albert 1999 drag-experiment; Cleary 2002 DEM; Alam 1998 stability-theory; Berzi 2014 kinetic-theory; Choi 2005 silo-experiment) + 4 frontier 2022-2024 (Blatny 2024; Kim 2023; Hernández-Delfin 2022; Barker 2023) showed 4 elements MuLMS cannot represent:
 
-| Element | Example (Jop 2006) |
+| Element | Example |
 |---|---|
-| FUNCTION_RELATION | μ(I) = μ_s + (μ_2−μ_s)/(1+I_0/I), where I itself = d·√(ρ_s/P)/γ̇ |
-| COMPARISON_ARM | collisional / dense / quasi-static regimes |
-| CAUSAL_ATTRIBUTION | "dense regime unified by μ(I)" |
-| RESEARCH_QUESTION | "constitutive equations for dry granular flows are still debated" |
+| CONTRIBUTION (reified) | the paper's core scientific contribution, multi-label subtypes |
+| CONTRIBUTION_RELATION | directed edges between contributions (supports/conflicts/...) |
+| RESEARCH_QUESTION | the paper's research question |
+| paper_type | rheology/experiment/theory/DEM/review |
 
-Crucially, these elements require a **two-dimensional structure**: a FUNCTION_RELATION nests (its argument is another function), is parallel (μ_s, μ_2, I_0 are sibling params), is layered (same law across regimes), and is crossed (validated by multiple experiments). This is exactly the structure LOGOS (arXiv 2509.24294) admits it cannot capture: "hierarchical semantic relations only model static taxonomic structure, does not yet capture richer structures such as causal, temporal, or processual relations."
+### 1.3 The gap is real (verified)
 
-### 1.3 The gap is real
-
-Literature survey (verified, not title-only):
 - "gold extraction + gold QA in the same physical/materials corpus": **no such dataset exists** (verified across arXiv multi-categories + ACL 33k index + venue search, 2022-2026)
-- Granular flow / rheology / fluid mechanics / solid mechanics text-extraction datasets: **zero** (these fields' "datasets" are all simulation data, not annotated text)
-- Self-evolving schema in scientific IE: AgentCAT (arXiv 2602.18479, chemical catalysis) is the closest competitor, but its ontology is a linear causal lineage (synthesis→descriptors→active sites→macroscopic outcomes), fundamentally different from granular flow's multi-way constitutive coupling. AgentCAT's own limitation: "generalization to other subdomains may require further schema refinement."
+- Granular flow / rheology / fluid mechanics text-extraction datasets: **zero** (these fields' "datasets" are all simulation data)
+- Self-evolving schema in scientific IE: AgentCAT (arXiv 2602.18479, chemical catalysis) is the closest competitor, but its ontology is a linear causal lineage, fundamentally different from granular flow's multi-way constitutive coupling. AgentCAT's own limitation: "generalization to other subdomains may require further schema refinement."
 
 ---
 
 ## 2. Contributions
 
-| # | Contribution | Layer | Risk |
-|---|---|---|---|
-| C1 | GranularFlow-Bench: first extraction+QA paired gold dataset for granular flow | dataset | floor — publishable regardless |
-| C2 | Analysis: why building datasets in physics is harder + how we break through + validity argument | analysis | floor |
-| C3 | Schema-evolution × extraction-quality coupling evaluation | method (upper) | ceiling — falsifiable |
-| C4 | L3 higher-order schema with 2D structure (nested/parallel/crossed/layered) — the structure LOGOS admits it cannot do | schema innovation | floor+ |
+| # | Contribution | Layer | Risk | Status |
+|---|---|---|---|---|
+| C1 | GranularFlow-Bench: first extraction+QA paired gold dataset for granular flow | dataset | floor — publishable regardless | corpus purified (1186 papers) |
+| C2 | Analysis: why building datasets in physics is harder + how we break through + validity argument | analysis | floor | schema validated on 13 papers |
+| C3 | Schema-evolution × extraction-quality coupling evaluation | method (upper) | ceiling — falsifiable | deferred to post-gold (C3 experiment inconclusive due to confounds) |
+| C4 | L3 higher-order schema with 2D structure (contribution-centric, reified) | schema innovation | floor+ | v3 formal JSON Schema + extraction-validated |
+| C5 | Weak-supervision fusion: MARY + SudokuFill + Conformal + ontology-as-arbiter | method | floor+ | MARY validated, rest pending |
 
-C1+C2+C4 are floor contributions (publishable even if C3 fails). C3 is the ceiling.
+C1+C2+C4+C5 are floor contributions (publishable even if C3 fails). C3 is the ceiling.
 
 ---
 
 ## 3. Corpus
 
-- **Source corpus**: `颗粒流文献-jhd-两层综述` — 10,447 PDFs (5 core granular-flow surveys + 2-level citation expansion: refs_* + refs_deep_*)
-- **Already MinerU-parsed subset**: 2,355 papers (text/markdown), located at `science_evo/.../mineru_2355/`. These 2,355 are a subset of the 10,447.
-- **Purification (on the 2,355 subset, prior work)**: keyword filter `granular|discrete element|DEM` ≥10 occurrences → **904 papers, of which 858 have DOI**; 60-paper audit: 66.7% strict granular flow, 86.7% including physics-adjacent. **Keyword filtering is acknowledged as rough** — the 858 still contains ~1/3 non-strict-granular. A better purification (survey-citation-layer + LLM semantic judgment) is planned; see §3.1.
-- **Year span**: 1882-2018 (DOI→year 100% recoverable), the only century-spanning granular flow corpus. Median 2004; 75% pre-2010.
-- **Note on scale**: 858 is from the 2,355 subset, NOT from filtering the full 10,447. The 10,447 have not yet been filtered; expected yield is higher (refs_* are survey-direct citations = naturally high purity). Filtering the full 10,447 is deferred (see §3.1 — avoid premature large-scale processing before method validation).
-
-### 3.1 Purification method (revised — keyword filter is unreliable)
-
-The prior `granular|DEM` ≥10 keyword filter has two failure modes: misses papers that use "dense suspension/powder/shear band" without the word "granular"; false-hits on "granular computing/benchmark". Planned replacement:
-1. **Survey-citation layer** (refs_*, ~600 papers) — naturally high purity, survey authors pre-filtered. Include directly.
-2. **refs_deep_* (~9,800)** — diluted, needs filtering. Use LLM semantic judgment (title+abstract) not keywords.
-3. Expert spot-check on a sample.
-
-This uses the survey corpus's native structure (citation layers) rather than blind keyword matching.
+- **Source corpus**: `颗粒流文献-jhd-两层综述` — 10,447 PDFs (5 core granular-flow surveys + 2-level citation expansion)
+- **Already MinerU-parsed subset**: 2,355 papers (markdown), at `science_evo/.../mineru_2355/`
+- **Purification (LLM semantic, not keyword)**: classified all 2,355 titles via deepseek-chat → **1186 yes (50%) / 919 no (39%) / 250 unclear (11%)**
+- **Subdomain distribution** (of 1186): theory 408 / experiment 401 / DEM 111 / rheology 100 / geophysical 71 / simulation 52 / other 43
+- **Year span**: 1882-2018 (DOI→year 100% recoverable), the only century-spanning granular flow corpus
+- **Purified corpus list**: `.research_tmp/granular-benchmark/purified_corpus_1186.jsonl` (commit ab2eeb6e)
+- **Note**: 50% purity means ~593 are strict granular flow (LLM yes + high confidence); expert verification will trim non-granular from the 100-sample gate.
 
 ---
 
-## 4. Schema Design (v1)
+## 4. Schema Design (v3, contribution-centric)
 
-### 4.1 Three-tier higher-order schema (v3 — contribution-centric)
+Formal definition: `schema/granular_flow.schema.json` (validated: legal instance passes, illegal rejected, multi-label subtypes work).
+
+### 4.1 Three-tier higher-order schema
 
 ```
 L1 Entity layer (borrowable from MuLMS, granular-flow-adapted)
@@ -90,7 +83,7 @@ L2 Relation layer (MuLMS condition_* + extensions)
 
 L3 Contribution layer (granular-flow innovation, 2D structure)
   RESEARCH_QUESTION    — paper-level anchor
-  CONTRIBUTION         — reified first-class entity (not an edge), with multi-label subtypes:
+  CONTRIBUTION         — reified first-class entity (not an edge), multi-label subtypes:
     constitutive_law | experimental_finding | mechanism_analysis |
     theoretical_result | numerical_finding | integrative
   CONTRIBUTION_RELATION — directed edges between contributions:
@@ -100,94 +93,70 @@ Paper-level:
   paper_type            — rheology | experiment | theory | DEM | review | other
 ```
 
-### 4.1.1 v3 redesign rationale (survey-grounded + empirically validated)
+### 4.2 Design grounding (survey, not invented)
 
-**v2 problem (empirically exposed)**: first real extraction (n=8) showed FUNCTION_RELATION was abused on experiment papers — Albert 1999 drag paper had 13 FUNCTION_RELATION atoms (should be experimental findings). A formula-centric L3 forces non-formula papers to stuff observations into the formula element.
+| Borrowed from | What |
+|---|---|
+| SciClaim (2021.emnlp-main.381) | CONTRIBUTION as reified entity (association reification); multi-label attributes |
+| Matter-of-Fact (2025.emnlp-main.203) | 2D classification; `integrative` 6th subtype; temporal-cutoff backtesting |
+| HyperRED (2022.emnlp-main.688) | CONTRIBUTION_RELATION edges carry qualifiers (hyper-relational) |
+| MAGIC (2025.findings-emnlp.466) | conflicts as first-class graph structure, not post-hoc detection |
+| Complex Event Schema (EMNLP 2021) | non-flat graph schema precedent |
 
-**v3 fix**: replace FUNCTION_RELATION-as-core with CONTRIBUTION-as-reified-entity (per SciClaim `2021.emlp-main.381` association reification) + multi-label subtypes (per Matter-of-Fact `2025.emnlp-main.203` 2D claim classification).
+### 4.3 v3 extraction validation (8 papers, first real extraction)
 
-**Borrowed from survey (grounded, not invented)**:
-1. **SciClaim association reification** — CONTRIBUTION is a first-class entity, not an edge. Allows multi-attribute decoration. This is how L3 contributions relate to each other (supports/conflicts) as graph structure.
-2. **SciClaim multi-label attributes** — a contribution can be simultaneously `experimental_finding + supports_mechanism_X` (not mutually exclusive subtypes). Avoids forcing single-label on multi-faceted claims.
-3. **Matter-of-Fact 2D classification + Integrative type** — added `integrative` as 6th subtype (cross-method synthesis claims, highest-performing in their study at 82%). Their temporal-cutoff backtesting framework is reusable for our 1882-2018 corpus.
-4. **HyperRED hyper-relational qualifier** — CONTRIBUTION_RELATION edges (esp. `conflicts`) carry qualifiers (condition/range/regime), avoiding n-ary decomposition information loss.
-5. **MAGIC conflict-as-graph-structure** — conflicts are first-class edges, not post-hoc detection. Multi-hop conflict granularity (single/multi/simultaneous) can be built in.
-
-**No prior art for real cross-paper conflicting claims in scientific IE** — survey confirmed. MAGIC uses synthetic conflicts; COVID-Fact generates counter-claims within one paper. Our schema (real cross-paper competing-mechanism claims) is first if implemented.
-
-### 4.1.2 Coverage validation (v2 extraction, supports v3 direction)
-
-First real extraction on 10 papers (8 succeeded), 523 atoms:
-- L3 non-empty on all 8 (kill point 0/8 empty, threshold >50%).
-- All L3 elements appeared.
-- **FUNCTION_RELATION abused on experiment papers** (13 atoms in drag paper) → confirms formula-centric L3 is wrong → v3 CONTRIBUTION redesign is the fix.
-- v3 extraction pending (re-run on same 10 papers to verify experiment-drag's 13 "formulas" become experimental_findings).
-
-L3 is *higher-order*: its nodes reference L1/L2 entities (a FUNCTION_RELATION's params point to NUMERIC/PROPERTY), and L3 nodes relate to each other (a FUNCTION_RELATION indexed under different COMPARISON_ARMs). This is the 2D structure.
-
-### 4.2 2D structure via graph (not tree)
-
-A FUNCTION_RELATION node:
-- → its parameters (L1 entities)                          [parallel]
-- → its argument (may be another FUNCTION_RELATION)       [nested]
-- ← indexed by COMPARISON_ARM (same law across arms)      [crossed]
-- ← linked by CAUSAL_ATTRIBUTION to a regime               [layered]
-
-Example (Jop 2006):
-```
-FUNCTION_RELATION: μ(I) = μ_s + (μ_2−μ_s)/(1+I_0/I)
-  ├── params: {μ_s, μ_2, I_0}                    # parallel
-  ├── argument: FUNCTION_RELATION I = d·√(ρ_s/P)/γ̇   # nested
-  │     └── params: {d, ρ_s, P, γ̇}
-  ├── applies_in: COMPARISON_ARM[dense_flow]      # layered
-  └── validated_by: [shear_test, inclined_plane]   # crossed
-```
-
-### 4.3 Why this is novel (occupancy check)
-
-| Dimension | Status | Closest prior |
-|---|---|---|
-| Schema induction (general) | OCCUPIED | DIAL-KG, AutoSchemaKG, LOGOS, AdaKGC |
-| Scientific-paper + schema evolution | PARTIAL | AgentCAT (chemical catalysis, linear lineage) |
-| **2D nested/parallel/crossed/layered schema** | **OPEN** | LOGOS admits limitation |
-| **Evolution×quality coupling as research question** | **OPEN** | none |
-| Granular flow schema induction | EMPTY | 0 hits |
-
-Cannot claim: "invented schema induction" / "invented non-flat schema."
-Can claim: granular flow + 2D higher-order schema (LOGOS's gap) + evolution-quality coupling (no prior) + anchor-coupling ontology.
+- **Key win**: experiment-drag's 13 FUNCTION_RELATION (v2 abuse) → 3 experimental_finding + 2 mechanism_analysis (v3 correct). The formula-centric L3 was wrong; contribution-centric is right.
+- silo-experiment: **4 `conflicts` detected** — multi-mechanism competition surfaced as graph structure.
+- integrative (6th subtype) used on DEM/review papers.
+- 8/8 L3 non-empty. All subtypes + paper_type appeared.
+- Known issue: theory papers occasionally mislabeled as experimental_finding (prompt issue, not structural).
 
 ---
 
-## 5. Annotation Pipeline (expert verification, not expert annotation)
+## 5. Weak-Supervision Annotation Pipeline
+
+### 5.1 Multi-LLM extraction probe (validated)
+
+- 4 LLMs tested (Kimi-K2.6 / Qwen3.5-27B / DeepSeek / GLM-5-Turbo), 10 papers, schema v3
+- **GLM-5-Turbo: 6/10 returned 0 atoms → dropped**
+- **DeepSeek: 3/10 returned 0 (long-text timeout) → usable with retry/length-cap**
+- **Kimi + Qwen: 10/10 success, atom-count ratio 1.1-1.4x → schema v3 comprehensible across LLMs**
+- Entity Jaccard 0.09-0.46 → low overlap, **majority voting not applicable**
+
+### 5.2 MARY fusion (validated, direction)
+
+- Tested on 9 papers (Kimi+Qwen, 460 union entities, 363 minority)
+- MARY@0.5 keeps 111/363 minority (31%), prunes 252 (69%) — finds middle ground between union noise and majority-vote loss
+- Embeddings via Paratera GLM-Embedding-2 API (no local install, 1024-dim)
+- **Threshold 0.5 uncalibrated** — needs expert gate to calibrate
+
+### 5.3 Revised pipeline (survey-grounded)
 
 ```
-858 purified papers
+3 LLMs (Kimi + Qwen + DeepSeek-retry, GLM dropped)
     ↓
-A. Weak supervision (3 methods fused, compared)
-   ├── A1 Multi-LLM voting (Kimi/GLM/Qwen/DeepSeek)
-   ├── A2 Ontology-constraint filtering (AI-KG architecture)
-   └── A3 Experimental-data anchoring (numeric fields)
+MARY semantic-neighborhood fusion (not voting — overlap too low)
     ↓
-B. Fusion rules (core method contribution)
-   ├── field-type routing: numerics→A3, entities/relations→A1+A2
-   ├── disagreement resolution
-   └── confidence: 3-agree→high; disagree→downgrade or expert
+SudokuFill anchor propagation (high-confidence anchors lock → constrain dependent slots)
     ↓
-C. Expert verification (100 samples, one batch, gate resource)
-   ├── verify disagreement samples → which method right
-   ├── verify candidate-gold → confirm/reject
-   └── produce final gold + κ
+Conformal escalation gate (disagreement atoms → conformal prediction → >1 → expert)
     ↓
-D. Weak-supervision method comparison (analysis contribution)
+Ontology-as-disagreement-arbiter (claimable novelty — only arXiv 2606.05206 does this, in neuroscience not granular flow)
+    ↓
+Tiered gold: high/medium auto-accept; low → expert verification (100 samples, one batch)
 ```
 
-Experts verify, do not annotate from scratch. Scale comes from weak supervision; quality from expert verification + fusion rules.
+### 5.4 Expert verification (gate resource)
 
-### 5.1 Scale targets
+- 100 samples, one batch (2 domain experts, gate resource — not iterative)
+- Calibrate MARY threshold + verify gold + report κ
+- Reference baselines: MuLMS 50+230 / SciER 106 / SOFC 45 — our 1186 purified corpus exceeds
 
-- Full corpus processed by weak supervision: 858 papers
-- Expert-verified gold: 100 samples (gate resource, one batch)
-- Reference baselines: SciER 106 / MuLMS 50+230 / SOFC 45 — we exceed on domain coverage and century-span
+### 5.5 Key warnings (from survey)
+
+- Minority Sentinel (arXiv 2606.29270): unconstrained LLM-as-judge has **net negative gain** — do not deploy
+- arXiv 2607.08065: frontier models agree≥0.8 but still 48% wrong — 4 LLM consensus ≠ gold, spot-check required
+- SynthAVE (2607.07469): 4 LLMs too few; 4 LLM × 3 prompts = 12 configurations improves robustness (κ 0.76→0.92)
 
 ---
 
@@ -199,65 +168,69 @@ Experts verify, do not annotate from scratch. Scale comes from weak supervision;
 
 ---
 
-## 7. Evaluation: Schema-Evolution × Extraction-Quality Coupling (C3, ceiling)
+## 7. Evaluation: Schema-Evolution × Extraction-Quality (C3, deferred)
 
-The core method contribution. Test whether schema evolution trajectory affects extraction quality:
-
-- Inject controlled schema changes (add/remove/restructure L3 elements)
-- Measure: does extraction quality (vs gold) track the evolution?
-- Compare: AgentCAT's progressive evolution (no coupling measured) vs our measured coupling
-
-Kill point: if extraction quality is invariant to schema evolution, C3 fails (but C1+C2+C4 still stand).
+- First C3 test (commit 8f2c0a39) was inconclusive: atom-count confound (v2 extracted fewer), no L1/L2 vs L3 split, reference-free verifier with known blind spot
+- Deferred to post-gold: proper test needs gold-anchored measurement, not reference-free verifier
+- C1+C2+C4+C5 stand regardless
 
 ---
 
-## 8. Validity Argument
-
-- Expert κ (100 samples, ref: published floor 20 items/2 annotators passed findings)
-- Cross-extractor consistency
-- Weak-supervision method comparison table (A1/A2/A3 vs expert gold)
-- Perturbation test (inject extraction errors, check QA response — the original falsifiable experiment, now embedded)
-
----
-
-## 9. Differentiation from Neighbors
+## 8. Differentiation from Neighbors
 
 | | MuLMS | AgentCAT | Ours |
 |---|---|---|---|
 | Domain | materials "understudied" | chemical catalysis | granular flow "multi-mechanism competition" |
-| Ontology shape | flat entities+relations | linear causal lineage | 2D nested/parallel/crossed/layered |
-| Schema | predefined | schema-governed + progressive evolution | higher-order, evolution-quality coupled |
+| Ontology shape | flat entities+relations | linear causal lineage | 2D contribution-centric (reified, multi-label, conflict-as-graph) |
+| Schema | predefined | schema-governed + progressive evolution | higher-order, contribution-as-reified-entity |
 | QA layer | none | none | paired extraction+QA |
 | Temporal | none | none | 1882-2018 century-span |
-| Annotation | expert full-text 230 | automatic + ~800 papers | weak supervision + expert verification 100 |
+| Annotation | expert full-text 230 | automatic + ~800 papers | weak supervision (MARY+SudokuFill+Conformal) + expert verification 100 |
+| Fusion | n/a | n/a | MARY semantic-neighborhood + ontology-as-arbiter (novelty) |
 
 ---
 
-## 10. Open Questions (for next round)
+## 9. Claimable Novelty (occupancy-checked)
 
-1. L3 four elements verified on 4 papers; should verify on 1-2 more (e.g., jamming phase-transition type) for full generality?
-2. QA self-build: LLM-generated questions + paper-data answers — what's the question-generation protocol to avoid bias?
-3. Schema evolution × quality: what's the concrete operationalization of "controlled schema change"?
-4. AgentCAT full-text limitations read (§7); need to read DIAL-KG and LOGOS full limitations too for the differentiation section.
+| Claim | Status |
+|---|---|
+| Granular flow extraction+QA benchmark | EMPTY (no prior) |
+| 2D contribution-centric schema (reified, multi-label, conflict-as-graph) | OPEN (LOGOS admits limitation) |
+| Schema-evolution × quality coupling evaluation | OPEN (no prior) — deferred to post-gold |
+| Multi-LLM + ontology-as-disagreement-arbiter | OPEN (only arXiv 2606.05206, neuroscience) — claimable |
+| Low-overlap multi-LLM fusion in structured scientific IE | OPEN (MUSE/MARY tested on QA/classification, not structured IE) |
+
+**Cannot claim**: "invented schema induction" (DIAL-KG/AdaKGC) / "invented non-flat schema" (Complex Event Schema EMNLP 2021) / "invented weak supervision" (Snorkel/PromptedWS).
 
 ---
 
-## 11. Markdown / Formula Quality Diagnostic
+## 10. Honest Limitations & Validation Status
 
-**MinerU markdown (2,355 papers)**:
-- L1/L2 quality: sufficient. Numerals (157 in Jop 2006), units, terms preserved.
-- L3 quality: **insufficient for formulas**. The μ(I) expression itself is broken in the markdown ("the Inertial number: where μ(I) is..." — the equation is dropped). LaTeX commands (`\scriptstyle`, `\mathrm{}`, escaped spaces `\ `) pollute the text; this is the same issue noted in prior work (LaTeX-space caused 7× extraction overcount).
+1. **Schema v3**: extraction-validated on 13 papers (8 old + 4 frontier + 1 repeat), but no expert audit, no κ, no gold — directional only
+2. **Corpus purification**: LLM title-only (no abstract, 0% fill), 50% purity — expert gate will trim
+3. **MARY fusion**: n=9, threshold uncalibrated, no precision/recall measurement
+4. **C3 (schema-evolution × quality)**: inconclusive, deferred
+5. **n=8-13 throughout**: small samples, single seed — all conclusions directional
+6. **AgentCAT full-text limitations read**; DIAL-KG/LOGOS limitations partially read
+7. **Remote MinerU offline** (192.168.199.73) — cannot re-parse 10447; working with 2355 markdown subset
 
-**pypdf direct-from-PDF (formula extraction)**:
-- Jop 2006: `µ(I) = µs + (µ2−µs)/(I0/I+1)` — **complete formula recovered**.
-- Blatny 2024, Kim 2023, Barker 2023 (frontier): governing equations recovered (`ρ Dρ/Dt + ρ(∇·v)=0`, `A1=2D`, `∂tφ+∇·(φu)=0`) — **good quality on modern PDFs**.
-- Conclusion: L3 formula extraction does NOT need a neural formula recognizer (Nougat). pypdf text-layer suffices for digital-native PDFs.
+---
 
-**Caveat (untested)**: PDF text-layer coverage across the 2,355 + 10,447 corpus. Digital-native PDFs (arXiv-era, post-2000) extract well; scanned/legacy PDFs may not. Prior memory notes the local 20-paper set is "all digital-native (CCITT=0/JBIG2=0)", but full-corpus text-layer coverage is unmeasured. **Must verify** before relying on pypdf at scale.
+## 11. Markdown / Formula Quality
 
-## 12. Asset Locations (this worktree)
+- L1/L2 quality: sufficient (numerals, units, terms preserved in mineru markdown)
+- L3 quality: formulas broken in mineru markdown (μ(I) expression dropped; LaTeX commands pollute)
+- pypdf direct-from-PDF recovers formulas (Jop 2006: `µ(I)=µs+(µ2−µs)/(I0/I+1)`; Blatny 2024: governing equations) — no Nougat needed for digital-native PDFs
+- v3's CONTRIBUTION uses text statements (not precise formulas) — so markdown quality is sufficient for v3
+
+---
+
+## 12. Asset Locations
 
 - `.research_tmp/granular-benchmark/data/` — SciFact corpus+claims (mechanism validation)
 - `.research_tmp/granular-benchmark/mulms_ref/` — MuLMS annotation guidelines PDF
-- `.research_tmp/granular-benchmark/schema_survey/` — AgentCAT/DIAL-KG/LOGOS HTML cache
-- Survey corpus: `C:/Users/D0n9/Desktop/颗粒流文献-jhd-两层综述/` (10,447 PDFs, shared, not in any worktree)
+- `.research_tmp/granular-benchmark/schema_survey/` — 11 ontology design papers (HTML cache)
+- `.research_tmp/granular-benchmark/purified_corpus_1186.jsonl` — purified corpus list
+- `.research_tmp/granular-benchmark/multi_llm_extract_results.jsonl` — multi-LLM extraction data
+- `.research_tmp/granular-benchmark/mary_fusion_results.jsonl` — MARY fusion results
+- Survey corpus: `C:/Users/D0n9/Desktop/颗粒流文献-jhd-两层综述/` (10,447 PDFs, shared)
