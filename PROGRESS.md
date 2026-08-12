@@ -129,3 +129,29 @@ C5 status: **inconclusive-leaning-positive**
 6. **Corpus**: 1186 purified granular flow papers, 1882-2018, 7 subdomains
 7. **Schema**: v4 (contribution-centric, CLOSURE/REGIME/CONDITION-split, 12 entity types, 9 contribution subtypes, 9 relation types)
 8. **RAGA comparison**: not open source; 3 true differences (gap discovery + QA generation + C5 evaluation) confirmed from full-text reading
+
+## Stage 2c: 50-Paper Full Run (prompt-fixed) ✅ COMPLETE
+
+**Date**: 2026-08-12
+
+### Results (50 papers, self-evolution ON, prompt-fixed)
+- **Total atoms**: 2851
+- **L3 CONTRIBUTIONs**: 363
+- **Gaps**: 0 (prompt fix eliminated LLM hallucinated types)
+- **QA pairs**: 250
+- **Schema evolutions**: 0
+- **Zero-atom papers**: 9/50 (18% — long papers exceeding context even with truncation)
+- **Schema version**: 4.0 (unchanged)
+
+### Distribution
+- rheology 8 / experiment 8 / theory 8 / DEM 8 / geophysical 8 / simulation 8 / other 2
+
+### Final C5 verdict
+**v4 schema covers granular flow content across 50 papers and 7 subdomains.** Self-evolution mechanism works (detect→validate→reject) but found 0 real gaps — all previous "gaps" were LLM hallucinations eliminated by prompt constraint. Self-evolution's value is in automating the v1→v4 manual iteration process and future cross-domain extension, not in discovering new schema elements within granular flow.
+
+### Paper positioning
+- C1 (dataset): 1186 purified corpus + 50-paper extraction + 250 QA pairs → benchmark
+- C2 (agent system): implemented + tested — 6 capabilities + 5 hooks + schema versioning
+- C3 (schema v4): 4 iterations of structural evolution, validated on 50 papers
+- C4 (fusion): MARY validated on 9 papers (69% minority pruned)
+- C5 (evolution-quality coupling): inconclusive — mechanism works, v4 already covers, value is automation + cross-domain
