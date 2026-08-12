@@ -78,7 +78,7 @@ This uses the survey corpus's native structure (citation layers) rather than bli
 
 ## 4. Schema Design (v1)
 
-### 4.1 Three-tier higher-order schema
+### 4.1 Three-tier higher-order schema (v3 — contribution-centric)
 
 ```
 L1 Entity layer (borrowable from MuLMS, granular-flow-adapted)
@@ -88,25 +88,40 @@ L2 Relation layer (MuLMS condition_* + extensions)
   measures_property / property_value / condition_environment /
   condition_sampleFeatures / condition_instrument / taken_from
 
-L3 Higher-order layer (granular-flow innovation, 2D structure)
-  FUNCTION_RELATION    — function/relation (nestable), with subtype:
-    constitutive_law | empirical_scaling | governing_equation | numerical_relation
-  COMPARISON_ARM        — comparison group (parallel)
-  CAUSAL_ATTRIBUTION    — mechanism attribution (layered)
+L3 Contribution layer (granular-flow innovation, 2D structure)
   RESEARCH_QUESTION    — paper-level anchor
+  CONTRIBUTION         — reified first-class entity (not an edge), with multi-label subtypes:
+    constitutive_law | experimental_finding | mechanism_analysis |
+    theoretical_result | numerical_finding | integrative
+  CONTRIBUTION_RELATION — directed edges between contributions:
+    supports | conflicts | depends_on | applies_in | derives_from
 
 Paper-level:
-  paper_type            — rheology | experiment | theory | DEM | review
+  paper_type            — rheology | experiment | theory | DEM | review | other
 ```
 
-### 4.1.1 Subtype + paper_type rationale (verified 2022-2024)
+### 4.1.1 v3 redesign rationale (survey-grounded + empirically validated)
 
-Coverage validation on 9 papers across 5 types (Agnolin 2007 elasticity; Jop 2006 μ(I); GDR MiDi 2004 three-regime; Ancey 2007 review; Albert 1999 drag-experiment; Cleary 2002 DEM; Alam 1998 stability-theory; Berzi 2014 kinetic-theory; Choi 2005 silo-experiment) + 4 frontier (Blatny 2024 rheology-newmodel; Kim 2023 nonlocal-2nd-order; Hernández-Delfin 2022 shape-competing; Barker 2023 well-posedness-theory) showed:
-- All L1/L2/L3 elements present across types (FUNCTION_RELATION/COMPARISON_ARM/CAUSAL_ATTRIBUTION ≥8/9).
-- **FUNCTION_RELATION takes different forms per paper type**: constitutive_law (μ(I) rheology), empirical_scaling (drag∝velocity), governing_equation (∂tφ+∇·(φu)=0 in theory papers), numerical_relation (DEM param-result). Mixing them under one type conflates physically different relations → **subtype field required**.
-- **Same paper can have multiple FUNCTION_RELATION subtypes** (Blatny 2024 has both constitutive_law and governing_equation).
-- **paper_type needed**: theory papers (Barker 2023) have few COMPARISON_ARM; rheology papers (Blatny 2024) have many. L3 element distribution differs by paper type.
-- RESEARCH_QUESTION not always explicit (3/9 papers); when absent, annotator infers from title/abstract — annotation-protocol issue, not schema issue.
+**v2 problem (empirically exposed)**: first real extraction (n=8) showed FUNCTION_RELATION was abused on experiment papers — Albert 1999 drag paper had 13 FUNCTION_RELATION atoms (should be experimental findings). A formula-centric L3 forces non-formula papers to stuff observations into the formula element.
+
+**v3 fix**: replace FUNCTION_RELATION-as-core with CONTRIBUTION-as-reified-entity (per SciClaim `2021.emlp-main.381` association reification) + multi-label subtypes (per Matter-of-Fact `2025.emnlp-main.203` 2D claim classification).
+
+**Borrowed from survey (grounded, not invented)**:
+1. **SciClaim association reification** — CONTRIBUTION is a first-class entity, not an edge. Allows multi-attribute decoration. This is how L3 contributions relate to each other (supports/conflicts) as graph structure.
+2. **SciClaim multi-label attributes** — a contribution can be simultaneously `experimental_finding + supports_mechanism_X` (not mutually exclusive subtypes). Avoids forcing single-label on multi-faceted claims.
+3. **Matter-of-Fact 2D classification + Integrative type** — added `integrative` as 6th subtype (cross-method synthesis claims, highest-performing in their study at 82%). Their temporal-cutoff backtesting framework is reusable for our 1882-2018 corpus.
+4. **HyperRED hyper-relational qualifier** — CONTRIBUTION_RELATION edges (esp. `conflicts`) carry qualifiers (condition/range/regime), avoiding n-ary decomposition information loss.
+5. **MAGIC conflict-as-graph-structure** — conflicts are first-class edges, not post-hoc detection. Multi-hop conflict granularity (single/multi/simultaneous) can be built in.
+
+**No prior art for real cross-paper conflicting claims in scientific IE** — survey confirmed. MAGIC uses synthetic conflicts; COVID-Fact generates counter-claims within one paper. Our schema (real cross-paper competing-mechanism claims) is first if implemented.
+
+### 4.1.2 Coverage validation (v2 extraction, supports v3 direction)
+
+First real extraction on 10 papers (8 succeeded), 523 atoms:
+- L3 non-empty on all 8 (kill point 0/8 empty, threshold >50%).
+- All L3 elements appeared.
+- **FUNCTION_RELATION abused on experiment papers** (13 atoms in drag paper) → confirms formula-centric L3 is wrong → v3 CONTRIBUTION redesign is the fix.
+- v3 extraction pending (re-run on same 10 papers to verify experiment-drag's 13 "formulas" become experimental_findings).
 
 L3 is *higher-order*: its nodes reference L1/L2 entities (a FUNCTION_RELATION's params point to NUMERIC/PROPERTY), and L3 nodes relate to each other (a FUNCTION_RELATION indexed under different COMPARISON_ARMs). This is the 2D structure.
 
