@@ -1,8 +1,10 @@
 # GranularFlow-Bench: A Benchmark Dataset for Structured Extraction from Granular Flow Literature
 
-**Status**: Design draft v1 (2026-08-12). Pre-implementation.
+**Status**: Design draft v2 (2026-08-12). Pre-implementation.
 **Branch**: `research/granular-benchmark`
 **Worktree**: `LogicKG-benchmark`
+
+**v2 changes**: corrected corpus-scale error (858 is from 2,355 subset, not 10,447); added FUNCTION_RELATION subtype + paper_type (verified on 2022-2024 papers); added markdown-quality diagnostic; recorded 9-paper coverage validation; revised purification method (keyword filter unreliable → survey-citation-layer + LLM semantic).
 
 ---
 
@@ -57,10 +59,20 @@ C1+C2+C4 are floor contributions (publishable even if C3 fails). C3 is the ceili
 
 ## 3. Corpus
 
-- **Source**: `颗粒流文献-jhd-两层综述` survey corpus — 10,447 PDFs (core surveys + 2-level citation expansion: refs_* + refs_deep_*)
-- **Purified subset**: filter by `granular|DEM` ≥10 occurrences → ~858 papers @ 67% purity (or 278 @ 100%), verified in prior work
-- **Span**: 1882-2018 (DOI → year 100% recoverable), the only century-spanning granular flow corpus
-- **MinerU pipeline**: 2,355 already parsed (subset of the 10,447); growable via PDF→MinerU
+- **Source corpus**: `颗粒流文献-jhd-两层综述` — 10,447 PDFs (5 core granular-flow surveys + 2-level citation expansion: refs_* + refs_deep_*)
+- **Already MinerU-parsed subset**: 2,355 papers (text/markdown), located at `science_evo/.../mineru_2355/`. These 2,355 are a subset of the 10,447.
+- **Purification (on the 2,355 subset, prior work)**: keyword filter `granular|discrete element|DEM` ≥10 occurrences → **904 papers, of which 858 have DOI**; 60-paper audit: 66.7% strict granular flow, 86.7% including physics-adjacent. **Keyword filtering is acknowledged as rough** — the 858 still contains ~1/3 non-strict-granular. A better purification (survey-citation-layer + LLM semantic judgment) is planned; see §3.1.
+- **Year span**: 1882-2018 (DOI→year 100% recoverable), the only century-spanning granular flow corpus. Median 2004; 75% pre-2010.
+- **Note on scale**: 858 is from the 2,355 subset, NOT from filtering the full 10,447. The 10,447 have not yet been filtered; expected yield is higher (refs_* are survey-direct citations = naturally high purity). Filtering the full 10,447 is deferred (see §3.1 — avoid premature large-scale processing before method validation).
+
+### 3.1 Purification method (revised — keyword filter is unreliable)
+
+The prior `granular|DEM` ≥10 keyword filter has two failure modes: misses papers that use "dense suspension/powder/shear band" without the word "granular"; false-hits on "granular computing/benchmark". Planned replacement:
+1. **Survey-citation layer** (refs_*, ~600 papers) — naturally high purity, survey authors pre-filtered. Include directly.
+2. **refs_deep_* (~9,800)** — diluted, needs filtering. Use LLM semantic judgment (title+abstract) not keywords.
+3. Expert spot-check on a sample.
+
+This uses the survey corpus's native structure (citation layers) rather than blind keyword matching.
 
 ---
 
@@ -77,11 +89,24 @@ L2 Relation layer (MuLMS condition_* + extensions)
   condition_sampleFeatures / condition_instrument / taken_from
 
 L3 Higher-order layer (granular-flow innovation, 2D structure)
-  FUNCTION_RELATION    — constitutive/scaling law (nestable)
+  FUNCTION_RELATION    — function/relation (nestable), with subtype:
+    constitutive_law | empirical_scaling | governing_equation | numerical_relation
   COMPARISON_ARM        — comparison group (parallel)
   CAUSAL_ATTRIBUTION    — mechanism attribution (layered)
   RESEARCH_QUESTION    — paper-level anchor
+
+Paper-level:
+  paper_type            — rheology | experiment | theory | DEM | review
 ```
+
+### 4.1.1 Subtype + paper_type rationale (verified 2022-2024)
+
+Coverage validation on 9 papers across 5 types (Agnolin 2007 elasticity; Jop 2006 μ(I); GDR MiDi 2004 three-regime; Ancey 2007 review; Albert 1999 drag-experiment; Cleary 2002 DEM; Alam 1998 stability-theory; Berzi 2014 kinetic-theory; Choi 2005 silo-experiment) + 4 frontier (Blatny 2024 rheology-newmodel; Kim 2023 nonlocal-2nd-order; Hernández-Delfin 2022 shape-competing; Barker 2023 well-posedness-theory) showed:
+- All L1/L2/L3 elements present across types (FUNCTION_RELATION/COMPARISON_ARM/CAUSAL_ATTRIBUTION ≥8/9).
+- **FUNCTION_RELATION takes different forms per paper type**: constitutive_law (μ(I) rheology), empirical_scaling (drag∝velocity), governing_equation (∂tφ+∇·(φu)=0 in theory papers), numerical_relation (DEM param-result). Mixing them under one type conflates physically different relations → **subtype field required**.
+- **Same paper can have multiple FUNCTION_RELATION subtypes** (Blatny 2024 has both constitutive_law and governing_equation).
+- **paper_type needed**: theory papers (Barker 2023) have few COMPARISON_ARM; rheology papers (Blatny 2024) have many. L3 element distribution differs by paper type.
+- RESEARCH_QUESTION not always explicit (3/9 papers); when absent, annotator infers from title/abstract — annotation-protocol issue, not schema issue.
 
 L3 is *higher-order*: its nodes reference L1/L2 entities (a FUNCTION_RELATION's params point to NUMERIC/PROPERTY), and L3 nodes relate to each other (a FUNCTION_RELATION indexed under different COMPARISON_ARMs). This is the 2D structure.
 
@@ -202,7 +227,20 @@ Kill point: if extraction quality is invariant to schema evolution, C3 fails (bu
 
 ---
 
-## 11. Asset Locations (this worktree)
+## 11. Markdown / Formula Quality Diagnostic
+
+**MinerU markdown (2,355 papers)**:
+- L1/L2 quality: sufficient. Numerals (157 in Jop 2006), units, terms preserved.
+- L3 quality: **insufficient for formulas**. The μ(I) expression itself is broken in the markdown ("the Inertial number: where μ(I) is..." — the equation is dropped). LaTeX commands (`\scriptstyle`, `\mathrm{}`, escaped spaces `\ `) pollute the text; this is the same issue noted in prior work (LaTeX-space caused 7× extraction overcount).
+
+**pypdf direct-from-PDF (formula extraction)**:
+- Jop 2006: `µ(I) = µs + (µ2−µs)/(I0/I+1)` — **complete formula recovered**.
+- Blatny 2024, Kim 2023, Barker 2023 (frontier): governing equations recovered (`ρ Dρ/Dt + ρ(∇·v)=0`, `A1=2D`, `∂tφ+∇·(φu)=0`) — **good quality on modern PDFs**.
+- Conclusion: L3 formula extraction does NOT need a neural formula recognizer (Nougat). pypdf text-layer suffices for digital-native PDFs.
+
+**Caveat (untested)**: PDF text-layer coverage across the 2,355 + 10,447 corpus. Digital-native PDFs (arXiv-era, post-2000) extract well; scanned/legacy PDFs may not. Prior memory notes the local 20-paper set is "all digital-native (CCITT=0/JBIG2=0)", but full-corpus text-layer coverage is unmeasured. **Must verify** before relying on pypdf at scale.
+
+## 12. Asset Locations (this worktree)
 
 - `.research_tmp/granular-benchmark/data/` — SciFact corpus+claims (mechanism validation)
 - `.research_tmp/granular-benchmark/mulms_ref/` — MuLMS annotation guidelines PDF

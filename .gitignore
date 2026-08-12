@@ -33,6 +33,7 @@ findings.md
 docs/*
 !docs/
 !docs/neo4j-setup.md
+!docs/dataset-design/
 !docs/superpowers/
 !docs/superpowers/**
 !docs/plans/
