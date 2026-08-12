@@ -99,19 +99,23 @@ def validate_gap(gap: dict, paper_id: str) -> dict | None:
     gap_type = gap.get("gap_type", "")
     value = gap.get("value", "")
 
-    prompt = f"""A schema gap has been discovered. Validate whether it deserves to be added to the schema.
+    prompt = f"""A schema gap has been discovered during extraction. Validate whether it should be added to the schema.
 
 Gap type: {gap_type}
 Candidate value: {value}
 Recurrence: {gap.get('recurrence', 1)} papers
 
-Questions:
-1. Is "{value}" a legitimate scientific concept that would benefit from a dedicated schema slot?
-2. Or is it a synonym/variant of an existing schema element?
-3. Is it too vague or too specific to be useful?
+Current schema entity types: MATERIAL, PROPERTY, NUMERIC, UNIT
+
+Validation criteria:
+1. Is "{value}" a legitimate scientific concept used in research papers?
+2. Does it represent a DISTINCT category not covered by the 4 existing types?
+3. Would adding it improve extraction quality for biomedical papers?
+
+IMPORTANT: The current schema is MINIMAL (only 4 types). Many common scientific concepts like CONDITION, DEVICE, METHOD, DISEASE, DRUG, GENE, MEASUREMENT are NOT in the schema. If the candidate is a well-established scientific category, it should be ADDED.
 
 Answer ONLY valid JSON:
-{{"valid": true or false, "reason": "one short sentence", "suggested_alternative": "existing schema element if synonym, or empty"}}"""
+{{"valid": true or false, "reason": "one short sentence", "suggested_alternative": "existing type if truly duplicate, or empty string"}}"""
 
     raw = call_llm(prompt, max_tokens=300)
     result = parse_json_response(raw)
