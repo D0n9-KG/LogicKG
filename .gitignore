@@ -87,3 +87,11 @@ skills-lock.json
 
 # Local sample output
 paper1.json
+
+# Research session temp (shared scratch area, not version-controlled)
+.research_tmp/
+.research_tmp
+.survey_tmp/
+.gapscan/
+.occ_survey/
+.playwright-mcp/
