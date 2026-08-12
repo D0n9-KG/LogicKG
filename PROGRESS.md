@@ -174,3 +174,31 @@ C5 status: **inconclusive-leaning-positive**
 - C5 reported as "inconclusive-leaning-positive" — mechanism works, v4 covers, value is automation
 - Not overclaiming self-evolution novelty (3 projects didn't achieve it, RAGA is close)
 - Target: CCF-A (fallback B)
+
+## Stage 4b: Simulated Review ✅ COMPLETE
+
+### Editorial Decision: Major Revision
+
+### CRITICAL issues (must fix)
+1. **C2 core contribution has no positive experimental support** — self-evolution triggered 0 real extensions. Need: either cross-domain experiment (agent from minimal seed schema on new domain) OR reposition C2 from "discovery" to "validation+audit"
+2. **No baseline quality comparison** — only atom counts, no extraction accuracy vs gold or LLM-judge
+3. **50-paper ablation incomplete** — only ON run on 50 papers, need OFF comparison too
+
+### MAJOR issues
+4. References insufficient (12 → need 20+)
+5. MARY fusion not integrated into 50-paper run
+6. 9/50 zero-atom (18%) needs fixing
+7. No computational cost estimation
+
+### DA's strongest counter-argument
+"The paper's core claim is a self-evolving schema agent, but experiments show self-evolution found nothing to evolve. Saying 'it automates v1→v4' is unsupported — the agent didn't actually perform v1→v4 automatically; humans did."
+
+### Recommended fix for C2
+Option A: Run agent on a NEW domain (e.g., MuLMS materials science corpus) with minimal seed schema → if it discovers schema elements, C2 validated
+Option B: Reposition C2 from "self-evolving schema discovery" to "schema validation + audit gate" — the agent validates that current schema is complete, which is a real contribution even when 0 gaps found
+
+### Review scores
+- Originality: 6/10
+- Significance: 6/10
+- Soundness: 5/10
+- Feasibility: 6/10
