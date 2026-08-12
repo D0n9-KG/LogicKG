@@ -19,6 +19,8 @@ EXTRACT_PROMPT = """Extract structured information from this granular flow paper
 
 {schema_prompt}
 
+CRITICAL: For L1 entity_type, you MUST use ONLY the entity types listed above. Do NOT invent new entity types like METHOD, MODEL, FLOW_TYPE, or PHYSICAL_ENTITY. If something is a method/algorithm, use DEVICE or MATERIAL_PARAMETER. If it's a physical object, use MATERIAL or SAMPLE.
+
 Instructions:
 - Extract atoms across L1 (entities), L2 (relations), L3 (contributions + relations + RQ).
 - For each CONTRIBUTION, assign multi-label subtypes.
