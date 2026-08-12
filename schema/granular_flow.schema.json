@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logickg.local/schemas/granular-flow-v3.json",
+  "title": "GranularFlow-Bench Schema v3 (contribution-centric)",
+  "description": "Three-tier higher-order schema for structured extraction from granular flow literature. v3 replaces FUNCTION_RELATION-as-core (v2, abused on experiment papers) with CONTRIBUTION-as-reified-entity (survey-grounded: SciClaim association reification + Matter-of-Fact 2D classification). See docs/dataset-design/DESIGN-v1.md §4.",
+  "type": "object",
+  "required": ["paper_id", "paper_type", "atoms"],
+  "properties": {
+    "paper_id": { "type": "string", "description": "Unique paper identifier (PPR_xxx from mineru_2355)" },
+    "paper_type": {
+      "type": "string",
+      "enum": ["rheology", "experiment", "theory", "DEM", "review", "other"],
+      "description": "Paper-level classification. Verified across 9+4 papers (DESIGN §4.1.2)."
+    },
+    "research_question": {
+      "type": ["string", "null"],
+      "description": "The paper's research question. May be inferred from title/abstract when not explicit (3/9 papers had no explicit RQ — annotation-protocol issue, not schema issue)."
+    },
+    "atoms": {
+      "type": "array",
+      "description": "All extracted atoms across L1/L2/L3 layers.",
+      "items": { "$ref": "#/$defs/atom" }
+    }
+  },
+
+  "$defs": {
+    "atom": {
+      "oneOf": [
+        { "$ref": "#/$defs/L1_entity" },
+        { "$ref": "#/$defs/L2_relation" },
+        { "$ref": "#/$defs/L3_contribution" },
+        { "$ref": "#/$defs/L3_contribution_relation" }
+      ]
+    },
+
+    "L1_entity": {
+      "type": "object",
+      "required": ["layer", "entity_type", "entity"],
+      "properties": {
+        "layer": { "const": "L1" },
+        "entity_type": {
+          "type": "string",
+          "enum": ["MATERIAL", "SAMPLE", "DEVICE", "NUMERIC", "UNIT", "PROPERTY", "MEASUREMENT", "CONDITION"]
+        },
+        "entity": { "type": "string", "description": "The entity mention text" },
+        "span": { "type": ["string", "null"], "description": "Optional char offset in source" }
+      },
+      "additionalProperties": false
+    },
+
+    "L2_relation": {
+      "type": "object",
+      "required": ["layer", "relation"],
+      "properties": {
+        "layer": { "const": "L2" },
+        "relation": {
+          "type": "string",
+          "enum": [
+            "measures_property", "property_value",
+            "condition_environment", "condition_sampleFeatures",
+            "condition_instrument", "condition_property", "taken_from"
+          ]
+        },
+        "subject": { "type": "string", "description": "Entity or mention the relation points from" },
+        "object": { "type": "string", "description": "Entity or mention the relation points to" },
+        "conditions": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+
+    "L3_contribution": {
+      "type": "object",
+      "description": "A reified first-class contribution entity (NOT an edge). Per SciClaim association reification — allows multi-attribute decoration and inter-contribution relations.",
+      "required": ["layer", "type", "statement", "subtypes"],
+      "properties": {
+        "layer": { "const": "L3" },
+        "type": { "const": "CONTRIBUTION" },
+        "statement": { "type": "string", "description": "The contribution stated in the paper, as a self-contained assertion" },
+        "subtypes": {
+          "type": "array",
+          "description": "Multi-label (NOT mutually exclusive — a contribution can be experimental_finding AND supports a mechanism). Per Matter-of-Fact 2D classification.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "constitutive_law",
+              "experimental_finding",
+              "mechanism_analysis",
+              "theoretical_result",
+              "numerical_finding",
+              "integrative"
+            ]
+          },
+          "minItems": 1
+        },
+        "params": {
+          "type": "array",
+          "description": "For constitutive_law: named parameters of the law (e.g. mu_s, mu_2, I_0)",
+          "items": { "type": "string" }
+        },
+        "evidence": {
+          "type": ["string", "null"],
+          "description": "Source sentence/figure reference supporting this contribution"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "L3_contribution_relation": {
+      "type": "object",
+      "description": "Directed edge BETWEEN contributions. Per HyperRED hyper-relational structure — the relation (esp. conflicts) can carry a qualifier. Per MAGIC — conflicts are first-class graph structure, not post-hoc detection.",
+      "required": ["layer", "type", "relation", "from", "to"],
+      "properties": {
+        "layer": { "const": "L3" },
+        "type": { "const": "CONTRIBUTION_RELATION" },
+        "relation": {
+          "type": "string",
+          "enum": ["supports", "conflicts", "depends_on", "applies_in", "derives_from"]
+        },
+        "from": { "type": "string", "description": "Contribution statement or local id" },
+        "to": { "type": "string", "description": "Contribution statement or local id" },
+        "qualifier": {
+          "type": ["string", "null"],
+          "description": "Condition/regime/range under which this relation holds (e.g. 'in the dense regime')"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
