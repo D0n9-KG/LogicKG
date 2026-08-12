@@ -29,7 +29,8 @@
         { "$ref": "#/$defs/L1_entity" },
         { "$ref": "#/$defs/L2_relation" },
         { "$ref": "#/$defs/L3_contribution" },
-        { "$ref": "#/$defs/L3_contribution_relation" }
+        { "$ref": "#/$defs/L3_contribution_relation" },
+        { "$ref": "#/$defs/L3_closure" }
       ]
     },
 
@@ -40,7 +41,7 @@
         "layer": { "const": "L1" },
         "entity_type": {
           "type": "string",
-          "enum": ["MATERIAL", "SAMPLE", "DEVICE", "NUMERIC", "UNIT", "PROPERTY", "MEASUREMENT", "CONDITION"]
+          "enum": ["MATERIAL", "SAMPLE", "DEVICE", "NUMERIC", "UNIT", "PROPERTY", "MEASUREMENT", "BOUNDARY_CONDITION", "INITIAL_STATE", "MATERIAL_PARAMETER", "DIMENSIONLESS_NUMBER", "REGIME"]
         },
         "entity": { "type": "string", "description": "The entity mention text" },
         "span": { "type": ["string", "null"], "description": "Optional char offset in source" }
@@ -87,7 +88,10 @@
               "mechanism_analysis",
               "theoretical_result",
               "numerical_finding",
-              "integrative"
+              "integrative",
+              "scaling_law",
+              "regime_map",
+              "methodology"
             ]
           },
           "minItems": 1
@@ -107,20 +111,55 @@
 
     "L3_contribution_relation": {
       "type": "object",
-      "description": "Directed edge BETWEEN contributions. Per HyperRED hyper-relational structure — the relation (esp. conflicts) can carry a qualifier. Per MAGIC — conflicts are first-class graph structure, not post-hoc detection.",
+      "description": "Directed edge BETWEEN contributions. Per HyperRED hyper-relational structure — the relation (esp. conflicts) can carry a qualifier. Per MAGIC — conflicts are first-class graph structure, not post-hoc detection. v4: added applies_in_regime/specializes/generalizes/bounds_applicability_of — granular flow 'competition' is regime-complementary (not contradiction, per expert review).",
       "required": ["layer", "type", "relation", "from", "to"],
       "properties": {
         "layer": { "const": "L3" },
         "type": { "const": "CONTRIBUTION_RELATION" },
         "relation": {
           "type": "string",
-          "enum": ["supports", "conflicts", "depends_on", "applies_in", "derives_from"]
+          "enum": ["supports", "conflicts", "depends_on", "applies_in", "applies_in_regime", "derives_from", "specializes", "generalizes", "bounds_applicability_of"]
         },
         "from": { "type": "string", "description": "Contribution statement or local id" },
         "to": { "type": "string", "description": "Contribution statement or local id" },
         "qualifier": {
           "type": ["string", "null"],
           "description": "Condition/regime/range under which this relation holds (e.g. 'in the dense regime')"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "L3_closure": {
+      "type": "object",
+      "description": "Optional: structured multi-variable constitutive relation (e.g. mu(I)=mu_s+...). Only for papers with explicit constitutive laws. Coexists with CONTRIBUTION (text statement) — CONTRIBUTION describes what, CLOSURE describes the structured function. Added v4: v3's params field could list param names but couldn't express input/output/function-form coupling (confirmed by rheology diagnosis).",
+      "required": ["layer", "type", "statement"],
+      "properties": {
+        "layer": { "const": "L3" },
+        "type": { "const": "CLOSURE" },
+        "statement": { "type": "string", "description": "Human-readable description of the closure relation" },
+        "input_variables": {
+          "type": "array",
+          "description": "Input physical quantities (e.g. ['shear_rate', 'confining_pressure', 'particle_diameter', 'density'])",
+          "items": { "type": "string" }
+        },
+        "output_variable": { "type": "string", "description": "Output quantity (e.g. 'friction_coefficient' or 'shear_stress')" },
+        "function_form": {
+          "type": ["string", "null"],
+          "description": "The functional expression (text or LaTeX, e.g. 'mu(I) = mu_s + (mu_2-mu_s)/(1+I_0/I)')"
+        },
+        "parameters": {
+          "type": "array",
+          "description": "Material/fitted parameters (e.g. ['mu_s', 'mu_2', 'I_0'])",
+          "items": { "type": "string" }
+        },
+        "applicable_regime": {
+          "type": ["string", "null"],
+          "description": "Regime where this closure holds (e.g. 'dense_inertial')"
+        },
+        "evidence": {
+          "type": ["string", "null"],
+          "description": "Source sentence/equation reference"
         }
       },
       "additionalProperties": false
