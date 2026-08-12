@@ -40,22 +40,36 @@ PAPER TEXT:
 {text}"""
 
 
-def load_paper_text(paper_id: str, max_chars: int = 12000) -> str:
-    """Load paper text from mineru content_list.json."""
+def load_paper_text(paper_id: str, max_chars: int = 8000) -> str:
+    """Load paper text from mineru content_list.json. Truncated to fit LLM context."""
     p = os.path.join(MINERU_BASE, paper_id, "content_list.json")
     if not os.path.isfile(p):
         return ""
     cl = json.load(open(p, encoding="utf-8"))
-    return " ".join(it.get("text", "") for it in cl if it.get("type") == "text")[:max_chars]
+    # Take abstract + intro + method + results + conclusion (skip references/figures)
+    texts = []
+    for it in cl:
+        if it.get("type") == "text" and it.get("text"):
+            t = it["text"].strip()
+            # Skip reference-like blocks
+            if len(t) < 10 or t.startswith("[") and any(c.isdigit() for c in t[:5]):
+                continue
+            texts.append(t)
+    full = " ".join(texts)
+    # Truncate smartly: take beginning (abstract+intro) + end (conclusion)
+    if len(full) > max_chars:
+        half = max_chars // 2
+        full = full[:half] + " ... [middle truncated] ... " + full[-half:]
+    return full
 
 
 def extract_single_llm(text: str, schema_prompt: str, llm: str = "deepseek") -> list[dict]:
     """Extract atoms using a single LLM."""
     prompt = EXTRACT_PROMPT.format(schema_prompt=schema_prompt, text=text)
     if llm == "deepseek":
-        raw = call_llm(prompt, max_tokens=4000)
+        raw = call_llm(prompt, max_tokens=8192)
     else:
-        raw = call_paratera(prompt, model=llm, max_tokens=4000)
+        raw = call_paratera(prompt, model=llm, max_tokens=8192)
     atoms = parse_json_response(raw)
     return atoms if isinstance(atoms, list) else []
 
