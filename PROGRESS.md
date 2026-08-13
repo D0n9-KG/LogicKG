@@ -226,3 +226,24 @@ The self-evolution mechanism works: gap discovery detects new domain-specific ty
 ### Remaining issue: schema bloat (36 subtypes + 40 relations = too many paper-specific entries)
 - Fix: add recurrence threshold or generalizability check
 - But mechanism works — this is refinement not fundamental problem
+
+## Stage 4d: Extraction Design — Schema-Guided DAG with Chained Recursion ✅ DESIGN COMPLETE
+
+**Date**: 2026-08-13
+
+### Problem identified
+- 50-paper run used text truncation (8000 chars, 80% content lost)
+- "0 real gaps" conclusion may be unreliable (gaps in truncated middle not seen)
+- 9/50 zero-atom papers (18%) due to context overflow
+
+### Design: Schema-Guided DAG with Chained Recursion
+Document: `docs/dataset-design/EXTRACTION-DESIGN-v1.md`
+
+Three phases:
+- Phase 0: full-text structure mapping (1 call) → section boundaries + discourse roles + schema-field map + DAG
+- Phase 1: chained extraction (4-8 calls, DAG-ordered) → fresh context per node, blackboard + compact summary, adaptive fission
+- Phase 2: grounding + lookup + rebind detection (0-2 calls) → exact-text-match (deterministic), discourse-role-based rebind check
+
+Cost: 5-10 calls/paper (vs RAGA's 50+). Key differences: top-down DAG (not bottom-up), blackboard (not KG), discourse roles (not flat paragraphs), exact-text-match (not LLM self-audit).
+
+### Status: design complete, implementation pending
