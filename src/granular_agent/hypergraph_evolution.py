@@ -86,6 +86,17 @@ class EvolutionTrigger:
     def cross_node_count(self, sig: tuple) -> int:
         return len(self.seen.get(sig, {}))
 
+    def cumulative_count(self, sig: tuple) -> int:
+        """Total failure count for a signature (across all nodes/papers).
+        RETUNE (gate v2): cross_node>=2 alone is too strict for small corpora
+        (B_MIN2 couldn't grow claim/measure). A gap recurring 3+ times total
+        (even at 1 node each across papers) is also a real schema gap. Accept
+        on cumulative >= threshold too. Signature UNCHANGED (role-tuple) —
+        previous attempt to also relax signature was too coarse (merged
+        different gaps, made it worse), reverted."""
+        nodes = self.seen.get(sig, {})
+        return sum(nodes.values())
+
 
 # ---------------------------------------------------------------------------
 # P2/P3: probe -> validate -> apply
@@ -461,6 +472,9 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
     # NOTE: a precise proposal->triggering-failure link is a known refinement;
     # the batch-max is correct (never understates) and fixes the dead signal.
     batch_cross = max((trigger.cross_node_count(sig) for sig in sigs), default=1)
+    # RETUNE (gate v2): accept growth if cross_node>=2 OR cumulative>=3.
+    # Signature kept (role-tuple) — only the threshold relaxes.
+    batch_cumulative = max((trigger.cumulative_count(sig) for sig in sigs), default=1)
     # Probe on the distinct failing hyperedges (dedup by signature)
     distinct_hes = [he for (he, _, _) in sigs.values()]
     proposals = evolution_probe(distinct_hes, meta, paper_id, domain=domain,
@@ -490,11 +504,14 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
         # not by a single failure) are NOT gated; only growth is.
         op = p.get("op", "")
         is_growth = op in ("add_pattern", "add_meta_node", "add_subclass")
-        if is_growth and batch_cross < CONSERVATIVE_CROSS_NODE:
+        # RETUNE (gate v2): accept if cross_node>=2 OR cumulative>=3.
+        gate_pass = batch_cross >= CONSERVATIVE_CROSS_NODE or batch_cumulative >= CONSERVATIVE_CUMULATIVE
+        if is_growth and not gate_pass:
             evolutions.append({"op": op, "rejected": True,
-                               "reason": f"conservative gate: cross_node={batch_cross} < {CONSERVATIVE_CROSS_NODE} (needs recurrence)",
+                               "reason": f"conservative gate: cross_node={batch_cross} < {CONSERVATIVE_CROSS_NODE} AND cumulative={batch_cumulative} < {CONSERVATIVE_CUMULATIVE}",
                                "evidence": p.get("evidence_span", ""),
                                "proposal": p, "cross_node": batch_cross,
+                               "cumulative": batch_cumulative,
                                "node_id": node_id, "paper_id": paper_id})
             continue
         new_ver = apply_proposal(meta, p, paper_id)
@@ -516,6 +533,10 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
 # already-computed cross_node recurrence rather than an LLM judgment (A4
 # circularity preserved — the gate is deterministic).
 CONSERVATIVE_CROSS_NODE = 2
+# RETUNE (gate v2): cumulative-failure threshold (cross-paper accumulation).
+# Lets small corpora trigger evolution where cross_node>=2 is too strict.
+# Signature UNCHANGED (role-tuple) — only threshold relaxes.
+CONSERVATIVE_CUMULATIVE = 3
 
 
 def mismatch_signature_for_proposal(p: dict) -> tuple:
