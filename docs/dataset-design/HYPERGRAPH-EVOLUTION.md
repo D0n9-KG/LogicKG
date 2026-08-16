@@ -2655,3 +2655,19 @@ n-ary QA可作为correct指标（0.917，之前0.88，方向一致）。
 2. native baseline 同实验对比（redesign后n-ary QA vs native）
 3. 多 seed CI（deepseek限制，尽量反序跑）
 4. 论文审稿自审循环
+
+## constraint violation vs n-ary QA 相关性
+| paper | v_rate | qa_correct |
+|-------|--------|-----------|
+| 0BFD  | 0.038  | 1.000     |
+| 5022  | 0.034  | 0.875     |
+| C9726 | 0.410  | 0.875     |
+
+=> 高violation不直接对应低QA。violation检测结构gap(参数未定义)，QA测关系正确性。
+两者测不同维度。constraint violation是补充能力（DIAL-KG做不到的），不是QA的替代。
+但"检测+修复→QA提升"的闭环仍需验证（攻击面#1）。
+
+## 当前论文草稿状态
+4节draft完成（abstract/intro + related work + method + experiments）。
+自审5攻击面记录。#1最致命(constraint violation闭环)待补。
+其他4个是已知limitation(诚实标注)。
