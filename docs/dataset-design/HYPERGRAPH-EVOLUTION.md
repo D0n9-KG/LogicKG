@@ -2596,3 +2596,36 @@ gate v2：只加 cumulative>=3 OR 触发，保留 role-tuple signature。
 => 真schema gap: C9726数值密集论文大量参数被constitutive_law引用但没definition边定义。
 constraint violation准确检出，且高rate暴露真抽取gap（参数没定义就用了）。
 这是可信指标+能暴露真问题。不是误报。
+
+## WebNLG流式测试结果 + 评测定位诚实判断（9129c04d 后）
+
+### WebNLG流式（60 entries，放开家族后）
+49 he, 12 patterns, 6家族（没长新——gate单句触发不了）, 16 violations, 1 dep_edge.
+=> WebNLG不适配我们方法（schema约束+自进化在单句三元组发挥不了）。
+不强行和DIAL-KG在WebNLG上比schema质量（都只抽三元组，schema不演化）。
+
+### 评测定位诚实判断
+方法能力已实现+验证，但顶会主会优势没坐实：
+- 有：constraint violation(38, DIAL-KG做不到) + pattern_dependency(50) + split + 放开锁死 + 种子敏感性(内容驱动0.86-0.98)
+- 缺：权威benchmark和DIAL-KG直接对比数字；gold P/R/F1
+- 卡点：WebNLG不适配(schema-free单句)；颗粒流无gold；无跨文档+schema+gold权威benchmark
+
+### 三条路评估
+1. 颗粒流主场（有constraint violation但无gold）——方法有效但无对标
+2. 自建跨文档gold（推专家）——有gold但需专家
+3. 换能发挥+有gold的场景——ExtractBench是PDF-to-JSON(schema预设不自进化)不直接可比
+
+### 当前判断
+方法能力够（4个DIAL-KG做不到的能力已验证），但评测说服力不够（无直接对标）。
+要么补对标，要么用现有能力+诚实标注无gold写论文(findings/D&B级)。
+
+## gain实验重跑（redesign后，b24def50 代码）—— 结果不好
+| arm | n_he | correct | complete |
+|-----|------|---------|----------|
+| A_FULL | 38 | 3 (0.375) | 2 (0.25) |
+| B_NO_QUAL | 30 | 5 (0.625) | 3 (0.375) |
+| C_FIXED | 25 | 5 (0.625) | 4 (0.50) |
+
+FULL 0.375 < 两消融 0.625 —— 增益反转了！redesign后FULL反而最差。
+这是deepseek单seed噪声（同seed pattern-id Jaccard 0.208）+ n=8太小。
+不能claim增益。n-ary QA方向不稳。
