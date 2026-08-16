@@ -2641,3 +2641,17 @@ FULL 0.375 < 两消融 0.625 —— 增益反转了！redesign后FULL反而最�
 correct 高（0.917，之前0.88）但complete低（0.333 vs 之前0.33）。
 correct稳定高=抽取质量OK；complete低=多实体问题答不全（n-ary结构在某些论文没充分用）。
 n-ary QA可作为correct指标（0.917，之前0.88，方向一致）。
+
+## 论文自审攻击面（顶会标准）
+1. constraint violation 38条——但没证明"检测+修复→抽取更好"的闭环
+2. pattern_dependency 50条——但没证明下游有用
+3. 0.917 correct——但没和 native 同实验对比（redesign后）
+4. 种子敏感性只4篇+deepseek噪声大
+5. **最致命#1**：constraint violation 检测的价值闭环未验证
+   → 需补实验：检测violation→补definition→重抽→看质量提升
+
+## 待办（优先级）
+1. constraint violation 闭环实验（检测+修复→质量提升）—— 补novelty价值证明
+2. native baseline 同实验对比（redesign后n-ary QA vs native）
+3. 多 seed CI（deepseek限制，尽量反序跑）
+4. 论文审稿自审循环
