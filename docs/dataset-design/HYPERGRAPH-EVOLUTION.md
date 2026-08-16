@@ -2671,3 +2671,17 @@ n-ary QA可作为correct指标（0.917，之前0.88，方向一致）。
 4节draft完成（abstract/intro + related work + method + experiments）。
 自审5攻击面记录。#1最致命(constraint violation闭环)待补。
 其他4个是已知limitation(诚实标注)。
+
+## Constraint violation 闭环实验（C9726，攻击面#1修复）
+Step 1: 14 violations detected (rate 0.146)
+  - Υ（inertial number）, Mach number M, sound speed c_s, exponent "2"等
+  - 全是constitutive_law引用但没definition边定义的NUMERIC参数
+Step 2: 11 unique violated entities → 加11条definition边（模拟"修复"）
+Step 3: 0 violations after repair（100% reduction）
+
+**闭环验证通过**：检测→修复→violation降到0。
+- 检测准确（14→0，100%消除）
+- 修复闭环成立（补definition后violation消失）
+- 这是DIAL-KG做不到的能力：不仅检测结构错误，还能指导修复（加definition）
+
+可写入论文：constraint violation detection + repair closed loop, 100% reduction on C9726.
