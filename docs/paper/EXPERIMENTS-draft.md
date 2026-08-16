@@ -61,9 +61,26 @@ B→A overlap 0.95 (B's patterns almost all have A correspondents). The schema
 is content-driven, not seed-determined — the gate + merge/retire prevent
 divergence regardless of seed.
 
-### 4.4 N-ary Downstream QA (blind judge)
+### 4.4 N-ary Downstream QA (blind judge, 3 papers × 8 questions)
 
-[待 gain 实验结果重跑后填——验证重做后 n-ary QA 没回归]
+n-ary questions from arity≥3 hyperedges, blind judge (sees only paper text +
+question + answer, not which graph):
+
+| paper | n_qa | correct | complete |
+|-------|------|---------|----------|
+| 0BFD  | 8 | 8 (1.000) | 6 (0.750) |
+| 5022  | 8 | 7 (0.875) | 1 (0.125) |
+| C9726 | 8 | 7 (0.875) | 1 (0.125) |
+| **mean** | — | **0.917** | **0.333** |
+
+Correct rate 0.917 (stable, consistent with pre-redesign 0.88). Complete rate
+0.333 (low — multi-entity questions answered correctly but not always
+completely; n-ary structure captures the entities but blind judge completeness
+is strict). Single seed (deepseek non-determinism).
+
+**Note**: gain experiment (A_FULL vs ablations) was unstable on single seed
+(0.375 vs 0.625 — within noise for n=8). The n-ary correct rate 0.917 across
+3 papers is more stable than single-paper gain.
 
 ### 4.5 Comparison with DIAL-KG
 
