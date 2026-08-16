@@ -168,6 +168,58 @@ class SchemaManager:
                     entries.append(json.loads(line))
         return entries
 
+    def canonicalize(self) -> list[dict]:
+        """EDC-style canonicalize: merge near-duplicate enum values across all
+        dimensions. Uses token-set Jaccard >=0.7 to detect near-duplicates.
+        Returns list of merges performed. Call after a batch to prevent bloat.
+        """
+        from granular_agent.grounding import _tokens
+        merges = []
+        for dim, def_path in [
+            ("entity_type", ["$defs", "L1_entity", "properties", "entity_type", "enum"]),
+            ("contribution_subtype", ["$defs", "L3_contribution", "properties", "subtypes", "items", "enum"]),
+            ("relation_type", ["$defs", "L3_contribution_relation", "properties", "relation", "enum"]),
+        ]:
+            try:
+                enum = self._current
+                for p in def_path:
+                    enum = enum[p]
+            except (KeyError, TypeError):
+                continue
+            # find near-duplicate pairs
+            to_remove = set()
+            for i, a in enumerate(enum):
+                if a in to_remove:
+                    continue
+                a_tokens = _tokens(a)
+                if not a_tokens:
+                    continue
+                for j in range(i + 1, len(enum)):
+                    b = enum[j]
+                    if b in to_remove:
+                        continue
+                    b_tokens = _tokens(b)
+                    if not b_tokens:
+                        continue
+                    overlap = len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
+                    if overlap >= 0.7 and a.lower() != b.lower():
+                        # merge b into a (keep the more general / shorter one)
+                        keep, drop = (a, b) if len(a) <= len(b) else (b, a)
+                        to_remove.add(drop)
+                        merges.append({"dimension": dim, "kept": keep, "dropped": drop, "overlap": round(overlap, 2)})
+            if to_remove:
+                new_schema = copy.deepcopy(self._current)
+                target = new_schema
+                for p in def_path[:-1]:
+                    target = target[p]
+                target[def_path[-1]] = [v for v in target[def_path[-1]] if v not in to_remove]
+                version = self._next_version()
+                self._save_version(version, new_schema)
+                self._log_change(version, "canonicalize", ",".join(sorted(to_remove)),
+                                 f"merged {len(to_remove)} near-duplicates", "canonicalize")
+                self._current = new_schema
+        return merges
+
     def get_schema_prompt(self) -> str:
         """Generate a prompt fragment describing the current schema for LLM extraction."""
         entity_types = self.get_entity_types()

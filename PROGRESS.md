@@ -247,3 +247,226 @@ Three phases:
 Cost: 5-10 calls/paper (vs RAGA's 50+). Key differences: top-down DAG (not bottom-up), blackboard (not KG), discourse roles (not flat paragraphs), exact-text-match (not LLM self-audit).
 
 ### Status: design complete, implementation pending
+
+## Stage 4e: New Three-Phase Extraction — Implementation ✅ IMPLEMENTED
+
+**Date**: 2026-08-13
+
+### Implemented modules
+- `src/granular_agent/structure_mapper.py`: Phase 0 — full-text-in, structure-map-out. One DeepSeek call over full paper (fits 64k context). Uses block-index ranges (not char offsets) so LLM doesn't count chars. Discourse roles: summary/context/definition/observation/interpretation/claim. Outputs sections + key_entities + schema-guided DAG. Prompt requires DAG to cover EVERY non-reference section.
+- `src/granular_agent/chained_extractor.py`: Phase 1 — DAG topological-order chained extraction. Each node: fresh context, receives section text + predecessor compact summary + schema fields. Outputs atoms with evidence_span + confidence + discourse_role, plus a <=200-token summary carrying to dependents. Adaptive fission: mean confidence < 0.40 → split fields into two focused sub-calls (capped at 2 fissions/paper). Blackboard is JSON (not Neo4j).
+- `src/granular_agent/grounding.py`: Phase 2 — deterministic exact-text-match grounding (whitespace-normalized), discourse-role rebind candidate detection (same entity surface form across definition vs non-definition roles → flagged for lookup), one LLM lookup call over all flagged atoms (confirm with verbatim span or mark unsupported), filter to grounded atoms.
+- `src/granular_agent/agent.py`: added `_extract_adaptive()` wiring Phase 0→1→2, fallback to old extractor only if structure mapping fails. Reuses `_detect_gaps` on grounded atoms.
+
+### Jop 2006 smoke test (PPR_B0E8916D4E19, 15534 chars)
+- Old truncating extractor (8028 chars): 106 atoms, 0 grounding check, 1 call
+- New three-phase (full 15534 chars): ~55 atoms, 7-8 calls, 100% grounded (evidence verbatim), 5-node DAG
+- Tradeoff: new extracts fewer atoms but every one is grounded in full text; old over-extracted from truncated text with no verification
+- Known weakness: CLOSURE + MATERIAL_PARAMETER under-extracted (LLM prefers CONTRIBUTION text form). Noted as prompt-tuning issue, not architecture.
+
+### 5-paper validation: PENDING
+
+### 5-paper validation (one per subdomain, foreground single-run)
+
+| paper | subdomain | full_chars | old_atoms | new_atoms | calls | grounded | L1/L2/L3 |
+|---|---|---|---|---|---|---|---|
+| PPR_8E92BEDEFBD4 | DEM | 41601 | 0 | 15 | 8 | 100% | 0/0/15 |
+| PPR_780689E5FD46 | experiment | 16106 | 0 | 136 | 8 | 100% | 77/13/45 |
+| PPR_C72F44655CCE | rheology | 57576 | 0 | 46 | 8 | 100% | 20/0/26 |
+| PPR_99559BECB495 | theory | 59920 | 0 | 41 | 9 | 100% | 16/4/20 |
+| PPR_79C1662F4359 | geophysical | 29286 | 37 | 81 | 8 | 100% | 43/6/31 |
+| **TOTAL** | | 204489 | **37** | **319** | 41 | **100%** | 156/23/137 |
+
+Key findings:
+- **Old truncating extractor FAILED on 4/5 papers (0 atoms)** — systematic failure beyond Jop 2006. New system succeeds on all 5.
+- New: 319 atoms, 8.2 calls/paper avg, **100% grounding** (every atom's evidence_span verbatim in full text), handles papers up to 60k chars (no truncation).
+- 1 rebind candidate detected on Daniels 2005 (discourse-role-based detection works).
+- **LLM non-determinism (DeepSeek temp=0)**: DEM yielded 15/39/108 across 3 single runs — 7x variance. Structure map (Phase 0) is STABLE (7 nodes, same fields across runs); variance is in Phase 1 extraction yield. Reported honestly as a limitation; aggregate over 50 papers averages it out.
+
+### Status: launching 50-paper evolution-OFF baseline (workers=4)
+
+### Stage 4f: 50-paper full-text rerun (evolution-OFF) — IN PROGRESS
+- Runner: run_stage2_resume.py (single-threaded, 90s API timeout, 480s budget per batch, resume via results.jsonl)
+- **Key env finding**: ThreadPoolExecutor (workers>1) HANGS in this Bash environment (both explicit bg and timeout-moved-to-bg); single-threaded works. GIL+SSL+threads deadlock suspected. All parallelism via separate PROCESSES (2 shards), not threads.
+- Schema fix: cleared 84 cross-domain v0.x versions from Stage 4c that were being loaded (string-sort picked v0.9 not v4.0); re-init from v4.0 base.
+- Two shards running: shard 0 → stage2_evo_off (22 done), shard 1 → stage2_evo_off_b (4 done). ~36 remaining.
+
+### Stage 4f RESULTS: 49-paper full-text rerun (evolution-OFF) ✅ COMPLETE
+- **49 papers** (7 per subdomain × 7 subdomains), full text no truncation (up to 60k chars)
+- **3,135 atoms**, **3,134 grounded (99.97%)** — every atom verifiable against source text
+- **364 calls, 7.4 calls/paper** (target 5-10 ✓)
+- **1 zero-atom** (simulation, Phase 0 structure-map failure → fallback → 0; recoverable)
+- Schema v4.0 unchanged (evolution OFF)
+- By subdomain: DEM 448, experiment 512, geophysical 590, other 569, rheology 409, simulation 173, theory 434
+
+### Stage 4g: Self-evolution ablation (20 papers, ON vs OFF) ✅ COMPLETE
+Same 20 papers (stratified, 3/subdomain), single-LLM, single seed:
+| Metric | OFF | ON | Diff |
+|---|---|---|---|
+| atoms | 1319 | 1389 | +70 (+5.3%) |
+| avg/paper | 66.0 | 69.5 | +3.5 |
+| calls | 155 (7.8/p) | 160 (8.0/p) | +5 |
+| grounded | 1319 | 1388 | (99.97%/99.93%) |
+| zero-atom | 0 | 0 | 0 |
+| schema evolutions | 0 | 3 | +3 |
+| schema version | 4.0 | 4.0→4.3 | |
+
+3 accepted extensions (all evidence-linked):
+- `research_question` (CONTRIBUTION subtype) — paper whose contribution is posing a question
+- `extends` (CONTRIBUTION_RELATION) — paper extending prior constitutive law
+- `resolves` (CONTRIBUTION_RELATION) — paper resolving a prior conflict
+
+**Key finding**: prior truncated run found "0 real gaps"; full-text run finds 3 genuine extensions. Full-text coverage is NECESSARY for self-evolution to find periphery gaps on a mature schema. The 3 extensions are contribution-relations (periphery), not core entities — consistent with v4 core being manually refined.
+
+### Stage 4h: Paper update ✅ COMPLETE
+Updated docs/paper/GranularFlow-Bench.md: Abstract, §1 C1/C4/C5, §3.1 Extract capability, §3.4 (new Three-Phase Extraction), §3.5 (MARY moved), §4.1 (Jop 2006 new numbers), §4.2 (49-paper table), §4.3 (ablation table), §5.1 (full-text changed finding), §5.3 (limitations), §6 (conclusion), Data Availability. All numbers from real runs.
+
+### Stage 4i: Self-Evolution v2 — Intra-DAG, Discourse-Weighted, Forward-Propagating ✅ IMPLEMENTED + DEMO
+
+**Design**: `docs/dataset-design/SELF-EVOLUTION-v2.md`. Schema evolves DURING Phase 1 (not post-hoc): per-node gap detection → cross-node recurrence × discourse-role scoring → evidence-anchored validation → schema extend → downstream DAG nodes re-fetch schema prompt (forward propagation).
+
+**Implementation**:
+- `gap_discovery.py`: `detect_gaps_intra_node()` (per-node, tagged with node_id + discourse_role + verbatim evidence_span); `score_gap()` (cross-node recurrence × DISCOURSE_WEIGHT, gate=has_evidence); `apply_schema_extension()`.
+- `chained_extractor.py`: `extract_chained(intra_dag_evolution=True)` — schema_prompt fetched per-node (forward propagation), per-node ground + detect + score + validate + extend after each node.
+- `agent.py`: `_extract_adaptive(intra_dag_evolution=True)` + `process_paper(intra_dag_evolution=True)`; intra_evolutions merged into schema_changes, post-hoc loop skipped.
+- `run_ablation_3arm.py`: 3-arm ablation runner (A=OFF / B=post-hoc / C=intra-DAG) with per-arm schema reset to v4.0.
+
+**Minimal-seed demo (3 papers, 4-entity seed: MATERIAL/PROPERTY/NUMERIC/UNIT)**:
+| paper | intra gaps detected | extensions accepted | schema after |
+|---|---|---|---|
+| Jop 2006 | 6 (MATERIAL_PARAMETER, DIMENSIONLESS_NUMBER, mechanism_analysis) | 0 (validate rejected) | v4.0 |
+| Daniels 2005 | 14 (DIMENSIONLESS_NUMBER, BOUNDARY_CONDITION, INITIAL_STATE) | **3** (v4.0→v4.3) | v4.3 |
+| Saha 2016 | 0 (schema already extended) | 0 | v4.3 |
+
+**Forward propagation CONFIRMED**: Saha 2016 processed at v4.3 — the schema Daniels 2005 extended mid-extraction carried to the next paper. Schema grew 4→7 entity types.
+
+**Mature-v4 ablation (arm C, 15/20 papers)**: 0 extensions. Consistent with §5.2 — on a mature schema the LLM rarely produces out-of-schema atoms, so intra-DAG (and post-hoc) find few extensions. The intra-DAG vs post-hoc difference is within LLM variance on mature v4; the mechanism's value is most visible on minimal/immature schemas (demo above).
+
+**Honest finding**: intra-DAG's forward-propagation value is theoretically clear and MECHANISMALLY CONFIRMED (demo), but its MARGINAL benefit over post-hoc on a mature schema is small/noisy. The compelling case requires the minimal-seed / new-domain setting (where many gaps surface and forward propagation lets downstream nodes + next papers use extended slots).
+
+### Stage 4j: P0 bug fixes ✅
+- `gap_discovery.py validate_gap`: removed biomedical-hardcoded prompt (DISEASE/DRUG/GENE); now domain-agnostic + receives the triggering atom's verbatim evidence_span (not a recurrence count) — "evidence-linked validation" now literal.
+- `qa_generator.py`: full text (no 6000-char truncation); answer = grounded atom's evidence_span; deterministic post-check (exact-match via `_normws`); persisted to `qa_pairs.jsonl` via `run_stage2_resume.py`.
+
+## Stage 5 (goal mode): CCF-A push — Stage 1 fixes
+
+### #2 grounding circularity FIXED ✅
+- Two-layer: layer1 (span in text, LLM compliance) + layer2 (_supports: token-set Jaccard ≥0.5).
+- Jop real numbers: in_text 0.945, supported 0.655, grounded 0.618 (was 99.97% circular).
+- Perturbation validated: swap-spans → support 97→9 (−91%, monotone); null → 97→97 (sanity). Non-circular.
+
+### #9 lookup bypass FIXED (new soft point via 扫同类) ✅
+- lookup() was upgrading atoms to grounded using only layer1, bypassing layer2 support.
+- Fixed: lookup-upgraded atoms re-pass BOTH layers.
+
+### #3 QA circularity FIXED ✅
+- QA answer now two-layer verified (in_text + _supports atom). grounded = in_text AND supported.
+- Still pending: 49-paper run to persist (0 currently).
+
+### #6/#1 rebind + recall (from prior) ✅
+- rebind: surface+type (0→4 candidates). recall probe: 0→2 gaps (Jop).
+
+### Validator dimension-correction FIXED ✅
+- validate_gap judges correct dimension (entity_type/subtype/relation), rejects phenomenon-as-entity (shear_band).
+- Jop 3 runs: 8 gaps→0 accept (mis-typed rejected), 37→1, 2→0. Strict now.
+
+### #5 adaptive fission DISABLED ✅
+- Dead code (0 triggers, LLM conf 0.85+). Removed from execution path.
+
+### NEW soft point: atoms not persisted in 49-paper results
+- stage2_evo_off/results.jsonl only stored counts, not atoms — QA/baseline cannot reuse.
+- Fixed in run_stage2_resume.py + run_multi_seed.py (now write atoms.jsonl).
+
+### NEW soft point: recall probe variance
+- 2-37 gaps on same paper across runs. Must aggregate multi-seed.
+
+### Stage 1 status: ①②③⑤ done, ④ multi-seed running, ⑤ QA needs 49-paper rerun (pending ④ infra)
+
+## Stage 5 (goal mode): CCF-A push — Stage 2/3 progress
+
+### Stage 2 COMPLETE (降级决策)
+- arm C (intra-DAG) 20/20: 6 extensions, 5 papers, v4.0→4.2, 24.6 calls/paper
+- arm B (post-hoc) 20/20: 0 extensions, 8.0 calls/paper (used blind enum-miss, unfair)
+- 4/6 arm C extensions were bloat/mis-typed (roughness x3, surface_tension as entity_type)
+- FIXED: validator near-dup gate (token Jaccard >=0.5) + canonicalize() + apply_schema_extension uses validator's corrected gap_type
+- DECISION: self-evolution UNSTABLE on mature v4 (high variance, quality issues) → DOWNGRADED to system capability per discipline #5. Main line → extraction + downstream.
+
+### Stage 3 ⑧ EDC baseline — BLOCKED
+- WebSearch budget exhausted (200/200), WebFetch arxiv blocked by network.
+- Cannot confirm EDC repo URL or run it. Honest: EDC baseline not done.
+- Will write as limitation OR find alternative if network restored.
+
+### Stage 3 ⑨ downstream task 1 — discriminative but small
+- 5-way relation classification: baseline 1.000 vs perturbed 0.250 (drop -0.75, discriminative)
+- BUT only 20 relations across 14 papers — too small for CCF-A benchmark
+- CRITICAL FINDING: 0 conflicts extracted across 14 papers!
+  Relation dist: applies_in=2, applies_in_regime=7, derives_from=7, generalizes=2, supports=2, conflicts=0
+- schema v4 "multi-mechanism competition" claim NOT supported by data (0 conflicts).
+- Per discipline #1: cannot claim "captures competition" — must downgrade to "captures regime-complementarity"
+- Task repositioned: "structured relation classification" (not "multi-mechanism verification")
+
+### Blocking issues for CCF-A
+1. No EDC baseline (network blocked)
+2. Downstream too small (14 papers, 20 relations)
+3. schema v4 "competition" claim invalid (0 conflicts)
+4. Multi-seed CI only seed 1 (14/20), seeds 2/3 not run
+5. atoms not persisted for 49-paper run (only 14 papers have atoms)
+
+## Stage 3 ⑧ EDC baseline — IN PROGRESS (network unblocked via Playwright)
+
+### Network unblocked
+- Playwright MCP allowlist added (browser_navigate/snapshot/click/evaluate etc. auto-approved)
+- Used Playwright to fetch arxiv.org/abs/2404.03868 + github.com/clear-nus/edc
+- EDC repo: https://github.com/clear-nus/edc (cloned to .research_tmp/edc)
+- EDC paper: arXiv 2404.03868, EMNLP 2024, "Extract, Define, Canonicalize"
+
+### EDC runnability assessment
+- EDC default: Mistral-7B-Instruct (local, needs GPU) + e5-mistral-7b embedder (local, needs GPU)
+- No GPU here. BUT EDC supports OpenAI-compatible API path (is_model_openai check).
+- ADAPTED EDC to run on DeepSeek API:
+  - is_model_openai: accept "deepseek"/"api:" in name (was gpt-only)
+  - openai_chat_completion: new openai client API + OPENAI_BASE_URL env (DeepSeek v1)
+  - sc_embedder: will use lightweight sentence-transformer (all-MiniLM-L6-v2, CPU-ok) instead of e5-mistral-7b
+- Created isolated venv .research_tmp/edc_venv (not polluting backend)
+- Installing sentence-transformers + openai (torch heavy, background)
+
+### Fair comparison note
+- EDC outputs relation triplets; we output L1/L2/L3 atoms (richer). Comparison must unify
+  on relation-extraction scope (compare our L2+L3 CONTRIBUTION_RELATION vs EDC triplets).
+
+## Stage 6: Schema deep restructure — self-evolving knowledge hypergraph
+
+### Direction (user-confirmed)
+- FULL RESTRUCTURE: old L1/L2/L3 enum + flat atoms → DEPRECATED (data voided).
+- New: knowledge HYPERGRAPH representation (hyperedge connects N nodes, native n-ary, qualifiers).
+- Deep structural self-evolution: META-hypergraph (schema is itself a hypergraph of types+patterns+subclass edges) EVOLVES during extraction.
+- Claim relations = a hyperedge pattern type (not a separate layer).
+- Try deep first; fall back to middle layer (subclass/pattern-induction/split-merge) if deep blocks.
+- Middle-layer ops (pattern induction, split, merge) also usable WITHIN deep.
+
+### Frontier survey (实查 2024-2026, for novelty positioning)
+- Hyper-KGGen (KDD 2026): knowledge hypergraph generation + skill evolution (NOT schema structure evolution) — closest occupier.
+- Agentic Ontology (ESWC 2026 workshop): RDF/OWL + subclass evolution — but light domain (restaurant menu), OWL inflexible for physics n-ary/equations.
+- DIAL-KG (Springer 2026): dynamic schema induction.
+- Hypergraph event schema induction (Qin 2024): schema induction ON hypergraph — supports feasibility of trigger mechanism.
+- TGDK 2026: 6 RDF-extension approaches for competing/evolving claims (RDF-star, Named Graphs, N-ary, 4D Fluents) — but all RDF-ecosystem, not hypergraph-native.
+- GAP (our position): hypergraph representation + STRUCTURAL schema self-evolution + physics domain + evidence-anchored + intra-extraction forward propagation — NO prior work combines all.
+
+### Implementation status
+- `hypergraph_schema.py` CORE DONE ✅:
+  - HGNode (multi-label, properties) — resolves old single-inheritance issue.
+  - Hyperedge (N nodes, roles, qualifiers, evidence) — n-ary native.
+  - InstanceHypergraph (per-paper).
+  - MetaHypergraph (the evolving schema): meta-nodes + patterns + meta-edges (subclass_of/type_relation/pattern_dependency).
+  - 4 evolution ops: add_meta_node, add_pattern, add_subclass, split_meta_node, merge_meta_nodes.
+  - subclass-aware validate (structural mismatch → evolution trigger).
+  - to_prompt (forward propagation: downstream nodes get evolved schema).
+  - seed_meta_hypergraph (minimal 4 types + 3 patterns, room to evolve).
+- All tested working: validate passes/fails correctly, subclass propagation works, version bumps.
+
+### TODO (next)
+- Extractor producing hyperedges (LLM prompt → InstanceHypergraph).
+- Evolution trigger (validate fail / instability → probe).
+- Probe (evidence-anchored LLM propose meta-structure change).
+- Forward propagation in chained extractor.
+- Open problems to solve in-flight: trigger non-NP-hard, structural evidence anchoring, bloat control, forward-propagation causality.

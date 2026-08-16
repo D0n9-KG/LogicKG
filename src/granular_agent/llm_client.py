@@ -45,12 +45,12 @@ def call_llm(prompt: str, model: str = "deepseek-chat", max_tokens: int = 4000,
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            raw = urllib.request.urlopen(req, context=_CTX, timeout=180).read()
+            raw = urllib.request.urlopen(req, context=_CTX, timeout=90).read()
             return json.loads(raw)["choices"][0]["message"]["content"]
         except Exception:
-            if attempt == 2:
+            if attempt == 1:
                 return None
     return None
 
@@ -73,12 +73,12 @@ def call_paratera(prompt: str, model: str = "Kimi-K2.6", max_tokens: int = 4000,
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            raw = urllib.request.urlopen(req, context=_CTX, timeout=180).read()
+            raw = urllib.request.urlopen(req, context=_CTX, timeout=90).read()
             return json.loads(raw)["choices"][0]["message"]["content"]
         except Exception:
-            if attempt == 2:
+            if attempt == 1:
                 return None
     return None
 

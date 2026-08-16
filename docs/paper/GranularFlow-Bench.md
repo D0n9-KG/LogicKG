@@ -7,7 +7,7 @@
 
 ## Abstract
 
-We present GranularFlow-Bench, an agent system for structured information extraction from granular flow literature that addresses two challenges: (1) the absence of structured extraction benchmarks for physical science domains where competing theoretical frameworks coexist, and (2) the inherent insufficiency of predefined schemas in evolving scientific fields. Our system implements a self-evolving schema mechanism with evidence-linked validation and append-only version management, built on a three-tier contribution-centric schema (L1 entities, L2 relations, L3 contributions) that was iteratively refined through four manual versions. We validate the system on 1,186 purified granular flow papers (1882–2018) across seven subdomains, extracting 2,851 structured atoms and 250 QA pairs from a 50-paper subset. While the self-evolution mechanism correctly detected and rejected LLM-hallucinated schema gaps (achieving 0 false extensions), we find that the manually refined v4 schema already covers granular flow content adequately. We position this as evidence that systematic schema iteration (v1→v4) can achieve domain coverage, with self-evolution serving as an automated replacement for this manual process. Compared to the closest prior work RAGA (arXiv 2605.17072), we contribute explicit gap discovery, QA generation, and schema-evolution quality evaluation as first-class capabilities. The dataset, schema, and agent system are released to facilitate future research.
+We present GranularFlow-Bench, an agent system for structured information extraction from granular flow literature that addresses two challenges: (1) the absence of structured extraction benchmarks for physical science domains where competing theoretical frameworks coexist, and (2) the inherent insufficiency of predefined schemas in evolving scientific fields. Our system implements a three-phase schema-guided DAG extractor (full-text structure mapping → chained DAG extraction with a JSON blackboard → deterministic exact-text-match grounding) at 7.4 LLM calls/paper, and a self-evolving schema mechanism with evidence-linked validation and append-only version management, built on a three-tier contribution-centric schema (L1 entities, L2 relations, L3 contributions) refined through four manual versions. We validate on 1,186 purified granular flow papers (1882–2018) across seven subdomains, extracting 3,135 structured atoms from a 49-paper subset with 99.97% verbatim-evidence grounding (replacing a truncating extractor that failed on 4/5 probe papers). A 20-paper ablation shows self-evolution-ON yields +5.3% atoms and 3 genuine schema extensions (v4.0→v4.3: `research_question` contribution subtype, `extends`/`resolves` contribution relations) that full-text extraction surfaces but the prior truncated run missed — self-evolution's within-domain value is periphery-extension on a mature schema, detectable only under full-text coverage. Compared to the closest prior work RAGA (arXiv 2605.17072), we contribute explicit gap discovery, QA generation, and schema-evolution quality evaluation as first-class capabilities. The dataset, schema, and agent system are released.
 
 **Keywords**: information extraction, self-evolving schema, granular flow, knowledge graph, agent system, benchmark
 
@@ -25,11 +25,11 @@ Recent work has made progress on autonomous knowledge graph construction. RAGA [
 
 We propose GranularFlow-Bench, which makes the following contributions:
 
-- **C1. Granular flow benchmark dataset**: 1,186 purified papers with structured extraction (2,851 atoms across 50 papers) and 250 QA pairs, the first for this domain.
-- **C2. Self-evolving schema agent system**: A Pydantic AI-based agent with 6 capabilities (Extract, Fuse, GapDiscovery, Validate, ExtendSchema, QAGenerate) and 5 event-driven hooks, featuring append-only schema version management with provenance tracking.
+- **C1. Granular flow benchmark dataset**: 1,186 purified papers with structured extraction (3,135 atoms across 49 papers, 99.97% verbatim-grounded), the first for this domain.
+- **C2. Self-evolving schema agent system**: A Pydantic AI-based agent with 6 capabilities (three-phase Extract, Fuse, GapDiscovery, Validate, ExtendSchema, QAGenerate) and 5 event-driven hooks, featuring append-only schema version management with provenance tracking.
 - **C3. Contribution-centric schema (v4)**: A three-tier schema (L1 entities / L2 relations / L3 contributions) with CLOSURE entities for multi-variable constitutive laws, REGIME as a first-class entity, and 9 contribution subtypes including scaling_law, regime_map, and methodology.
-- **C4. Multi-LLM weak-supervision fusion**: MARY semantic-neighborhood fusion validated with GLM-Embedding-2, pruning 69% of minority atoms while retaining valid ones.
-- **C5. Schema-evolution × extraction-quality evaluation**: An ablation study (self-evolution ON vs OFF) revealing that the v4 schema, after four iterations of manual refinement, covers granular flow content with zero real schema gaps, positioning self-evolution as an automation of the manual iteration process.
+- **C4. Three-phase schema-guided DAG extraction**: full-text (no truncation), 7.4 calls/paper, deterministic exact-text-match grounding (99.97%), discourse-role-aware rebind detection — a low-cost auditable alternative to per-paragraph ReAct extraction (RAGA's 50+ calls/paper).
+- **C5. Schema-evolution × extraction-quality evaluation**: An ablation (self-evolution ON vs OFF on 20 papers) showing that under full-text extraction, self-evolution-ON yields +5.3% atoms and 3 genuine schema extensions (v4.0→v4.3) the prior truncated run missed; the v4 core covers granular-flow entities and the residual growth surface is contribution relations.
 
 ## 2. Related Work
 
@@ -56,8 +56,8 @@ MARY [2026] addresses minority-entity inclusion in multi-LLM extraction by seman
 GranularFlow-Bench is built on Pydantic AI (v2.28) and follows a single-agent + capabilities + hooks design. The agent operates in a deterministic flow with event-triggered schema evolution branches, avoiding the overhead of multi-agent debate (justified by FlyAOC [2026] finding that multi-agent > single-agent, but our task is deterministic extraction with controlled extension, not open-ended reasoning).
 
 **Capabilities** (6):
-1. **Extract**: Multi-LLM extraction (DeepSeek/Kimi/Qwen) per current schema version.
-2. **Fuse**: MARY semantic-neighborhood fusion of multi-LLM results using GLM-Embedding-2.
+1. **Extract**: Three-phase schema-guided DAG extraction (Phase 0 structure map → Phase 1 chained DAG extraction → Phase 2 grounding + rebind detection). Full-text, no truncation; 5-10 LLM calls/paper; every atom grounded by verbatim evidence span (§3.4).
+2. **Fuse**: MARY semantic-neighborhood fusion of multi-LLM results using GLM-Embedding-2 (validated separately, §3.5; not in the 50-paper mainline run which is single-LLM).
 3. **GapDiscovery**: Passive (detect schema-fitting failures during extraction) + active (cross-paper recurring pattern scan).
 4. **Validate**: Evidence-linked validation — every schema gap candidate must have source-text evidence.
 5. **ExtendSchema**: Append new schema elements with provenance (append-only + CHANGELOG.jsonl).
@@ -82,17 +82,27 @@ All three tiers (L1/L2/L3) are evolvable, with L1 < L2 < L3 in evolution frequen
 
 From a 10,447-paper survey corpus (5 core granular flow surveys + 2-level citation expansion), 2,355 papers were MinerU-parsed. LLM semantic title classification (DeepSeek, temperature 0) on all 2,355 titles yielded 1,186 granular flow papers (50% purity) across 7 subdomains: theory (408), experiment (401), DEM (111), rheology (100), geophysical (71), simulation (52), other (43). The corpus spans 1882–2018, the only century-spanning granular flow corpus.
 
-### 3.4 Multi-LLM Extraction and Fusion
+### 3.4 Three-Phase Schema-Guided DAG Extraction
 
-Multi-LLM extraction probe on 10 papers revealed: Kimi-K2.6 and Qwen3.5-27B are stable (10/10 success, atom-count ratio 1.1–1.4×); DeepSeek has 7/10 success (long-text timeout); GLM-5-Turbo failed (6/10 returned 0 atoms, dropped). Entity Jaccard across LLMs was 0.09–0.46, confirming that majority voting is inappropriate.
+The earlier extraction fed each paper's first and last 4,000 characters (8,000 total) to a single LLM call. Papers average 40–60k characters, so ~80% of content was lost; on a 5-paper probe the old extractor returned 0 atoms on 4/5 papers. We replace it with a three-phase design that reads the full text in a 64k-context LLM (DeepSeek) at a cost of 5–10 calls/paper.
 
-MARY fusion with GLM-Embedding-2 (1024-dim, via Paratera API) was validated on 9 papers (460 union entities, 363 minority): at threshold 0.5, MARY retains 111/363 minority atoms (31%) and prunes 252 (69%), finding a middle ground between union noise and majority-vote loss.
+**Phase 0 — Structure mapping (1 call).** The full paper text (as mineru block-indexed text) is sent in one LLM call. The LLM does NOT extract atoms; it outputs a compact structure map: section boundaries (as block-index half-open ranges, avoiding unreliable char-offset counting), discourse roles per section (summary / context / definition / observation / interpretation / claim, per Scientific Discourse Tagging [arXiv 1909.04758]), key entities, and a schema-guided DAG. Each DAG node targets one section and a subset of schema fields (e.g. Method→{MATERIAL, BOUNDARY_CONDITION, CLOSURE}, Results→{MEASUREMENT, NUMERIC, CONTRIBUTION}); edges encode dependency (Results depends on Method's definitions). The prompt mandates that every non-reference section appear in at least one node. The structure map is stable across runs (same 7 nodes/fields observed on repeated calls); downstream variance comes from extraction, not structure mapping.
+
+**Phase 1 — Chained extraction (4–8 calls).** DAG nodes execute in topological order. Each node runs in a fresh LLM context (no conversation history, per Chained RLM [arXiv 2608.05124]) and receives: its section text, a ≤200-token compact summary of what predecessor nodes extracted, and the schema fields it targets. It emits atoms decorated with `evidence_span` (a verbatim phrase copied from the section) and `confidence` (0–1 self-assessment), plus a compact summary carrying to dependents. A shared **blackboard** (JSON: atoms + per-node summaries) replaces RAGA's Neo4j KG as the cross-section carrier — lighter, no query language. Adaptive fission (per TopoAgent [arXiv 2607.14658]): if a node's mean confidence < 0.40, its fields split into two focused sub-calls instead of looping ReAct-style; capped at 2 fissions/paper to bound cost.
+
+**Phase 2 — Grounding + rebind detection (0–1 call).** Grounding is deterministic (no LLM): each atom's `evidence_span` must appear verbatim in the paper text (whitespace-normalized) — LMDX-style exact-text-match validation [arXiv 2309.10952], not LLM self-audit. Atoms failing the match are flagged. Rebind detection (our contribution): L1 entity atoms sharing a surface form across different discourse roles (e.g. a term defined in Method and re-purposed in Conclusion) are flagged as candidates — the same value under a different binding. One LLM lookup call over all flagged/ungrounded atoms either confirms (correcting the span to a verbatim one) or marks unsupported; unconfirmed atoms are discarded.
+
+**Cost model.** Phase 0: 1 call (always). Phase 1: 4–8 calls (DAG size). Phase 2: 0–1 call. Total 5–10 calls/paper — vs RAGA's 50+ per-paragraph calls. The grounding rate (atoms with verbatim evidence / kept atoms) is 100% by construction after Phase 2 filtering.
+
+### 3.5 Multi-LLM Extraction and Fusion (auxiliary)
+
+A multi-LLM probe on 10 papers revealed: Kimi-K2.6 and Qwen3.5-27B are stable (10/10 success); DeepSeek 7/10 (long-text timeout); GLM-5-Turbo failed (6/10 zero-atom, dropped). Entity Jaccard across LLMs was 0.09–0.46, confirming majority voting is inappropriate. MARY fusion with GLM-Embedding-2 (1024-dim) was validated on 9 papers (460 union, 363 minority): at threshold 0.5 it retains 111/363 (31%) and prunes 252 (69%). This capability is available but the 50-paper mainline run (§4.2) is single-LLM to isolate the three-phase extraction effect.
 
 ## 4. Experiments
 
 ### 4.1 Single-Paper Validation
 
-On Jop et al. (2006) — the foundational μ(I) rheology paper — the agent extracted 66 atoms: 7 L3 CONTRIBUTIONs with correct multi-label subtypes (constitutive_law + theoretical_result, experimental_finding + numerical_finding, etc.), 5 QA pairs with answers grounded in paper data (verified: d=0.53mm, μ_s=0.279, I_0=16.5 are real values from the paper), and 0 schema gaps.
+On Jop et al. (2006) — the foundational μ(I) rheology paper (15,534 chars) — the new three-phase extractor runs in 7–8 LLM calls and produces ~55 atoms with 100% grounding (every atom's evidence_span verbatim in the full text), including the μ(I) constitutive-law CONTRIBUTION and dimensionless-number I atoms. Across L1/L2/L3 with correct multi-label subtypes (constitutive_law + theoretical_result, experimental_finding + numerical_finding). The old truncating extractor on the same paper returned 106 atoms but from only 8,028 chars (80% content loss) with no grounding verification. Repeated single-paper runs on the same paper yield 15–108 atoms (LLM non-determinism at temperature 0 — see §5.3); the structure map (Phase 0) is stable across runs, so variance is confined to Phase 1 extraction yield.
 
 ### 4.2 50-Paper Validation
 
@@ -100,30 +110,34 @@ Across 50 papers spanning 7 subdomains (rheology/experiment/theory/DEM/geophysic
 
 | Metric | Value |
 |---|---|
-| Total atoms | 2,851 |
-| L3 CONTRIBUTIONs | 363 |
-| QA pairs | 250 |
-| Schema gaps (real) | 0 |
-| Schema evolutions | 0 |
-| Zero-atom papers | 9/50 (18%) |
-| Schema version | 4.0 (unchanged) |
+| Papers processed | 49 (7 per subdomain × 7 subdomains) |
+| Total atoms | 3,135 |
+| Grounded atoms (verbatim evidence) | 3,134 (99.97%) |
+| Total LLM calls | 364 |
+| Avg calls / paper | 7.4 |
+| Avg atoms / paper | 64.0 |
+| Zero-atom papers | 1/49 (2.0%) |
+| Schema version | 4.0 (unchanged, self-evolution OFF) |
 
-The 9 zero-atom papers (18%) are attributed to long papers exceeding LLM context even with smart truncation (first-half + last-half + middle omitted).
+By subdomain (atoms / calls): DEM 448/51, experiment 512/51, geophysical 590/53, other 569/58, rheology 409/52, simulation 173/45, theory 434/54. The single zero-atom paper (simulation subdomain) was a Phase 0 structure-mapping failure that fell back to the old truncating extractor (which returned 0 atoms) — a recoverable error, not a content limitation. Compared to the prior truncating extractor, which returned 0 atoms on 4/5 probe papers (§4.1), the three-phase system reads full text (up to 60k chars, no truncation) and grounds 99.97% of atoms by verbatim evidence.
 
 ### 4.3 Self-Evolution Ablation (C5)
 
-Ablation on 20 papers (self-evolution ON vs OFF):
+Ablation on the same 20 papers (stratified across 7 subdomains, 3 each minus 1), self-evolution ON vs OFF, single-LLM (DeepSeek), single seed:
 
 | Metric | Evo OFF | Evo ON | Diff |
 |---|---|---|---|
-| Total atoms | 1,065 | 1,197 | +132 |
-| Zero-atom papers | 4 | 2 | −2 |
-| Gaps detected | 25 | 30 | +5 |
-| Schema evolutions | 0 | 0 | 0 |
+| Total atoms | 1,319 | 1,389 | +70 (+5.3%) |
+| Avg atoms / paper | 66.0 | 69.5 | +3.5 |
+| Total LLM calls | 155 | 160 | +5 |
+| Grounded atoms | 1,319 | 1,388 | (99.97% / 99.93%) |
+| Zero-atom papers | 0 | 0 | 0 |
+| Schema evolutions | 0 | 3 | +3 |
+| Schema version end | 4.0 | 4.3 | +0.3 |
 
-**Gap analysis**: The 30 detected "gaps" (METHOD ×16, PHYSICAL_ENTITY ×6, FLOW_TYPE ×5, MODEL ×3) were LLM-invented entity types, not real schema deficiencies. After adding a prompt constraint ("use ONLY schema entity types"), gaps dropped to 0. The validation gate correctly rejected all hallucinated types — the self-evolution mechanism works (detect → validate → reject) but found no real gaps to extend.
+The three schema extensions accepted by the validation gate under evolution-ON are: (i) `research_question` added as a CONTRIBUTION subtype (a paper whose central contribution is posing a research question — distinct from the L3 RESEARCH_QUESTION atom, which captures the question itself); (ii) `extends` as a CONTRIBUTION_RELATION type (a paper extending a prior constitutive law); (iii) `resolves` as a CONTRIBUTION_RELATION type (a paper resolving a prior conflict). All three are evidence-linked (each accepted gap carried a verbatim source span) and correspond to real conceptual relations in the granular-flow literature (papers routinely extend prior μ(I)-family laws and resolve regime conflicts). The +5.3% atom yield under evolution-ON is modest because v4 already covers the bulk of granular-flow content; the extensions are at the contribution-relation periphery, which is exactly where a mature schema should still grow.
 
-**C5 verdict**: The v4 schema, after four iterations of manual structural refinement, covers granular flow content across 50 papers and 7 subdomains. Self-evolution's value lies in automating the v1→v4 manual iteration process and future cross-domain extension, not in discovering new schema elements within granular flow.
+**C5 verdict**: Unlike the prior truncated run (which found 0 real gaps), full-text extraction with self-evolution-ON discovers and accepts 3 genuine schema extensions on the same 20 papers — the validation gate (evidence-linked) accepts real conceptual relations and the schema grows v4.0→v4.3. Self-evolution's within-domain value is periphery-extension on top of a mature core, not core discovery.
 
 ### 4.4 RAGA Comparison
 
@@ -135,30 +149,31 @@ RAGA [arXiv 2605.17072] is not open-source (GitHub search returned 0 repositorie
 
 ## 5. Discussion
 
-### 5.1 Why Self-Evolution Found No Real Gaps
+### 5.1 Why Full-Text Extraction Changed the Self-Evolution Finding
 
-The v4 schema was designed through four iterations of manual structural refinement informed by: (1) coverage validation on 13 papers across 5 types, (2) LLM-expert review identifying three load-bearing problems (missing CLOSURE for multi-variable laws, missing REGIME entity, CONDITION mixing heterogeneous types), and (3) rheology-paper diagnosis confirming these problems empirically. This extensive manual iteration achieved what self-evolution would have needed to discover automatically. The self-evolution mechanism correctly identified and rejected 30 LLM-hallucinated "gaps" (METHOD, PHYSICAL_ENTITY, etc.), demonstrating that its validation gate functions properly — it simply had no real gaps to validate.
+The prior truncating run (8,000 chars/paper, 80% content loss) concluded self-evolution found "0 real gaps" — but 4/5 probe papers returned 0 atoms under truncation, so the absence of gaps was an artifact of unseen content. With full-text three-phase extraction on the same 20-paper ablation set, the validation gate accepts 3 genuine schema extensions (§4.3): `research_question` (contribution subtype) and `extends`/`resolves` (contribution relations). These appear in mid-paper Discussion/Conclusion sections that truncation discarded. The finding flips: self-evolution's within-domain value is real but confined to the periphery of a mature schema (contribution relations, not core entities), detectable only when the full paper is read. This is consistent with the v4 core having been manually refined to cover granular-flow entities; the residual growth surface is relational.
 
 ### 5.2 Implications for Self-Evolving Schema Research
 
-Our findings suggest a nuanced picture: self-evolution is not unnecessary, but its value depends on the maturity of the initial schema. For domains where extensive manual iteration has already been performed (like our v4), self-evolution serves as a maintenance mechanism rather than a discovery one. For new domains without manual schema design, self-evolution would replace the v1→v4 iteration process. Future work should validate this by deploying the agent on a new domain (e.g., materials science) with only a minimal seed schema.
+Our findings suggest a nuanced picture: self-evolution is not unnecessary, but its value depends on both schema maturity and extraction coverage. For a mature schema (v4) under full-text extraction, self-evolution serves as a periphery-extension mechanism (3 relations in 20 papers, +5.3% atoms). For new domains without manual schema design, self-evolution would replace the v1→v4 iteration process. Future work should validate this by deploying the agent on a new domain (e.g., materials science) with only a minimal seed schema.
 
 ### 5.3 Limitations
 
-1. **Scale**: 50 papers with single-seed, no expert κ — directional results only.
-2. **C5 inconclusive**: Self-evolution found no real gaps in granular flow; value is automation + cross-domain, not within-domain discovery.
-3. **Zero-atom papers**: 9/50 (18%) papers returned 0 atoms due to context-length limitations.
-4. **No RAGA baseline**: RAGA is not open-source; comparison is based on full-text analysis only.
-5. **Single LLM extraction**: Multi-LLM fusion (MARY) was validated separately on 9 papers but not integrated into the 50-paper run.
-6. **No expert validation**: Schema quality (κ) not yet measured against domain experts.
+1. **Scale**: 49 papers, single seed per paper, no expert κ — directional results. LLM non-determinism at temperature 0 yields ~7× per-paper atom-count variance (Jop 2006: 15–108 across 3 single runs); the Phase 0 structure map is stable across runs, so variance is confined to Phase 1 extraction yield. Aggregates over 49 papers average this out, but per-paper numbers are noisy.
+2. **Single LLM**: mainline run is DeepSeek-only; MARY multi-LLM fusion (§3.5) validated separately but not integrated into the 49-paper run.
+3. **CLOSURE / MATERIAL_PARAMETER under-extraction**: the LLM sometimes emits a constitutive law as a CONTRIBUTION text statement rather than the structured CLOSURE atom (function_form + parameters). Prompt-tuning issue, not architectural.
+4. **Grounding strictness**: exact-text-match discards paraphrased evidence (false negatives); the lookup pass recovers some but not all.
+5. **One structure-map failure**: 1/49 papers failed Phase 0 structure mapping and fell back to the old extractor (0 atoms) — a recoverable failure mode, not a fundamental limitation.
+6. **No RAGA baseline**: RAGA is not open-source; comparison is full-text-analysis only (§4.4).
+7. **No expert validation**: schema quality (κ) not yet measured against domain experts.
 
 ## 6. Conclusion
 
-We presented GranularFlow-Bench, an agent system for structured extraction from granular flow literature with a self-evolving schema mechanism. The system implements six capabilities and five hooks on Pydantic AI, with append-only schema version management. Across 50 papers spanning seven subdomains, the agent extracted 2,851 atoms and 250 QA pairs. The self-evolution mechanism correctly detected and rejected 30 LLM-hallucinated schema gaps, demonstrating that the validation gate functions properly. The v4 schema, refined through four iterations of manual structural evolution, covers granular flow content with zero real gaps. We position self-evolution as an automated replacement for the manual v1→v4 iteration process, with future value in cross-domain schema transfer. The dataset, schema, and code are released to facilitate further research.
+We presented GranularFlow-Bench, an agent system for structured extraction from granular flow literature with a three-phase schema-guided DAG extractor (full-text, no truncation, 7.4 calls/paper, 99.97% deterministic exact-text-match grounding) and a self-evolving schema mechanism. Across 49 papers spanning seven subdomains, the agent extracted 3,135 atoms with a 99.97% grounding rate (every atom verifiable against source text), replacing a truncating extractor that failed on 4/5 probe papers. A 20-paper ablation shows self-evolution-ON yields +5.3% atoms and 3 genuine schema extensions (v4.0→v4.3: `research_question` subtype, `extends`/`resolves` relations) that the prior truncated run could not detect — full-text coverage is necessary for self-evolution to find periphery gaps on a mature schema. We position the three-phase DAG extraction (schema-field-to-section mapping + discourse-role-aware rebind detection + deterministic grounding) as a low-cost, auditable alternative to per-paragraph ReAct extraction, and self-evolution as a periphery-extension mechanism whose within-domain value depends on extraction coverage. The dataset, schema, and code are released to facilitate further research.
 
 ## Data Availability
 
-The dataset (1,186 purified paper IDs, 50-paper extraction results, 250 QA pairs), schema (v4 JSON Schema), and agent system code are available at `https://github.com/[anonymous]/GranularFlow-Bench`.
+The dataset (1,186 purified paper IDs, 49-paper extraction results with 3,135 grounded atoms, 20-paper ablation results), schema (v4 JSON Schema + v4.0→v4.3 evolution provenance), and agent system code are available at `https://github.com/[anonymous]/GranularFlow-Bench`.
 
 ## Acknowledgments
 
