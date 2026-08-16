@@ -732,6 +732,22 @@ class MetaHypergraph:
         kid_names = ", ".join(sp.pattern_id for sp in sub_patterns)
         parent.description = (f"{parent.description} [abstract generalization, "
                               f"specialized into: {kid_names}]")
+        # REDESIGN v2 step 4: children INHERIT the parent's pattern_dependency
+        # edges (topology not lost on split). If parent depends_on X, children
+        # also depend_on X (they're specializations of the same relation).
+        parent_deps = [e for e in self.meta_edges
+                      if e.relation in ("depends_on", "constrains", "composes")
+                      and (e.src == pattern_id or e.dst == pattern_id)]
+        for sp in sub_patterns:
+            for e in parent_deps:
+                if e.src == pattern_id:
+                    self.meta_edges.append(MetaEdge(
+                        src=sp.pattern_id, dst=e.dst, relation=e.relation,
+                        props={"paper_id": paper_id, "evidence": evidence, "inherited_from": pattern_id}))
+                elif e.dst == pattern_id:
+                    self.meta_edges.append(MetaEdge(
+                        src=e.src, dst=sp.pattern_id, relation=e.relation,
+                        props={"paper_id": paper_id, "evidence": evidence, "inherited_to": pattern_id}))
         # subclass_of edge: each child IS-A parent (the ontology relation)
         for sp in sub_patterns:
             self.meta_edges.append(MetaEdge(
