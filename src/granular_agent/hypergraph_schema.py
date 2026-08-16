@@ -578,15 +578,24 @@ class MetaHypergraph:
             req_type = rs.get("type")
             if req_type and not any(self.is_subtype(l, req_type) for l in node.labels):
                 return None
-        # qualifier check (controlled extension point): key in pattern's allowed
-        # set AND in the global registry; enum values must be in the enum.
+        # qualifier check (REDESIGN v2): a qualifier key must be in the
+        # pattern's allowed_qualifiers set (pattern-level control — the
+        # pattern declares what qualifiers it carries). The GLOBAL registry
+        # is no longer a hard gate — new keys can be dynamically registered
+        # by the evolution probe (add_qualifier op), so the schema isn't
+        # locked to a fixed key set. For KNOWN enum keys, the value must
+        # still be in the enum (治发散: LLM can't fill free-text where an
+        # enum exists); for new/free keys, any non-empty value is accepted.
         if pat.allowed_qualifiers:
-            if not all(q in pat.allowed_qualifiers and qualifier_value_ok(q, v)
-                       for q, v in he.qualifiers.items()):
+            if not all(q in pat.allowed_qualifiers for q in he.qualifiers.keys()):
                 return None
-        else:
-            if not all(qualifier_value_ok(q, v) for q, v in he.qualifiers.items()):
+            # enum-value check only for keys registered with an enum
+            if not all(qualifier_value_ok(q, v) for q, v in he.qualifiers.items()
+                       if q in QUALIFIER_REGISTRY and QUALIFIER_REGISTRY[q][0] == "enum"):
                 return None
+        # if pattern has no allowed_qualifiers set, accept any key (legacy/
+        # seed patterns that didn't declare) — controlled at probe level.
+        return pat.pattern_id
         return pat.pattern_id
     def add_meta_node(self, type_id: str, description: str, evidence: str = "",
                       paper_id: str = "") -> str:
@@ -607,30 +616,26 @@ class MetaHypergraph:
         pattern.pattern_id = pattern.pattern_id.lower()
         if pattern.pattern_id in self.patterns:
             return self.version
-        # Bounded op (Path C seed skeleton): a new pattern must declare a
-        # family in TOP_LEVEL_FAMILIES. The agent may specialize WITHIN a
-        # family (a new relation kind belongs to an existing content dimension),
-        # but may NOT invent a free-form new top-level dimension. This is the
-        # concrete enforcement of AdaKGC's fixed-top-level + AgentCAT's
-        # conservative policy — cures the A6 divergence disease. Splits bypass
-        # this (run_split sets split_from + inherits the parent's family via
-        # the caller), so over-wide-pattern refinement is never blocked.
-        if pattern.family and pattern.family not in TOP_LEVEL_FAMILIES:
-            return self.version  # reject: free-form new top-level dimension
+        # REDESIGN v2: families are now GROWABLE, not locked to the 6 seed
+        # families. A pattern may declare ANY family; if it's new, this
+        # pattern becomes the family's root (family_roots auto-register).
+        # Divergence is NOT prevented by locking families — it's prevented by
+        # the conservative gate (cross_node>=2, only recurring gaps add) +
+        # merge/retire (dedup + cleanup). Locking families was over-restrictive:
+        # it forced relations not in the 6 physical families (causal/temporal/
+        # uncertainty/etc) into wrong slots or dropped them — real info loss.
+        # The 6 seed families are a STARTING skeleton, not a ceiling.
         self.patterns[pattern.pattern_id] = pattern
-        # TAXONOMY COMPLETENESS (Path C "real ontology"): attach the new
-        # pattern IS-A its family root so it is not an orphan leaf with only
-        # a family tag. Without this, patterns added by the evolution probe
-        # (add_pattern) had no subclass_of edge — only split-born children
-        # did — leaving the taxonomy incomplete (75/85 orphan concretes in
-        # the 8-paper run). Now every pattern lives in the IS-A tree.
+        # TAXONOMY COMPLETENESS: attach the new pattern IS-A its family root
+        # so every pattern lives in the IS-A tree (no orphan leaves). A new
+        # family's first pattern auto-becomes the root.
         root = self.family_roots.get(pattern.family) if pattern.family else None
         if root and root != pattern.pattern_id and root in self.patterns:
             self.meta_edges.append(MetaEdge(
                 src=pattern.pattern_id, dst=root, relation="subclass_of",
                 props={"paper_id": paper_id, "evidence": evidence, "via": "family_root"}))
         elif pattern.family and not root:
-            # first pattern of a family becomes its root
+            # first pattern of a family (seed OR newly-grown) becomes its root
             self.family_roots[pattern.family] = pattern.pattern_id
         self.version = self._bump()
         return self.version
@@ -976,11 +981,13 @@ class MetaHypergraph:
             return out
 
         pats_str = "\n".join(line for r in sorted(roots) for line in render_pat(r, 1)) if roots else "  (none)"
-        families_str = ", ".join(TOP_LEVEL_FAMILIES)
+        # show ALL current families (seed 6 + any grown), so the probe sees
+        # what already exists before proposing a new one.
+        families_str = ", ".join(sorted(set(p.family for p in self.patterns.values() if p.family))) or "(none)"
         return (f"Meta-Hypergraph (schema v{self.version}):\n"
                 f"Node types: {types}\n"
                 f"Node subclass hierarchy: {type_sub_str}\n"
-                f"Top-level content families (FIXED — specialize within, never invent new): {families_str}\n"
+                f"Seed families (growable — specialize within, or propose a new one if none fits): {families_str}\n"
                 f"Hyperedge patterns (taxonomy — indented = IS-A specialization of parent):\n{pats_str}\n")
 
 

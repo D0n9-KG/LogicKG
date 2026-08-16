@@ -108,9 +108,10 @@ For each distinct structural mismatch you judge to be a genuine schema gap (not 
 4. split_meta_node     — split an existing type into a subclass. Needs: type_id (existing), new_sub (new type_id).
 5. merge_meta_nodes   — merge two near-duplicate types. Needs: a, b (existing type_ids), into (a or b).
 
-BOUNDED OPERATION (Constitutional guardrail — a proposal violating this is silently rejected):
-- The top-level content dimensions are FIXED: {families}. Every new pattern's `family` MUST be one of these — the schema grows by SPECIALIZING WITHIN a family, never by inventing a new top-level dimension. Pick the family whose semantics best fits the new relation.
-- The qualifier keys are FIXED to this registry (pick allowed_qualifiers from it only): {qualifier_keys}. A key not in the registry is rejected.
+BOUNDED OPERATION (Constitutional guardrail — divergence is prevented by the
+conservative gate + merge/retire, NOT by locking families/qualifiers):
+- Families are GROWABLE: the seed families {families} are a STARTING skeleton, not a ceiling. If a relation genuinely doesn't fit any existing family, propose a new family name (the first pattern of a new family auto-becomes its root). Prefer fitting an existing family; only invent a new one when no existing family matches.
+- Qualifier keys are EXTENSIBLE: the registry {qualifier_keys} covers common cases. You may reuse these, OR propose a new qualifier key if the relation carries a context dimension none of the existing keys capture (e.g. confidence_level, assumption_scope). New keys should be generalizable, not paper-specific.
 
 Rules:
 - evidence_span MUST be a verbatim phrase copied from the failing hyperedges' evidence above (or empty if none supports it). A proposal with NO supporting evidence will be rejected.
@@ -326,21 +327,13 @@ def validate_proposal(proposal: dict, meta: MetaHypergraph,
                         "suggested_alternative": ex, "proposal": proposal}
     elif op == "add_pattern":
         pid = (proposal.get("pattern_id", "") or "").strip()
-        # Bounded op (deterministic, auditable): family must be a fixed
-        # top-level family. An empty family is allowed here (probe omitted it)
-        # and add_pattern will silently no-op it; a NON-EMPTY out-of-family
-        # value is rejected explicitly so the rejection is auditable.
-        fam = (proposal.get("family", "") or "").strip()
-        if fam and fam not in TOP_LEVEL_FAMILIES:
-            return {"valid": False,
-                    "reason": f"free-form top-level family '{fam}' (bounded op: must be one of {', '.join(TOP_LEVEL_FAMILIES)})",
-                    "proposal": proposal}
-        # qualifier keys must be in the registry (controlled extension point)
-        for q in proposal.get("allowed_qualifiers", []) or []:
-            if q not in QUALIFIER_REGISTRY:
-                return {"valid": False,
-                        "reason": f"qualifier key '{q}' not in controlled registry",
-                        "proposal": proposal}
+        # REDESIGN v2: family is GROWABLE (no longer rejected if not in the
+        # 6 seed families). A new family's first pattern auto-becomes its
+        # root via add_pattern. Divergence is gated by conservative gate
+        # (cross_node>=2) + merge/retire, not by locking families.
+        # qualifier keys are EXTENSIBLE: a proposal may carry keys not in
+        # QUALIFIER_REGISTRY (new context dimensions). They get registered
+        # dynamically. Enum-value checks still apply to KNOWN enum keys.
         new_sig = (tuple(s.get("role", "") for s in proposal.get("role_slots", [])),
                    tuple(s.get("type", "") for s in proposal.get("role_slots", [])))
         for ex_pid, ex_pat in meta.patterns.items():

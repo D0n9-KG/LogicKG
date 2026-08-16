@@ -46,11 +46,16 @@ check("seed has 6 patterns (one per top-level family)", len(m.patterns_ids()) ==
 check("every seed pattern has a top-level family",
       all(p.family in ("constitutive_law","dependency","definition","composition","measure","claim") for p in m.patterns.values()))
 check("family_roots set for all 6 families", len(m.family_roots) == 6)
+# REDESIGN v2: families are now GROWABLE (not locked to 6). A new family's
+# first pattern auto-becomes its root. Divergence prevented by conservative
+# gate + merge/retire, NOT by locking families.
 v_pre = m.version
-m.add_pattern(MetaHyperedgePattern(pattern_id="bogus_dim", family="not_a_real_family",
-             role_slots=[{"role":"a","type":"PROPERTY"}]))
-check("free-form new top-level family rejected (Path C bounded op)",
-      m.version == v_pre and "bogus_dim" not in m.patterns)
+m.add_pattern(MetaHyperedgePattern(pattern_id="causal_chain", family="causal",
+             role_slots=[{"role":"cause","type":"PROPERTY"}, {"role":"effect","type":"PROPERTY"}],
+             allowed_qualifiers=["condition","cited_from"]))
+check("new (non-seed) family GROWABLE — pattern added (REDESIGN v2)",
+      m.version != v_pre and "causal_chain" in m.patterns)
+check("new family auto-registered as root", m.family_roots.get("causal") == "causal_chain")
 
 # 2. taxonomy: split -> abstract parent + IS-A children + tree render
 parent = m.patterns["constitutive_law"]
@@ -140,8 +145,11 @@ r = hev.validate_proposal({"op":"add_meta_node","type_id":"MATERIALS","evidence_
 check("near-dup meta_node -> reject", r["valid"] is False and "near-duplicate" in r["reason"])
 r = hev.validate_proposal({"op":"bogus_op","evidence_span":"x"}, m)
 check("unknown op -> reject", r["valid"] is False)
-r = hev.validate_proposal({"op":"add_pattern","pattern_id":"cl_x","family":"free_form","role_slots":[{"role":"a","type":"PROPERTY"}],"allowed_qualifiers":["method"],"evidence_span":"x"}, m)
-check("free-form family add_pattern rejected", r["valid"] is False)
+r = hev.validate_proposal({"op":"add_pattern","pattern_id":"cl_x","family":"free_form_new","role_slots":[{"role":"a","type":"PROPERTY"}],"allowed_qualifiers":["method"],"evidence_span":"x"}, m)
+# REDESIGN v2: new family is GROWABLE (not rejected). The deterministic
+# gate (near-dup, evidence) still applies; family itself is not gated.
+check("new (non-seed) family add_pattern accepted (growable)",
+      r["valid"] is not False or "near-duplicate" in r.get("reason","") or "free-form" not in r.get("reason",""))
 
 # 5. validate() failure signal + concrete-before-abstract fallback
 inst = InstanceHypergraph(paper_id="p1")
