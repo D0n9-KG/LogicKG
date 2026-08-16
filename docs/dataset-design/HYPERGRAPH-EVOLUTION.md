@@ -2685,3 +2685,15 @@ Step 3: 0 violations after repair（100% reduction）
 - 这是DIAL-KG做不到的能力：不仅检测结构错误，还能指导修复（加definition）
 
 可写入论文：constraint violation detection + repair closed loop, 100% reduction on C9726.
+
+## native baseline n-ary QA对比（redesign后，3篇）
+| paper | native correct | ours correct |
+|-------|---------------|-------------|
+| 0BFD  | 3/8 (0.375)   | 8/8 (1.000) |
+| 5022  | 5/8 (0.625)   | 7/8 (0.875) |
+| C9726 | 5/8 (0.625)   | 7/8 (0.875) |
+**native mean: 0.542 | ours mean: 0.917**
+
+ours 0.917 >> native 0.542 (1.69x)。n-ary 超图 + schema约束 + 自进化
+在下游QA上显著优于native二元三元组。
+这是攻击面#3的修复——redesign后ours仍大幅优于native。
