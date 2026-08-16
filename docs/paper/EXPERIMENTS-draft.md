@@ -12,17 +12,21 @@ DeepSeek-V3 (deepseek-chat), single seed.
 Shared meta + trigger across 4 granular-flow papers (fabric review / kinetic
 theory / numerical constitutive / experiments):
 
-| paper | he | patterns | split | merge | retire | abstract | subclass |
-|-------|----|---------:|------:|------:|-------:|--------:|---------:|
-| 0BFD  | 26 | 14 | — | — | — | 1 | 9 |
-| 5022  | 58 | 19 | — | — | — | 1 | 17 |
-| C9726 | 83 | 30 | — | — | — | 2 | 33 |
-| 00180 | 72 | 32 | — | — | — | 4 | 38 |
+| paper | he | patterns | split | merge | retire | rename | gr |
+|-------|----|---------:|------:|------:|-------:|-------:|----:|
+| 0BFD  | 31 | 15 | 1 | 0 | 0 | 0 | 1.00 |
+| 5022  | 78 | 18 | 0 | 0 | 2 | 0 | 0.90 |
+| C9726 | 67 | 20 | 0 | 1 | 0 | 0 | 0.73 |
+| 00180 | 60 | 22 | 1 | 1 | 1 | 0 | 0.97 |
+| 7E7A  | 301 | 36 | 2 | 0 | 1 | 0 | 0.80 |
+| D876  | 73 | 47 | 0 | 1 | 4 | 2 | 0.86 |
+| 46C3  | 177 | 59 | 1 | 3 | 0 | 1 | 0.90 |
+| 08CE  | 118 | 75 | 1 | 1 | 3 | 2 | 0.91 |
 
-Bidirectional evolution fires: 5 splits + 3 merges + 10 retires + 1 rename
-across 8 papers (prior run). IS-A taxonomy grows (9→38 subclass edges),
-abstract parents form (1→4). Pattern-level split (top-down, DIAL-KG doesn't
-do) refines over-wide patterns.
+Bidirectional evolution: 6 splits + 7 merges + 11 retires + 5 renames across
+8 papers. All five operations fire. Pattern growth 15→75, 6 abstract parents.
+Grounding 0.73-1.00 (mean 0.88). Rename triggers on unwieldy ids (D876: 2,
+46C3: 1, 08CE: 2).
 
 ### 4.2 Constraint Violation Detection (DIAL-KG-can't-do)
 
