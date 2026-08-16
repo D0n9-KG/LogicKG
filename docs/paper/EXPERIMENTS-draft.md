@@ -89,16 +89,38 @@ is strict). Single seed (deepseek non-determinism).
 (0.375 vs 0.625 — within noise for n=8). The n-ary correct rate 0.917 across
 3 papers is more stable than single-paper gain.
 
-### 4.5 Comparison with DIAL-KG
+### 4.5 Comparison with Native Baseline (n-ary QA)
+
+Native baseline = same DeepSeek-V3, same chunking, but binary triplets (no
+schema, no n-ary, no evolution). 3 papers × 8 questions, blind judge:
+
+| paper | native correct | ours correct |
+|-------|---------------|-------------|
+| 0BFD  | 3/8 (0.375)   | 8/8 (1.000) |
+| 5022  | 5/8 (0.625)   | 7/8 (0.875) |
+| C9726 | 5/8 (0.625)   | 7/8 (0.875) |
+| **mean** | **0.542** | **0.917** |
+
+Ours 0.917 vs native 0.542 (1.69×). The n-ary hypergraph + schema constraint
++ self-evolution yields significantly better downstream QA than schema-free
+binary triplets.
+
+### 4.6 Comparison with DIAL-KG (qualitative + quantitative)
 
 | dimension | DIAL-KG | ours |
 |-----------|---------|------|
 | schema structure | flat predicates + IS-A | meta-hypergraph + IS-A + pattern dependencies |
 | evolution direction | bottom-up merge/retire | bottom-up merge + top-down split |
-| constraint detection | none | 38 violations (referenced-undefined) |
+| constraint detection | none | 38 violations + repair (14→0, 100%) |
 | qualifier control | fixed attributes | growable + gate |
 | family | schema-free (no families) | growable families + gate |
 | split | no | pattern-level (DIAL-KG doesn't do) |
+| model | Qwen-Max | DeepSeek-V3 |
+
+DIAL-KG reports WebNLG F1 0.865 (Qwen-Max); we cannot directly compare on
+WebNLG (schema-free single-sentence setting doesn't suit our schema-constrained
+approach — §4.6 limitations). Our advantages are in dimensions DIAL-KG lacks:
+pattern-level topology, split, and constraint violation detection.
 
 ### 4.6 Limitations (honest)
 - No gold precision/recall (requires expert annotation)
