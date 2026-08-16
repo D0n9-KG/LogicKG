@@ -2629,3 +2629,15 @@ constraint violation准确检出，且高rate暴露真抽取gap（参数没定�
 FULL 0.375 < 两消融 0.625 —— 增益反转了！redesign后FULL反而最差。
 这是deepseek单seed噪声（同seed pattern-id Jaccard 0.208）+ n=8太小。
 不能claim增益。n-ary QA方向不稳。
+
+## n-ary QA 3篇（redesign后，d6bcc43a 代码）
+| paper | n_qa | correct | complete |
+|-------|------|---------|----------|
+| 0BFD  | 8 | 8 (1.0) | 6 (0.75) |
+| 5022  | 8 | 7 (0.875) | 1 (0.125) |
+| C9726 | 8 | 7 (0.875) | 1 (0.125) |
+**mean correct: 0.917 | mean complete: 0.333**
+
+correct 高（0.917，之前0.88）但complete低（0.333 vs 之前0.33）。
+correct稳定高=抽取质量OK；complete低=多实体问题答不全（n-ary结构在某些论文没充分用）。
+n-ary QA可作为correct指标（0.917，之前0.88，方向一致）。
