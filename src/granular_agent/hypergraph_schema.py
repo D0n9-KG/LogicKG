@@ -782,14 +782,18 @@ class MetaHypergraph:
     def detect_constraint_violations(self, instance: "InstanceHypergraph") -> list[dict]:
         """Schema constraint-violation detection (REDESIGN v2 — the富拓扑's
         real value, DIAL-KG can't do this). Deterministic (graph reachability,
-        no LLM). Independent of depends_on edges (detects the gap directly):
-        every NON-definition pattern edge that references a NUMERIC/parameter
-        node should have that node DEFINED by some definition-family edge.
-        A non-definition edge referencing a node not defined by any definition
-        edge = constraint violation (referenced-but-undefined entity).
-        Returns one record per violation."""
+        no LLM). Independent of depends_on edges (detects the gap directly).
+
+        NARROWED (after real-paper validation): only NUMERIC nodes (parameters/
+        constants/values) referenced by non-definition edges must be defined —
+        generic PROPERTY terms (stress/shear_rate) are universal physics
+        vocabulary that don't need per-paper definition. The first run flagged
+        71 violations almost all false-positives (stress/shear_rate flagged as
+        undefined = wrong). Only NUMERIC nodes (a paper-specific parameter like
+        a friction coefficient μ_s) referenced-but-undefined is a real schema
+        gap (the constitutive law uses a constant the schema never defined)."""
         violations = []
-        # build: set of node surfaces that ARE defined (appear in definition-family edges)
+        # build: set of node surfaces that ARE defined (in definition-family edges)
         defined_surfaces: set[str] = set()
         for he in instance.hyperedges.values():
             pat = self.patterns.get(he.pattern_type)
@@ -798,20 +802,22 @@ class MetaHypergraph:
                     n = instance.nodes.get(nid)
                     if n:
                         defined_surfaces.add(n.surface)
-        # check non-definition edges: their nodes should be defined
+        # check non-definition edges: their NUMERIC nodes should be defined
         for he in instance.hyperedges.values():
             pat = self.patterns.get(he.pattern_type)
             if not pat or pat.family == "definition":
-                continue  # definition edges define, don't need defining
+                continue
             for nid in he.node_ids:
                 n = instance.nodes.get(nid)
                 if not n:
                     continue
-                # a node referenced by a non-definition pattern but not defined
-                # anywhere = referenced-but-undefined (potential constraint viol)
+                # only NUMERIC nodes (parameters/constants) need definition;
+                # generic PROPERTY terms are universal vocab, not violations
+                if "NUMERIC" not in n.labels:
+                    continue
                 if n.surface not in defined_surfaces:
                     violations.append({
-                        "violation": "referenced_undefined_entity",
+                        "violation": "referenced_undefined_numeric",
                         "pattern": he.pattern_type,
                         "node_surface": n.surface,
                         "edge_eid": he.eid,
