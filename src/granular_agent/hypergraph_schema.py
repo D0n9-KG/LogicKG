@@ -740,6 +740,84 @@ class MetaHypergraph:
         self.version = self._bump()
         return self.version
 
+    # ---- REDESIGN v2 step 2: pattern-level dependency/constraint topology ----
+    # These give the schema layer REAL topology beyond the IS-A tree (what
+    # DIAL-KG's flat schema lacks). The value is schema constraint-violation
+    # detection (a DIAL-KG-can't-do capability, quantifiable).
+
+    def add_pattern_dependency(self, dependent: str, depended_on: str,
+                               rel: str = "depends_on", evidence: str = "",
+                               paper_id: str = "") -> str | None:
+        """Record a pattern-level dependency/constraint edge (REDESIGN v2).
+        rel in {depends_on, constrains, composes}. E.g. a constitutive_law
+        edge that references a parameter defined by a `defines` edge =>
+        constitutive_law depends_on defines. This is inferred from instances
+        (graph reachability: pattern A's node appears in pattern B's edge
+        where B is a definition-family pattern) — deterministic, not LLM."""
+        if dependent not in self.patterns or depended_on not in self.patterns:
+            return None
+        if dependent == depended_on:
+            return None
+        # avoid duplicate
+        for e in self.meta_edges:
+            if (e.src == dependent and e.dst == depended_on
+                    and e.relation == rel):
+                return self.version
+        self.meta_edges.append(MetaEdge(
+            src=dependent, dst=depended_on, relation=rel,
+            props={"paper_id": paper_id, "evidence": evidence}))
+        self.version = self._bump()
+        return self.version
+
+    def pattern_dependents(self, pattern_id: str, rel: str = "depends_on") -> list[str]:
+        """Patterns that depend_on / constrains / composes the given pattern."""
+        return [e.src for e in self.meta_edges
+                if e.relation == rel and e.dst == pattern_id]
+
+    def pattern_dependencies(self, pattern_id: str, rel: str = "depends_on") -> list[str]:
+        """Patterns the given pattern depends on / constrains / composes."""
+        return [e.dst for e in self.meta_edges
+                if e.relation == rel and e.src == pattern_id]
+
+    def detect_constraint_violations(self, instance: "InstanceHypergraph") -> list[dict]:
+        """Schema constraint-violation detection (REDESIGN v2 — the富拓扑's
+        real value, DIAL-KG can't do this). Deterministic (graph reachability,
+        no LLM). Independent of depends_on edges (detects the gap directly):
+        every NON-definition pattern edge that references a NUMERIC/parameter
+        node should have that node DEFINED by some definition-family edge.
+        A non-definition edge referencing a node not defined by any definition
+        edge = constraint violation (referenced-but-undefined entity).
+        Returns one record per violation."""
+        violations = []
+        # build: set of node surfaces that ARE defined (appear in definition-family edges)
+        defined_surfaces: set[str] = set()
+        for he in instance.hyperedges.values():
+            pat = self.patterns.get(he.pattern_type)
+            if pat and pat.family == "definition":
+                for nid in he.node_ids:
+                    n = instance.nodes.get(nid)
+                    if n:
+                        defined_surfaces.add(n.surface)
+        # check non-definition edges: their nodes should be defined
+        for he in instance.hyperedges.values():
+            pat = self.patterns.get(he.pattern_type)
+            if not pat or pat.family == "definition":
+                continue  # definition edges define, don't need defining
+            for nid in he.node_ids:
+                n = instance.nodes.get(nid)
+                if not n:
+                    continue
+                # a node referenced by a non-definition pattern but not defined
+                # anywhere = referenced-but-undefined (potential constraint viol)
+                if n.surface not in defined_surfaces:
+                    violations.append({
+                        "violation": "referenced_undefined_entity",
+                        "pattern": he.pattern_type,
+                        "node_surface": n.surface,
+                        "edge_eid": he.eid,
+                        "evidence": he.evidence_span[:80]})
+        return violations
+
     def rename_pattern(self, old_id: str, new_id: str,
                        evidence: str = "", paper_id: str = "") -> str | None:
         """Rename a pattern (the 5th bounded op, ANNEAL/SCION edit type).

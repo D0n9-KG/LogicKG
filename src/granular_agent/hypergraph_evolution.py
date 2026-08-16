@@ -977,6 +977,53 @@ def run_rename(meta: MetaHypergraph, llm: str = "deepseek") -> list[dict]:
     return applied
 
 
+# ===========================================================================
+# REDESIGN v2 step 2: pattern-level dependency inference (schema富拓扑).
+# Infer pattern_dependencies FROM INSTANCES (deterministic graph reachability,
+# no LLM — A4 preserved). If pattern A's edge references a node that pattern B
+# (a definition-family pattern) also references => A depends_on B (A uses an
+# entity B defines). This builds the schema-layer topology that DIAL-KG's
+# flat schema lacks, and enables detect_constraint_violations (DIAL-KG-can't-do).
+# ===========================================================================
+
+def infer_pattern_dependencies(meta: MetaHypergraph, instance: InstanceHypergraph,
+                               paper_id: str) -> list[dict]:
+    """Infer pattern-level dependency edges from instance co-occurrence.
+    For each pair (pattern_a, pattern_b) where pattern_b is a definition-family
+    pattern: if a node in an a-edge also appears in a b-edge, then a depends_on
+    b (a references an entity b defines). Deterministic."""
+    # node_surface -> set of patterns referencing it
+    node_pats: dict[str, set[str]] = {}
+    for he in instance.hyperedges.values():
+        for nid in he.node_ids:
+            n = instance.nodes.get(nid)
+            if n:
+                node_pats.setdefault(n.surface, set()).add(he.pattern_type)
+    applied = []
+    for surface, pats in node_pats.items():
+        definers = {p for p in pats if p in meta.patterns
+                    and meta.patterns[p].family == "definition" and not meta.patterns[p].deprecated}
+        if not definers:
+            continue
+        # any non-definition pattern referencing this node depends_on its definers
+        for a in pats:
+            if a in definers:
+                continue
+            pat_a = meta.patterns.get(a)
+            if not pat_a or pat_a.deprecated:
+                continue
+            for b in definers:
+                if a == b:
+                    continue
+                nv = meta.add_pattern_dependency(a, b, rel="depends_on",
+                                                 evidence=f"node '{surface}' co-referenced",
+                                                 paper_id=paper_id)
+                if nv:
+                    applied.append({"dependent": a, "depends_on": b,
+                                    "via_node": surface, "version": nv})
+    return applied
+
+
 def run_split(meta: MetaHypergraph, instance: InstanceHypergraph, paper_id: str,
               llm: str = "deepseek", prefer: str = "auto") -> list[dict]:
     """Apply pattern-level splits detected by detect_split_triggers.

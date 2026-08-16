@@ -28,7 +28,8 @@ from granular_agent.llm_client import call_llm, parse_json_response
 from granular_agent.hypergraph_schema import seed_meta_hypergraph, InstanceCorpus, MetaHypergraph
 from granular_agent.hypergraph_extractor import extract_hypergraph
 from granular_agent.hypergraph_evolution import (
-    EvolutionTrigger, run_split, run_merge, run_retire, run_rename)
+    EvolutionTrigger, run_split, run_merge, run_retire, run_rename,
+    infer_pattern_dependencies)
 
 
 class GranularFlowAgent:
@@ -317,6 +318,8 @@ class GranularFlowAgent:
         merges = run_merge(self.meta_hg, inst, paper_id=paper_id, llm=llm)
         retires = run_retire(self.meta_hg, inst, paper_id=paper_id)
         renames = run_rename(self.meta_hg, llm=llm)
+        deps = infer_pattern_dependencies(self.meta_hg, inst, paper_id=paper_id)
+        violations = self.meta_hg.detect_constraint_violations(inst)
         result = {
             "paper_id": paper_id,
             "n_nodes": res["n_nodes"],
