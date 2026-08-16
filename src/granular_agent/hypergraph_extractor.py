@@ -92,7 +92,7 @@ Rules:
 - NUMERIC NODES (REQUIRED): every number, constant, coefficient, exponent, and measured value in the section MUST be emitted as a NUMERIC node (with properties.value set). Constitutive-law parameters (mu_s, friction coefficient, exponents, critical values) MUST be nodes AND wired into the constitutive_law hyperedge. A physics section with zero NUMERIC nodes is WRONG.
 - NO ORPHAN NODES: every node you emit MUST participate in >=1 hyperedge. If you would emit a node that no edge connects, either (a) find the edge it belongs to and add it, or (b) do NOT emit that node. Dangling mentions are noise.
 - NO DUPLICATE NODES: before emitting a node, check if an existing node has the SAME surface (case/punctuation-insensitive). If so, reuse its nid; do NOT create a second node for "Granular Materials" when "granular materials" exists.
-- Constitutive laws: emit pattern_type "constitutive_law", qualifiers function_form="<equation text>", parameters=["mu_s","mu_2",...]. All parameters in `parameters` MUST also appear as NUMERIC nodes in the SAME hyperedge's node_ids.
+- Equations/laws: when the section states a quantitative law (output computed from inputs + parameters), emit ONE n-ary hyperedge wiring the output + every input + every named constant/parameter as nodes. Carry the equation text in a qualifier if a function-form key is among the pattern's allowed_qualifiers. Pick the pattern_type from the schema's existing patterns (shown above); if the schema lacks a fitting pattern, use the relation's natural name as pattern_type (the system will validate + evolve the schema to accommodate it).
 - Be exhaustive but wired: extract every distinct entity and relation, and ensure every node is connected. A section typically yields 8-20 nodes and 5-12 hyperedges, with most hyperedges arity>=3.
 - node_ids must reference node nid values you defined in THIS output.
 - CONTROLLED-ENUM relation kind (REQUIRED for any dependency/relates pattern): the
@@ -103,10 +103,8 @@ Rules:
     * "analogy"     — one relation is proposed as analogous/representative of another (possible representation, corresponds to)
     * "composition" — one relation is composed of / accounts for / is a measure of another (divided by, accounts for, is a measure of)
   Do NOT write free-text values like "increases with" or "possible representation" — write the enum value. This constraint is what lets the schema-refinement loop detect over-wide patterns and split them.
-- applies_in_regime (REQUIRED for constitutive_law / dependency_relation / claim_relation):
-  every such hyperedge MUST carry applies_in_regime, a SHORT standardized tag
-  chosen from: dense, quasi-static, inertial, solid-like, flow, static, unknown.
-  If the section does not specify a regime, use "unknown" (never omit).
+- applies_in_regime (when the pattern declares it as an allowed qualifier):
+  carry it as a SHORT tag chosen from: dense, quasi-static, inertial, solid-like, flow, static, unknown. If the section does not specify a regime, use "unknown".
 - cited_from provenance (REQUIRED): every hyperedge carries cited_from, one of:
     * "this_work"   — the relation is asserted by THIS paper's own experiments/analysis
     * "prior_art"   — the relation is reported as another's result being cited/built on (the evidence span will name the cited work or use citation markers)

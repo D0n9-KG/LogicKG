@@ -103,7 +103,7 @@ Failing hyperedges (instance level — these are what the extractor produced but
 
 For each distinct structural mismatch you judge to be a genuine schema gap (not an extraction error), propose ONE evolution operation. Choose from EXACTLY these 5:
 1. add_meta_node      — add a new node TYPE (e.g. a physical category the schema lacks). Needs: type_id (UPPER_SNAKE), description.
-2. add_pattern        — add a new hyperedge PATTERN (a relation the schema lacks, connecting existing or new types). Needs: pattern_id, description, role_slots (list of {{"role":"...","type":"..."}}), allowed_qualifiers (list from the registry below), family (ONE of the fixed top-level families below).
+2. add_pattern        — add a new hyperedge PATTERN (a relation the schema lacks, connecting existing or new types). Needs: pattern_id, description, role_slots (list of {{"role":"...","type":"..."}}), allowed_qualifiers (list — reuse registry keys or propose new), family (an existing family that fits, OR a new family name if none fits).
 3. add_subclass       — declare an existing-or-new type as a specialization of another. Needs: sub (type_id), sup (existing type_id).
 4. split_meta_node     — split an existing type into a subclass. Needs: type_id (existing), new_sub (new type_id).
 5. merge_meta_nodes   — merge two near-duplicate types. Needs: a, b (existing type_ids), into (a or b).
