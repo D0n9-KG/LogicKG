@@ -56,17 +56,12 @@ def mismatch_signature(he: Hyperedge, reason: str) -> tuple:
 
     pattern_type is LLM-named and almost never recurs across nodes, so
     including it would fragment signatures and make cross-node recurrence
-    always 1 — deadlocking the P1 stability signal.
-
-    DECISION-gate-retire-tuning: the role-tuple is ALSO LLM-named and noisy
-    (LLM gives different role names for the same structural gap across nodes),
-    which made cross_node rarely reach 2 even on real recurring gaps (B_MIN2
-    couldn't grow claim/measure families). Key on (arity, qualifier-key-set,
-    reason) instead — arity is the structural shape (how many nodes the edge
-    connects), qualifier-keys capture the context dimensions attempted, reason
-    is the validate failure type. Coarser + more stable => recurring gaps
-    actually fire the gate."""
-    return (len(he.node_ids), frozenset(he.qualifiers.keys()), reason)
+    always 1 — deadlocking the P1 stability signal. Instead we key on
+    (role-tuple, qualifier-key-set, reason): two failures with the same
+    shape are the same structural gap regardless of the surface text or the
+    name the LLM happened to give the pattern.
+    """
+    return (tuple(he.node_roles), frozenset(he.qualifiers.keys()), reason)
 
 
 class EvolutionTrigger:
@@ -90,14 +85,6 @@ class EvolutionTrigger:
 
     def cross_node_count(self, sig: tuple) -> int:
         return len(self.seen.get(sig, {}))
-
-    def cumulative_count(self, sig: tuple) -> int:
-        """Total failure count for a signature (across all nodes/papers).
-        DECISION-gate-retire-tuning: cross_node>=2 is too strict for small
-        corpora (4 papers). A recurring gap that fires at 1 node but >3 times
-        total is also a real gap — accept on cumulative >= threshold too."""
-        nodes = self.seen.get(sig, {})
-        return sum(nodes.values())
 
 
 # ---------------------------------------------------------------------------
@@ -474,10 +461,6 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
     # NOTE: a precise proposal->triggering-failure link is a known refinement;
     # the batch-max is correct (never understates) and fixes the dead signal.
     batch_cross = max((trigger.cross_node_count(sig) for sig in sigs), default=1)
-    # DECISION-gate-reture-tuning: also track cumulative failures (cross-paper
-    # accumulation). cross_node>=2 is too strict for small corpora; a gap that
-    # recurs 3+ times total (even if all at 1 node each) is also real.
-    batch_cumulative = max((trigger.cumulative_count(sig) for sig in sigs), default=1)
     # Probe on the distinct failing hyperedges (dedup by signature)
     distinct_hes = [he for (he, _, _) in sigs.values()]
     proposals = evolution_probe(distinct_hes, meta, paper_id, domain=domain,
@@ -507,15 +490,11 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
         # not by a single failure) are NOT gated; only growth is.
         op = p.get("op", "")
         is_growth = op in ("add_pattern", "add_meta_node", "add_subclass")
-        # DECISION-gate-retire-tuning: accept growth if cross_node>=2 OR
-        # cumulative failures>=3 (cross-paper accumulation for small corpora).
-        gate_pass = batch_cross >= CONSERVATIVE_CROSS_NODE or batch_cumulative >= CONSERVATIVE_CUMULATIVE
-        if is_growth and not gate_pass:
+        if is_growth and batch_cross < CONSERVATIVE_CROSS_NODE:
             evolutions.append({"op": op, "rejected": True,
-                               "reason": f"conservative gate: cross_node={batch_cross} < {CONSERVATIVE_CROSS_NODE} AND cumulative={batch_cumulative} < {CONSERVATIVE_CUMULATIVE} (needs recurrence)",
+                               "reason": f"conservative gate: cross_node={batch_cross} < {CONSERVATIVE_CROSS_NODE} (needs recurrence)",
                                "evidence": p.get("evidence_span", ""),
                                "proposal": p, "cross_node": batch_cross,
-                               "cumulative": batch_cumulative,
                                "node_id": node_id, "paper_id": paper_id})
             continue
         new_ver = apply_proposal(meta, p, paper_id)
@@ -537,12 +516,6 @@ def run_evolution_loop(meta: MetaHypergraph, failing_hes: list[Hyperedge],
 # already-computed cross_node recurrence rather than an LLM judgment (A4
 # circularity preserved — the gate is deterministic).
 CONSERVATIVE_CROSS_NODE = 2
-# DECISION-gate-retire-tuning: cumulative-failure threshold (cross-paper
-# accumulation). A gap recurring 3+ times total (even at 1 node each across
-# papers) is a real schema gap, not a one-off extraction error. This lets
-# small corpora (4 papers) still trigger evolution where cross_node>=2 is
-# too strict (B_MIN2 couldn't grow claim/measure families without it).
-CONSERVATIVE_CUMULATIVE = 3
 
 
 def mismatch_signature_for_proposal(p: dict) -> tuple:
@@ -1243,23 +1216,13 @@ def run_retire(meta: MetaHypergraph, instance: InstanceHypergraph,
         if pid in seeded:
             continue  # seed absent from one paper is normal, not retirement
         if not pat.is_abstract:
-            # case 1: concrete orphan (evolved OR an irrelevant seed) with 0
-            # live instances in this paper. DECISION-gate-retire-tuning: no
-            # longer requires split_from — an irrelevant SEED pattern (e.g.
-            # causal/temporal added as a test seed but never content-activated)
-            # that gets 0 instances should also retire. The original 6 seed
-            # families are protected by the `seeded` set above; new/irrelevant
-            # seeds are NOT protected and get pruned when unused.
-            # But protect family ROOTS (a family root must persist even if one
-            # paper didn't use it — another paper might; retiring a root orphans
-            # the family). Roots are in meta.family_roots values.
-            is_family_root = pid in meta.family_roots.values()
-            if live.get(pid, 0) == 0 and not is_family_root:
-                new_ver = meta.retire_pattern(pid, evidence="zero live instances (orphan or irrelevant seed)",
+            # case 1: concrete evolved orphan with 0 live instances
+            if live.get(pid, 0) == 0 and pat.split_from:
+                new_ver = meta.retire_pattern(pid, evidence="zero live instances after repair",
                                               paper_id=paper_id)
                 if new_ver:
                     applied.append({"pattern_id": pid, "retired": True,
-                                    "reason": "zero instances (orphan or irrelevant seed)",
+                                    "reason": "zero instances (post-repair orphan)",
                                     "version": new_ver})
             continue
         # case 2: abstract parent — retire only if NO active descendant remains
