@@ -98,3 +98,19 @@ paper1.json
 .gapscan/
 .occ_survey/
 .playwright-mcp/
+
+# Runtime/cache + era driver scripts (post-cleanup)
+.codex_tmp/
+backend/artifacts/
+backend/tmp/
+frontend/e2e/
+frontend/playwright-report/
+stage2_evo_off*/
+schema_versions/
+aggregate_stage2.py
+run_stage2*.py
+run_ablation_*.py
+run_multi_seed.py
+run_until_done.sh
+test_5papers.py
+test_jop2006.py
