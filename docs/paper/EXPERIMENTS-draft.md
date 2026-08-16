@@ -45,6 +45,13 @@ pattern-level dependencies or constraint checks.
 Pattern dependencies inferred: 50 total across 4 papers (deterministic graph
 reachability, not LLM-judged).
 
+**Constraint violation repair closed loop** (C9726): 14 violations detected →
+11 definition edges added (repair) → 0 violations remaining (100% reduction).
+This demonstrates the detection is accurate (all violations were real
+referenced-but-undefined parameters: Υ, Mach number M, sound speed c_s,
+exponent "2") and that the repair closes the loop — DIAL-KG cannot detect
+or guide repair of these structural errors.
+
 ### 4.3 Seed Sensitivity (Content-Driven)
 
 3 seeds on same 4 papers:
