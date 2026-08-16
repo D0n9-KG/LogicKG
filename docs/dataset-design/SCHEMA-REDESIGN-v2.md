@@ -101,3 +101,25 @@ split 拆过宽 pattern，父标抽象 + 子 IS-A。但拆的维度单一（按 
 | 模型 | Qwen-Max | DeepSeek-V3 |
 
 三维差距：拓扑 + split + 灵活演化。
+
+## 进展（goal mode 自主推进，2026-08-14/15）
+
+### step 1: 放开三重锁死 ✅ (b6b71972)
+家族可增长 + qualifier key 可扩展 + prompt 去引导。种子敏感性验证内容驱动成立（A↔C 0.86-0.90）。
+
+### gate 调整 ✅ (d2cf8fb4, 验证后定)
+gate v1（改 signature 太粗）→ 撤（pattern 暴跌）。gate v2（只加 cumulative≥3 OR，保留 role-tuple signature）→ 验证：gate 阈值不是 B_MIN2 缺家族根因（LLM 倾向塞现有家族）。gate 调整到此为止。
+
+### step 2: pattern 间依赖富拓扑 ✅ (6fcd2113 + 5390dc88)
+- add_pattern_dependency + infer_pattern_dependencies（从实例归纳，确定性，图可达性）
+- detect_constraint_violations（narrowed 到 NUMERIC，真实论文 71→3 误报清除，3 条真违反）
+- 真实论文验证：11 条依赖 + 3 条真违反（constitutive_law 引用未定义指数"2"）
+- 这是 DIAL-KG 做不到的能力
+
+### step 4: split 拓扑继承 ✅ (5f5bd95e)
+split 后子 pattern 继承父的 pattern_dependency/constraint/composition 边，拓扑不丢。
+
+### 待办
+- step 3 pattern_constraint/composition（增量补充，优先级低于测试）
+- 测试：constraint violation 率作为主指标（4 篇跨论文测，进行中）
+- 多 seed CI + 论文撰写
