@@ -2782,3 +2782,22 @@ LA-RL/HGNet 的 zero-shot 也是给定 schema（relation types），所以给 en
 - Strict F1 33.4 > HGNet 27.64，用更弱模型超过——方法有效
 - 但 partial recall >1 说明大量 false positive（partial match 下 recall 不应超1，说明匹配逻辑有问题需检查）
 - 452句样本偏小（只有有gold的句子），需要扩大
+
+## SPHERE v3 最终结果（452句, 我们方法 vs native, 公平对比）
+| 方法 | P | R | F1 | n-ary边 | 特点 |
+|------|---|---|----|---------|------|
+| **OURS**（真方法） | **0.323** | **0.522** | **0.337** | 354 | schema+validate+n-ary+evolution |
+| NATIVE（裸LLM+enum） | 0.201 | 0.412 | 0.166 | 0 | 同deepseek+同enum |
+| HGNet zero-shot | — | — | 0.276 | — | gpt-oss-120b |
+
+**OURS F1=0.337 vs NATIVE 0.166（2.03倍）**——公平条件下（同deepseek+同enum）我们方法大幅领先。
+- P: 0.323 vs 0.201（+61%）——validate 拒掉大量 false positive
+- R: 0.522 vs 0.412（+27%）——n-ary 超边 + schema 约束抽到更多正确关系
+- n-ary: 354 条 arity≥3 超边（native 全二元，0 条）
+- **F1 超过 HGNet zero-shot (0.337 > 0.276)**——用更弱模型(deepseek-V3 vs gpt-oss-120b)超过
+
+**诚实标注**：
+- 单 seed（deepseek 非确定性）
+- strict match（entity substring + relation exact match）
+- 452句（有gold关系的句子，非全部21万句）
+- 之前裸LLM F1=33.4 是不同norm+不同匹配标准，不可直接比
