@@ -2714,3 +2714,21 @@ ours 0.917 >> native 0.542 (1.69x)。n-ary 超图 + schema约束 + 自进化
 pattern: 15→18→20→22→36→47→59→75
 grounding: 0.73-1.00（均值~0.88，比之前好）
 6 abstract parents + rename 触发 5次
+
+## SciER评测结果（200句，419 gold relations）
+| 方法 | P | R | F1 | 备注 |
+|------|---|---|----|----|
+| Ours (n-ary) | 0.136 | 0.126 | 0.034 | 218 hyperedges, 115 n-ary(>2) |
+| Native (binary) | 0.118 | 0.291 | 0.069 | 无schema/n-ary |
+| LA-RL (Gemini-2.5 zero-shot) | — | — | 31.67 | 监督61.10 |
+| HGNet (zero-shot) | — | — | 27.64 | 监督62.36 |
+
+**结果不好**：Ours F1=0.034 < Native F1=0.069。我们P略高(0.136 vs 0.118)但R极低(0.126 vs 0.291)。
+
+诊断：
+1. R低=我们抽的pattern_type(如constitutive_law/dependency)和SciER的gold relation type(如Used-For/Part-Of)对不上。我们用物理域家族名，SciER是CS域关系。
+2. P略高=schema约束让false positive少，但代价是recall大跌。
+3. 两者F1都很低(<0.07)=deepseek在SciER CS域零样本抽取本来就差。
+4. LA-RL/HGNet的F1是31.67/27.64(零样本)或61.10/62.36(监督)——我们0.034远低于这些。
+
+根因：我们的方法为物理域设计(6家族)，在SciER的CS域(AI论文:Method/Task/Dataset)上schema不适配。pattern_type用我们的家族名(constitutive_law/dependency)而非SciER的关系名(Used-For/Part-Of)，导致匹配率极低。
