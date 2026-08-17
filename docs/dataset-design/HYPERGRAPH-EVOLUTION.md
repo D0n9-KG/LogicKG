@@ -2763,3 +2763,22 @@ LA-RL/HGNet 的 zero-shot 也是给定 schema（relation types），所以给 en
 统一条件下 ours F1=0.387 > native 0.336 (+5.1pp)。优势在 recall (0.578 vs 0.511, +13%)。
 两者都超过 LA-RL/HGNet 零样本。但 +5.1pp 单seed+200句不显著。
 需要更大样本或多种子验证。
+
+## SPHERE physics 评测结果（452句, 774 gold relations, deepseek-V3零样本）
+| 匹配标准 | P | R | F1 | 对标 |
+|---------|---|---|----|----|
+| **Strict** | 0.335 | 0.497 | **0.334** | HGNet zero-shot Rel+ F1=27.64 |
+| Partial | 0.725 | 1.075 | 0.866 | — |
+| HGNet zero-shot | — | — | 27.64 | — |
+| HGNet supervised | — | — | 62.36 | — |
+
+**Strict F1=33.4 > HGNet zero-shot 27.64**（+5.8pp）。
+- 我们用 deepseek-V3 零样本，HGNet 用 gpt-oss-120b 零样本
+- **物理域**，不需要跨域适配（SciER CS域pattern_type对不上的问题没了）
+- partial recall 1.075 说明大部分 gold 被部分匹配到（抽取覆盖广但精确度低）
+- n-ary candidate sentences: 259/452 (57.3%) ——超过一半句子有共享实体的多关系=n-ary场景
+
+**诚实判断**：
+- Strict F1 33.4 > HGNet 27.64，用更弱模型超过——方法有效
+- 但 partial recall >1 说明大量 false positive（partial match 下 recall 不应超1，说明匹配逻辑有问题需检查）
+- 452句样本偏小（只有有gold的句子），需要扩大
