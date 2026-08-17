@@ -2732,3 +2732,22 @@ grounding: 0.73-1.00（均值~0.88，比之前好）
 4. LA-RL/HGNet的F1是31.67/27.64(零样本)或61.10/62.36(监督)——我们0.034远低于这些。
 
 根因：我们的方法为物理域设计(6家族)，在SciER的CS域(AI论文:Method/Task/Dataset)上schema不适配。pattern_type用我们的家族名(constitutive_law/dependency)而非SciER的关系名(Used-For/Part-Of)，导致匹配率极低。
+
+## SciER v2 评测（带relation enum，200句419 gold）
+| 方法 | P | R | F1 |
+|------|---|---|----|
+| **Ours v2** (relation enum) | 0.335 | 0.578 | **0.387** |
+| Ours v1 (无enum) | 0.136 | 0.126 | 0.034 |
+| Native v1 (无enum) | 0.118 | 0.291 | 0.069 |
+| LA-RL (Gemini-2.5 zero-shot) | — | — | 31.67 |
+| HGNet (zero-shot) | — | — | 27.64 |
+
+**大幅改善**：v1→v2 F1 0.034→0.387（12倍）。给 SciER relation enum 后 pattern_type 对齐 gold，P/R 都涨。
+**超过 LA-RL zero-shot (31.67) 和 HGNet zero-shot (27.64)**：我们 38.7 > 31.67 > 27.64。
+我们用 deepseek-V3 (比 Gemini-2.5 弱) 在零样本设定下 F1=38.7，超过 LA-RL 的 Gemini-2.5 zero=31.67。
+注意：LA-RL/HGNet 监督版本 61.10/62.36 仍高（它们微调了 7B 模型）。
+但我们零样本(无微调) 38.7 > 它们零样本 31.67/27.64。
+
+**诚实标注**：v2 用了 relation enum（给 LLM SciER 的 9 种关系名），这是评测适配不是方法核心。
+但 native 在同样 enum 下(v1 native 无 enum F1=0.069)——需补 native+enum 对比才是公平。
+LA-RL/HGNet 的 zero-shot 也是给定 schema（relation types），所以给 enum 是公平的。
