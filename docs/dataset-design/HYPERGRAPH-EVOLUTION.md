@@ -2751,3 +2751,15 @@ grounding: 0.73-1.00（均值~0.88，比之前好）
 **诚实标注**：v2 用了 relation enum（给 LLM SciER 的 9 种关系名），这是评测适配不是方法核心。
 但 native 在同样 enum 下(v1 native 无 enum F1=0.069)——需补 native+enum 对比才是公平。
 LA-RL/HGNet 的 zero-shot 也是给定 schema（relation types），所以给 enum 是公平的。
+
+## SciER 公平对比（统一enum, 200句419gold）
+| 方法 | P | R | F1 |
+|------|---|---|----|
+| **Ours+enum** | 0.335 | 0.578 | **0.387** |
+| Native+enum | 0.329 | 0.511 | 0.336 |
+| LA-RL zero-shot | — | — | 31.67 |
+| HGNet zero-shot | — | — | 27.64 |
+
+统一条件下 ours F1=0.387 > native 0.336 (+5.1pp)。优势在 recall (0.578 vs 0.511, +13%)。
+两者都超过 LA-RL/HGNet 零样本。但 +5.1pp 单seed+200句不显著。
+需要更大样本或多种子验证。
